@@ -80,6 +80,9 @@ form.stack{flex:1;display:flex;flex-direction:column;margin:0}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .empty{padding:26px 48px;font-size:clamp(28px,4vw,52px);font-weight:800;letter-spacing:-.045em;color:#a3a3a3}
 :focus-visible{outline:3px solid #000;outline-offset:3px}
+.field:focus,.field:focus-visible{outline:none}
+.field[aria-invalid="true"]{border-bottom-width:9px;padding-bottom:12px}
+.field[aria-invalid="true"]::placeholder,.field[aria-invalid="true"]:focus::placeholder{color:#000}
 .inv :focus-visible,.spine :focus-visible,.bar:focus-visible,.notice :focus-visible{outline-color:#fff}
 @media (max-width:760px){
   .wrap{flex-direction:column}
@@ -124,7 +127,10 @@ a.row:hover .pill{background-color:#fff;color:#000}
 @keyframes pulse{0%{box-shadow:inset 0 0 0 2px #000,0 0 0 0 rgba(0,0,0,.45)}
   100%{box-shadow:inset 0 0 0 2px #000,0 0 0 14px rgba(0,0,0,0)}}
 .cursor{position:fixed;left:0;top:0;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;background:#fff;
-  mix-blend-mode:difference;pointer-events:none;z-index:9999;transition:width .25s,height .25s,margin .25s}
+  mix-blend-mode:difference;pointer-events:none;z-index:9999;transition:width .25s,height .25s,margin .25s,
+  opacity .2s}
+.cursor.off{opacity:0}
+.field{cursor:text}
 .cursor.big{width:72px;height:72px;margin:-36px 0 0 -36px}
 .wipe{position:fixed;inset:0;background:#000;z-index:9000;transform:scaleX(0);transform-origin:left}
 @media (prefers-reduced-motion:reduce){
@@ -157,7 +163,9 @@ MOTION_SCRIPT = """<script>
     let x = -100, y = -100, cx = -100, cy = -100;
     addEventListener("mousemove", (e) => {
       x = e.clientX; y = e.clientY;
-      c.classList.toggle("big", !!(e.target.closest && e.target.closest("a, button, input, .row")));
+      const at = e.target.closest ? e.target : null;
+      c.classList.toggle("off", !!(at && at.closest("input, textarea, select")));  // the text caret shows there
+      c.classList.toggle("big", !!(at && at.closest("a, button, .row")));
     }, {passive: true});
     document.addEventListener("mouseleave", () => { x = -100; y = -100; });
     (function follow() {
@@ -180,6 +188,37 @@ MOTION_SCRIPT = """<script>
       g.animate([{transform: "translateX(0)", opacity: 1}, {transform: "translateX(-60px)", opacity: 0}],
         {duration: 420, easing: "cubic-bezier(.4,0,.2,1)"}).onfinish = () => g.remove();
     });
+  }
+})();
+</script>"""
+
+# Form errors (asked: show them properly): the browser's "Please fill out this field" bubbles are replaced by the
+# page's own error line, naming the field, and the field is marked. Runs with or without motion.
+FORM_SCRIPT = """<script>
+(() => {
+  function say(form, text) {
+    let n = document.querySelector(".main .notice");
+    if (!n) {
+      n = document.createElement("p"); n.className = "notice"; n.setAttribute("role", "alert");
+      form.parentNode.insertBefore(n, form);
+    }
+    n.textContent = text;
+  }
+  for (const form of document.querySelectorAll("form")) {
+    form.noValidate = true;
+    form.addEventListener("submit", (e) => {
+      const fields = [...form.querySelectorAll("input, select, textarea")].filter((f) => f.type !== "hidden");
+      for (const f of fields) f.removeAttribute("aria-invalid");
+      const bad = fields.find((f) => !f.disabled && !f.checkValidity());
+      if (!bad) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      const name = bad.getAttribute("aria-label") || bad.name;
+      bad.setAttribute("aria-invalid", "true");
+      say(form, bad.validity.valueMissing ? `Fill in your ${name}.`
+        : bad.type === "email" ? "That email doesn't look right." : `Check your ${name}.`);
+      bad.focus();
+    }, true);
+    form.addEventListener("input", (e) => e.target.removeAttribute && e.target.removeAttribute("aria-invalid"));
   }
 })();
 </script>"""
@@ -249,7 +288,7 @@ def page(
         f'<p class="word" style="font-size:{spine_font(spine)}">{esc(spine)}</p>'
         f'<div class="spine-end">{spine_end}</div></aside>'
         f'<main class="main">{"" if "<h1" in body else f"<h1 class=sr>{esc(title)}</h1>"}{nav_html}{body}</main>'
-        f"</div>{script}{MOTION_SCRIPT}</body></html>"
+        f"</div>{script}{FORM_SCRIPT}{MOTION_SCRIPT}</body></html>"
     )
     return HTMLResponse(doc, status_code=status, headers=HEADERS)
 
@@ -269,11 +308,21 @@ def notice(text: str) -> str:
     return f'<p class="notice" role="alert">{esc(text)}</p>' if text else ""
 
 
-def field(name: str, placeholder: str, kind: str = "text", value: str = "", autocomplete: str = "off") -> str:
+def field(
+    name: str, placeholder: str, kind: str = "text", value: str = "", autocomplete: str = "off", *, code: bool = False
+) -> str:
+    """One big input. `code=True` is for a code someone was given (an invite code): plain text, and browsers and
+    password managers are told not to fill it from saved logins."""
     shown = f' value="{esc(value)}"' if value and kind != "password" else ""
+    extra = (
+        ' spellcheck="false" autocapitalize="off" data-1p-ignore data-lpignore="true" data-bwignore'
+        ' data-form-type="other"'
+        if code
+        else ""
+    )
     return (
         f'<input class="field" name="{esc(name)}" type="{esc(kind)}" placeholder="{esc(placeholder)}" '
-        f'aria-label="{esc(placeholder)}" autocomplete="{esc(autocomplete)}"{shown} required>'
+        f'aria-label="{esc(placeholder)}" autocomplete="{esc(autocomplete)}"{shown}{extra} required>'
     )
 
 

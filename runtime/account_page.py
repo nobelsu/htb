@@ -104,7 +104,7 @@ def sign_in_page(
         bar = bar_button("Sign in and connect" if for_app else "Sign in")
     elif mode == "signup":
         fields = (
-            field("code", "invite code", "password")
+            field("code", "invite code", code=True)
             + field("name", "username", autocomplete="username")
             + field("email", "email", "email", autocomplete="email")
             + field("password", "password", "password", autocomplete="new-password")

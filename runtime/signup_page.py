@@ -35,7 +35,7 @@ def form_page(error: str = "", name: str = "", email: str = "", status: int = 20
     body = (
         notice(error)
         + '<form class="stack" method="post" action="/signup">'
-        + field("code", "invite code", "password")
+        + field("code", "invite code", code=True)
         + field("name", "username", value=name, autocomplete="username")
         + field("email", "email", "email", value=email, autocomplete="email")
         + field("password", "password", "password", autocomplete="new-password")
