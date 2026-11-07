@@ -147,3 +147,29 @@ def test_dev_env_sessions() -> None:
     assert store.get("anyone", "shop.test", "shop") == {"sid": "v"}
     assert store.get("anyone", "shop.test", "other") is None
     assert DevEnvSessionStore("").get("u", "d", "p") is None
+
+
+def test_regex_extract_resolves_streamed_rows() -> None:
+    """One result spread over rows that point to each other (seen on LinkedIn's web app)."""
+    body = "\n".join(
+        [
+            '0:["$","ul",null,{"children":["$L3","$L4"]}]',
+            '1:I["chunks/card.js",["card"],"Card"]',
+            '2:{"name":"Acme Labs","followers":"1,200 followers"}',
+            '3:["$","$L1",null,{"info":"$2","link":"/company/acme/","price":"$$5","self":"$3"}]',
+            '4:["$","$L1",null,{"info":{"name":"Brightline"},"link":"$5:props:href"}]',
+            '5:["$","a",null,{"href":"/company/brightline/"}]',
+        ]
+    )
+    view = ResponseView(body, {"content-type": "application/octet-stream"}, {})
+    rows_expr = r'(?m)^[0-9a-f]+:(\["\$","\$L1".*\])$'
+    e = ex(**{"from": "body", "type": "regex", "expr": rows_expr, "parse": "json", "resolve": "rows",
+              "then": "$[3]"})
+    acme, bright = run_extract(e, view)
+    assert acme["info"] == {"name": "Acme Labs", "followers": "1,200 followers"}  # "$2" filled in
+    assert acme["price"] == "$$5"  # escaped text is left alone
+    assert acme["self"][3]["self"] == "$3"  # a row is not filled in inside itself
+    assert bright["link"] == "/company/brightline/"  # "$5:props:href" follows the path into row 5
+    assert project([acme, bright], {"name": "$.info.name"}) == [{"name": "Acme Labs"}, {"name": "Brightline"}]
+    with pytest.raises(ValueError, match="resolve"):
+        ex(**{"from": "body", "type": "regex", "expr": "(x)", "resolve": "rows"})  # needs parse json

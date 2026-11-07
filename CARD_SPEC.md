@@ -86,7 +86,7 @@ Rules:
 | `type` | Fields | Notes |
 |---|---|---|
 | `jsonpath` | `expr` = JSONPath | `jsonpath_ng.ext.parse` (supports filters like `[?(@.type=="company")]`) |
-| `regex` | `expr` = regex, optional `parse: "json"`, optional `then` = JSONPath | Every match's capture group 1 (like `re.findall`). With `parse: "json"`, each is parsed as JSON; `then` picks from each, and the results are flattened into one list |
+| `regex` | `expr` = regex, optional `parse: "json"`, optional `resolve: "rows"`, optional `then` = JSONPath | Every match's capture group 1 (like `re.findall`). With `parse: "json"`, each is parsed as JSON; `then` picks from each, and the results are flattened into one list. `resolve: "rows"`: see Streamed rows below |
 
 - `extract.from` is `body`, `headers` or `cookies`.
 - **Every extract produces a list of matches.**
@@ -96,6 +96,16 @@ Rules:
 - `expect.paths` are always JSONPath, and each must have at least one match.
 - `output.fields` paths are evaluated relative to each item. **A field with no match is `null`**, not an error.
 - CSS selectors: later.
+- **Streamed rows** (`resolve: "rows"`; needs `type: "regex"`, `parse: "json"`, `from: "body"`): for answers made of
+  data rows, one `<hex id>:<payload>` per line (the React Server Components format, often labelled
+  `application/octet-stream`; LinkedIn's web app, Next.js App Router sites). One result is often spread over
+  several rows that point to each other, so before `then` each parsed match has its pointers filled in:
+  - `"$<id>"`, `"$L<id>"` or `"$@<id>"` becomes the value of row `<id>`.
+  - `"$<id>:<k1>:<k2>…"` becomes the value at that key path inside row `<id>`; on a React element
+    `["$", type, key, props]`, the key `props` means its 4th item.
+  - A pointer to a row that is missing or not JSON (e.g. an `I` module row) stays as it is. A row is never
+    filled in inside itself (cycles stop), and at most 5000 pointers are filled in per match.
+  - Text that really starts with `$` is written `$$…` in this format, so it is never taken for a pointer.
 
 Examples:
 ```json
