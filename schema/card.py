@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "0.4"
 
@@ -81,7 +81,16 @@ class Extract(_Model):
     type: Literal["jsonpath", "regex", "css"]
     expr: str
     parse: Literal["json"] | None = None
+    # Streamed data rows (CARD_SPEC.md "Extraction", Streamed rows): fill in each match's row pointers.
+    resolve: Literal["rows"] | None = None
     then: str | None = None
+
+    @model_validator(mode="after")
+    def _resolve_needs_parsed_body_regex(self) -> Extract:
+        needs = self.type == "regex" and self.parse == "json" and self.from_ == "body"
+        if self.resolve is not None and not needs:
+            raise ValueError('resolve: "rows" needs type "regex", parse "json" and from "body"')
+        return self
 
 
 class Step(_Model):

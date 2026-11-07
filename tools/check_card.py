@@ -87,6 +87,8 @@ for a in card["actions"]:
             if ex.get("type") == "jsonpath": check_jp(ex["expr"], f"{n}.{st['id']}.extract.{k}")
             elif ex.get("type") == "regex":
                 re.compile(ex["expr"])
+                if ex.get("resolve") not in (None, "rows") or (ex.get("resolve") and ex.get("parse") != "json"):
+                    errs.append(f"{n}.{st['id']}.extract.{k}: resolve \"rows\" needs parse \"json\"")
                 if "then" in ex: check_jp(ex["then"], f"{n}.{st['id']}.extract.{k}.then")
             else: errs.append(f"{n}.{st['id']}.extract.{k}: missing/bad type")
             step_keys.add((st["id"], k))
