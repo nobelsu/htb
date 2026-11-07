@@ -35,6 +35,7 @@ from runtime.browser.tier import BrowserTier
 from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
 from runtime.connect_page import routes as connect_routes
+from runtime.home_page import routes as home_routes
 from runtime.signup_page import routes as signup_routes
 from runtime.account_page import routes as account_routes, session_cookie
 from runtime.neko.manager import NekoConfig, NekoManager
@@ -473,6 +474,7 @@ class Gateway:
             resource_metadata = str(build_resource_metadata_url(AnyHttpUrl(f"{public}/mcp")))
             exempt += ("/.well-known/", "/authorize", "/token", "/register", "/revoke", "/oauth/", "/account")
         if keys is not None:
+            extra += home_routes(signup_open=bool(signup_code))
             extra += signup_routes(
                 keys, signup_code, lambda: public or (connections.public_base_url if connections else None),
                 start_session,
@@ -483,7 +485,8 @@ class Gateway:
             transport_security=host_check(host, public_base_url),
         )
         return BearerAuth(
-            inner, api_key, exempt_prefixes=exempt, keys=keys, oauth=oauth, resource_metadata=resource_metadata
+            inner, api_key, exempt_prefixes=exempt, keys=keys, oauth=oauth, resource_metadata=resource_metadata,
+            exempt_paths=frozenset({"/"}) if keys is not None else frozenset(),
         )
 
 
@@ -570,6 +573,7 @@ class BearerAuth:
         app: ASGIApp,
         api_key: str,
         exempt_prefixes: tuple[str, ...] = (),
+        exempt_paths: frozenset[str] = frozenset(),
         keys: KeyStore | None = None,
         oauth: OAuth | None = None,
         resource_metadata: str | None = None,
@@ -580,6 +584,7 @@ class BearerAuth:
         self._key = api_key.encode()
         self._keys = keys
         self._exempt = exempt_prefixes  # routes with their own credential (the login link's token, the invite code)
+        self._exempt_paths = exempt_paths  # public pages, matched exactly (the home page is "/")
         self._oauth = oauth
         # Where OAuth clients find how to sign in (RFC 9728), sent with every 401.
         challenge = 'Bearer realm="htb-runtime"'
@@ -602,7 +607,8 @@ class BearerAuth:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = str(scope.get("path", ""))
-        if scope["type"] in ("http", "websocket") and not path.startswith(self._exempt):
+        public = path in self._exempt_paths or path.startswith(self._exempt)
+        if scope["type"] in ("http", "websocket") and not public:
             if scope["type"] == "websocket":
                 await send({"type": "websocket.close", "code": 4401})
                 return

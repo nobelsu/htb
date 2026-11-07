@@ -33,6 +33,12 @@ uv run python -m runtime.gateway --load tests/fixture_site.json
 
 The MCP endpoint is `http://127.0.0.1:8765/mcp` (Streamable HTTP, `Authorization: Bearer <key>`).
 
+### Pages
+
+The gateway serves its own pages in one design (`runtime/ui.py`): home `/`, sign-up `/signup`, sign-in
+`/account/login`, the account page `/account` (and `/account/password`), Claude's sign-in `/oauth/login`, and the
+website sign-in `/connect/<token>`. `PRODUCT_NAME` sets the name shown on them.
+
 ### Regular Claude (web, desktop, phone)
 
 In Claude: Customize → Connectors → Add custom connector, URL `<PUBLIC_BASE_URL>/mcp`, then Connect. Claude registers

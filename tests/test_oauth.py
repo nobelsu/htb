@@ -261,10 +261,11 @@ async def test_account_page_needs_signing_in(env: Env) -> None:
         assert (await http.get(f"{env.base}/account/status")).status_code == 401
         await account_session(env, http)
         page = await http.get(f"{env.base}/account")
-    assert page.status_code == 200 and "Hi, alice" in page.text
-    for section in ("Waiting for you", "Sites you're signed in to", "Connected apps", "API key"):
-        assert section in page.text
-    assert f"{env.base}/mcp" in page.text  # the connector URL to paste into Claude
+    assert page.status_code == 200 and "<title>Account, alice</title>" in page.text
+    for tile in ("Connector", "New key", "Password", "Alerts"):
+        assert f"<span>{tile}</span>" in page.text
+    assert "Nothing yet" in page.text  # no sites or apps yet
+    assert f'data-copy="{env.base}/mcp"' in page.text  # the connector URL, one click to copy
 
 
 async def test_waiting_sign_ins_show_up_live(env: Env) -> None:
