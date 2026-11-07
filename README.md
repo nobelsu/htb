@@ -31,7 +31,18 @@ uv run uvicorn tests.fixture_site.app:app --port 8900
 uv run python -m runtime.gateway --load tests/fixture_site.json
 ```
 
-The MCP endpoint is `http://127.0.0.1:8765/mcp` (Streamable HTTP, `Authorization: Bearer $GATEWAY_API_KEY`).
+The MCP endpoint is `http://127.0.0.1:8765/mcp` (Streamable HTTP, `Authorization: Bearer <key>`).
+
+### Users and API keys
+
+Every key belongs to one user, and every tool call acts as that user: their own sign-ins, browser profiles, login
+links and device identities. `GATEWAY_API_KEY` from `.env` is user `default`. Everyone else gets their own key:
+
+- **Sign-up page:** set `SIGNUP_CODE` in `.env` and share it; people open `<PUBLIC_BASE_URL>/signup`, enter the code,
+  a name and an email, and get their key once with the `claude mcp add ...` line to paste. Wrong codes are rate
+  limited (10 per 10 minutes per address). Empty `SIGNUP_CODE` = no sign-up page.
+- **Command line:** `uv run python -m runtime.keys add alice --email alice@example.com` (also `list`, `reissue`,
+  `revoke`). Keys are shown once; only their SHA-256 is stored (`api_users` table in `runtime.db`).
 `POST http://127.0.0.1:8900/_admin/break` moves one fixture endpoint, `/_admin/reset` restores it.
 
 The mapper imports `schema` (`validate_card`, `Card`, `Envelope`) and saves through `runtime.registry.Registry`.
