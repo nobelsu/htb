@@ -15,6 +15,7 @@ from runtime.registry import Registry
 from runtime.sessions import InMemorySessionStore
 from runtime.state import StateStore
 from schema import Card, ResultCode
+from tests.conftest import hits
 from tests.fixture_site.remapper import FixtureRemapper
 
 R = ResultCode
@@ -237,9 +238,7 @@ async def test_site_level_change_must_pass_every_read(
     assert "site-level" in status["result"]["error"]
 
 
-async def test_healed_write_goes_to_candidates(
-    registry: Registry, state: StateStore, executor: Executor
-) -> None:
+async def test_healed_write_goes_live(registry: Registry, state: StateStore, executor: Executor, site_url: str) -> None:
     def change_write(data: dict[str, Any]) -> None:
         action_of(data, "add_to_cart")["steps"][0]["request"]["url"] = "{{base_url}}/api/v2/cart"
 
@@ -248,12 +247,17 @@ async def test_healed_write_goes_to_candidates(
     assert heal is not None
     await healer.drain()
     status = healer.heal_status(heal.job_id)
-    assert status is not None and status["status"] == "needs_review"
-    assert status["result"]["candidates"] == ["add_to_cart"]
-    cands = state.candidates(DOMAIN)
-    assert len(cands) == 1 and cands[0]["action_json"]["steps"][0]["request"]["url"].endswith("/api/v2/cart")
-    assert state.is_degraded(DOMAIN, "add_to_cart")
-    assert [h.version for h in registry.history(DOMAIN)] == [1]  # never auto-activated
+    assert status is not None and status["status"] == "succeeded", status
+    assert status["result"]["healed"] == ["add_to_cart"] and status["result"]["unvalidated"] == ["add_to_cart"]
+    assert status["new_version"] == 2
+    stored = registry.get(DOMAIN)
+    assert stored is not None
+    add = stored.card.action("add_to_cart")
+    assert add is not None and add.steps[0].request.url.endswith("/api/v2/cart")
+    assert not state.is_degraded(DOMAIN, "add_to_cart")
+    assert state.candidates(DOMAIN) == []
+    # The healed write was not executed to validate it.
+    assert "POST /api/cart" not in hits(site_url) and "POST /api/v2/cart" not in hits(site_url)
 
 
 # ---- EMPTY spikes ----------------------------------------------------------

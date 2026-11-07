@@ -204,7 +204,7 @@ Evaluated **in this order**, first match wins:
    - If the heal changes **site-level fields** (`defaults`, `connect_providers`, `blocked_signals`), validate **every** read action, because they all inherit those fields.
 5. **Activation:** the new site version is always built action by action:
    - Healed **read** actions that pass their examples → go into the new version.
-   - Healed **write** actions (usually no `examples`) → **never auto-activated.** The new version keeps the old write action; the healed one is stored in the `heal_candidates` table until a human or a safe test approves it.
+   - Healed **write** actions → **go into the new version too** (changed 2026-11-07, decided by Nobel and WeiWei; previously they were held in `heal_candidates` for approval). They are **never executed to validate them**, since that would really perform the write; the heal result lists them as `unvalidated`.
    - Any action that fails validation → the new version keeps the old action.
    - Actions kept on their old definition after a failed heal are marked `degraded` in `action_state`. They still run, and the envelope shows `meta.degraded: true` so the agent knows results may fail.
    - If nothing changed in the end, no new version is saved.

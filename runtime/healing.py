@@ -17,7 +17,7 @@ from typing import Any, Protocol
 
 from runtime.executor import Executor
 from runtime.registry import Registry
-from runtime.state import HealJob, JobStatus, StateStore, Trigger
+from runtime.state import HealJob, StateStore, Trigger
 from schema import Action, Card, Envelope, Heal, ResultCode, validate_card
 
 log = logging.getLogger("runtime.healing")
@@ -234,20 +234,18 @@ class HealManager:
         changed = [
             n for n, a in old_actions.items() if n in new_actions and _dump(new_actions[n]) != _dump(a)
         ]
-        result: dict[str, Any] = {"site_level_changed": site_changed, "healed": [], "kept_old": {}, "candidates": []}
+        result: dict[str, Any] = {"site_level_changed": site_changed, "healed": [], "kept_old": {}}
 
-        # Writes are never auto-activated: store the healed one for review, keep the old one.
-        for name in [n for n in changed if old_actions[n].kind == "write"]:
-            healed_json = new_actions[name].model_dump(by_alias=True, exclude_unset=True, mode="json")
-            self.state.add_candidate(old.domain, name, job.id, healed_json)
-            result["candidates"].append(name)
-            result["kept_old"][name] = "write actions are never auto-activated"
+        # Healed writes go live too (decision H4). They are never run to validate them: that would really
+        # post/buy/follow, and writes usually have no examples. They are listed as unvalidated.
+        changed_writes = [n for n in changed if old_actions[n].kind == "write"]
         changed_reads = [n for n in changed if old_actions[n].kind == "read"]
+        result["unvalidated"] = changed_writes
 
-        # Tentative card: new site-level fields + changed reads + old everything else.
+        # Tentative card: new site-level fields + changed actions + old everything else.
         site = new if site_changed else old
         chosen: dict[str, Action] = {
-            n: (new_actions[n] if n in changed_reads else a) for n, a in old_actions.items()
+            n: (new_actions[n] if n in changed_reads or n in changed_writes else a) for n, a in old_actions.items()
         }
         to_validate = [n for n, a in chosen.items() if a.kind == "read"] if site_changed else list(changed_reads)
         tentative = _compose(site, old, chosen)
@@ -272,6 +270,7 @@ class HealManager:
                 result["kept_old"][name] = failures[name]
             else:
                 result["healed"].append(name)
+        result["healed"].extend(changed_writes)
         for name in broken:
             if name not in changed:
                 result["kept_old"].setdefault(name, "the remapper did not change it")
@@ -285,9 +284,8 @@ class HealManager:
         self._degrade(job, result["degraded"], "heal failed; running the old definition")
 
         if not result["healed"] and not (site_changed and not failures):
-            status: JobStatus = "needs_review" if result["candidates"] else "failed"
-            self.state.finish_job(job.id, status, result)
-            log.info("heal %s %s: %s", job.id, status, json.dumps(result))
+            self.state.finish_job(job.id, "failed", result)
+            log.info("heal %s failed: %s", job.id, json.dumps(result))
             return
 
         final = _compose(site, old, chosen, provenance=new)
