@@ -1345,6 +1345,60 @@
       },
       "verify": null,
       "examples": []
+    },
+    {
+      "name": "browser_orders",
+      "description": "List the signed-in user's orders from an endpoint only a real browser can reach.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {},
+      "steps": [
+        {
+          "id": "orders",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/browser-only/orders",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.orders"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.orders[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.orders.items",
+        "fields": {
+          "id": "$.id",
+          "total": "$.total"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ],
+      "auth_provider": "shop"
     }
   ]
 }

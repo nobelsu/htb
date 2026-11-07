@@ -188,3 +188,33 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - `session_check` (heal pre-check) starts on the card's default tier but does not escalate.
 - Not recorded yet: which tier worked, in `action_state` (the spec puts that learning there). The executor always
   starts from the card's tier.
+
+## Login flow and browser tier
+- **L1 Login view (asked).** A streamed page, because the gateway is hosted: `start_connection` returns
+  `{PUBLIC_BASE_URL}/connect/{token}`. The page shows Chrome DevTools screencast frames and sends clicks,
+  scrolling, typing, special keys and paste back. The user types their own password into the real site.
+- **L2 Browser (asked).** Real Google Chrome (`BROWSER_CHANNEL=chrome`), headless. Headless Chrome's
+  "HeadlessChrome" User-Agent is replaced with the plain "Chrome" one (read once per process).
+- **L3 Warm (asked).** One persistent Chrome profile per (user, site, provider) under `PROFILES_DIR`, kept
+  running while used and closed after `BROWSER_IDLE_S` idle (the profile stays on disk). Keep-alive runs every
+  connected session's `session_check` every `KEEPALIVE_INTERVAL_S` and marks `401`/logged-out ones `expired`;
+  blocks, rate limits and errors are not treated as a verdict on the login.
+- **L4 Cookie copy (asked).** After login, the profile's cookies for the site's `base_url` are stored
+  Fernet-encrypted with `SESSION_KEY` in the `sessions` table; a wrong key reads as "not connected". The encrypted
+  store is consulted first, then `DEV_SESSION_COOKIES`.
+- **L5 Browser tier (asked).** Each step runs as `fetch()` in a tab on the request's origin (credentials included),
+  so it goes out as real Chrome. Headers the browser owns (cookie, user-agent, origin, referer, host...) are
+  dropped from card headers. Only the final URL of a redirect is visible, so `redirect:` signals see the final
+  path only. Cross-origin APIs are fetched from a tab on their own origin.
+- **Login detection.** The watcher runs `session_check` on the browser tier in the user's profile every 2 s
+  until it passes or the link expires (`CONNECT_TIMEOUT_S`, default 10 min). One pending login per
+  (user, site); calling `start_connection` again returns the same link.
+- **Link security.** The `/connect/` routes skip the Bearer check: the unguessable, expiring token in the link is
+  their only credential, so whoever holds the link can drive that login browser until it connects or expires.
+  Every other HTTP and websocket path still needs the Bearer key.
+- **Browser tier profiles for no-login actions** use the site's anonymous profile per user (`_anon`).
+- **Escalation into the browser tier** adds the lower tier's cookies to the profile, if not already there
+  (the spec: cookies in the browser tier persist in the profile).
+- **Not handled yet:** login pages that open a pop-up window (e.g. some OAuth flows) — only the first tab is
+  streamed; mobile soft keyboards (the page listens for desktop key events); per-user API keys (everything is
+  user `default`).

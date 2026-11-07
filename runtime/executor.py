@@ -30,6 +30,7 @@ from runtime.template import (
 from runtime.tiers import (
     LADDER,
     HttpResponse,
+    ProfileKey,
     Session,
     TierClient,
     TransportError,
@@ -153,17 +154,36 @@ class Executor:
         env, _ = await self._execute(card, action, version, args, user, primary=False)
         return env
 
-    async def check_session(self, card: Card, provider_id: str, user: str) -> ResultCode | None:
-        """Run a provider's `session_check`. Returns None if it passes, else the result code."""
+    async def check_session(
+        self,
+        card: Card,
+        provider_id: str,
+        user: str,
+        *,
+        tier: Tier | None = None,
+        cookies: dict[str, str] | None = None,
+    ) -> ResultCode | None:
+        """Run a provider's `session_check`. Returns None if it passes, else the result code.
+
+        By default it uses the stored session on the card's default tier. The login flow passes
+        `tier="browser"` and `cookies={}` to check the browser profile the user is logging in with.
+        """
         provider = card.provider(provider_id)
         if provider is None:
             return R.ERROR
-        cookies = self.sessions.get(user, card.domain, provider_id)
         if cookies is None:
-            return R.AUTH_REQUIRED
+            cookies = self.sessions.get(user, card.domain, provider_id)
+            if cookies is None:
+                return R.AUTH_REQUIRED
         check = provider.session_check
-        session = self.tiers[self.start_tier(card.defaults.tier)].open(card.base_url, cookies)
+        tier = self.start_tier(tier or card.defaults.tier)
+        session = self.tiers[tier].open(card.base_url, cookies, ProfileKey(user, card.domain, provider_id))
         try:
+            try:
+                await session.prepare()
+            except Exception as e:
+                log.warning("session_check could not start the %s tier: %s", tier, e)
+                return R.ERROR
             ctx = Context(card.base_url, {}, session.cookies, {})
             try:
                 built = build_request(check, merge_headers(card.defaults.headers, check.headers), ctx)
@@ -265,7 +285,7 @@ class Executor:
             conf = self.confirmer.issue(user, card.domain, action.name, params, summary)
             return envelope(R.NEEDS_CONFIRMATION, confirmation=conf), None
 
-        session = self.tiers[tier_used[0]].open(card.base_url, cookies)
+        session = self.tiers[tier_used[0]].open(card.base_url, cookies, ProfileKey(user, card.domain, auth))
         run = _Run(
             card=card,
             action=action,
@@ -280,6 +300,7 @@ class Executor:
         )
         try:
             try:
+                await self._prepare(run)
                 await self._run_steps(run)
                 code, data, next_params = self._output(run)
             except Stop as stop:
@@ -329,9 +350,17 @@ class Executor:
         """Switch tiers, carrying the execution's cookie jar. Later steps stay on the higher tier."""
         cookies = run.session.cookies
         await run.session.aclose()
-        run.session = self.tiers[to].open(run.card.base_url, cookies)
+        run.session = self.tiers[to].open(run.card.base_url, cookies, ProfileKey(run.user, run.card.domain, run.auth))
+        await self._prepare(run)
         log.info("%s.%s escalating %s -> %s", run.card.domain, run.action.name, run.tier[0], to)
         run.tier[0] = to
+
+    async def _prepare(self, run: _Run) -> None:
+        try:
+            await run.session.prepare()
+        except Exception as e:  # e.g. the browser could not start
+            log.exception("could not start the %s tier", run.tier[0])
+            raise Stop(R.ERROR, f"could not start the {run.tier[0]} tier: {type(e).__name__}: {e}") from None
 
     # ---- steps -------------------------------------------------------------
 

@@ -35,3 +35,15 @@ Return the whole proposed card. The runtime validates the changed actions agains
 new version; writes are never auto-activated. Set `REMAPPER=module:Class` in `.env`. For the fixture shop,
 `REMAPPER=tests.fixture_site.remapper:FixtureRemapper` demos the full loop: break the site, call `shop_get_item`,
 watch `heal_status`, call again.
+
+## Login (connect a site) and the browser tier
+
+Sites with `connect_providers` need the user to log in once. The agent calls `start_connection(domain)` and
+gets a link; the user opens it and sees the site's real login page, streamed from a browser on the server, and
+logs in themselves. The password never reaches us or the agent. When the provider's `session_check` passes, the
+profile's cookies are stored encrypted (`SESSION_KEY`) for the http/impersonate tiers, and the browser profile
+(under `PROFILES_DIR`) stays warm for the browser tier. `poll_connection` / `connection_status` report progress.
+
+Hosting notes: install Chrome on the server (`uv run playwright install --with-deps chrome`), keep
+`PROFILES_DIR` and the SQLite file on persistent storage, serve over HTTPS and set `PUBLIC_BASE_URL` to that
+https URL. Fixture shop login for testing: `demo` / `demo-password`.
