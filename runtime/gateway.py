@@ -22,7 +22,11 @@ from typing import Any
 import anyio
 import mcp_types as types
 from mcp.server.lowlevel.server import Server
+from mcp.server.auth.routes import build_resource_metadata_url, create_auth_routes, create_protected_resource_routes
+from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import AnyHttpUrl
+from starlette.routing import BaseRoute
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from runtime.browser.pool import BrowserConfig, BrowserPool
@@ -32,11 +36,13 @@ from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
 from runtime.connect_page import routes as connect_routes
 from runtime.signup_page import routes as signup_routes
+from runtime.account_page import routes as account_routes, session_cookie
 from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.proxy import ProxyConfig
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
 from runtime.keys import ENV_KEY_USER, KeyStore
+from runtime.oauth import OAuth
 from runtime.mapper_remapper import MapperRemapper
 from runtime.registry import Registry, StoredCard
 from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
@@ -431,17 +437,54 @@ class Gateway:
         keys: KeyStore | None = None,
         signup_code: str = "",
         public_base_url: str | None = None,
+        oauth: OAuth | None = None,
     ) -> ASGIApp:
-        extra = connect_routes(self.connections) if self.connections is not None else []
+        """`oauth` (with `keys` and `public_base_url`) adds sign-in for apps that can't send an API key (regular
+        Claude): the OAuth endpoints, the sign-in page and the account page (DECISIONS.md L11)."""
+        extra: list[BaseRoute] = list(connect_routes(self.connections)) if self.connections is not None else []
+        connections = self.connections
+        public = (public_base_url or "").rstrip("/")
+        exempt: tuple[str, ...] = ("/connect/", "/neko/", "/signup")
+        resource_metadata: str | None = None
+        start_session = None
+        if oauth is not None and keys is not None and public:
+            issuer = AnyHttpUrl(public)
+            extra += create_auth_routes(
+                provider=oauth,
+                issuer_url=issuer,
+                service_documentation_url=None,
+                client_registration_options=ClientRegistrationOptions(enabled=True),
+                revocation_options=RevocationOptions(enabled=True),
+            )
+            extra += create_protected_resource_routes(
+                resource_url=AnyHttpUrl(f"{public}/mcp"), authorization_servers=[issuer], resource_name="htb"
+            )
+            resolve = BearerAuth(lambda *_: None, api_key, keys=keys)._user_for  # type: ignore[arg-type]
+            extra += account_routes(
+                oauth=oauth,
+                keys=keys,
+                key_user=lambda key: resolve(key.encode()) if key else None,
+                connections=connections,
+                sessions=connections.store if connections is not None else None,
+                signup_code=signup_code,
+                public_url=lambda: public,
+            )
+            start_session = session_cookie(oauth, lambda: public)
+            resource_metadata = str(build_resource_metadata_url(AnyHttpUrl(f"{public}/mcp")))
+            exempt += ("/.well-known/", "/authorize", "/token", "/register", "/revoke", "/oauth/", "/account")
         if keys is not None:
-            connections = self.connections
-            extra += signup_routes(keys, signup_code, lambda: connections.public_base_url if connections else None)
+            extra += signup_routes(
+                keys, signup_code, lambda: public or (connections.public_base_url if connections else None),
+                start_session,
+            )
         inner = self.server.streamable_http_app(
             host=host,
             custom_starlette_routes=extra,  # type: ignore[arg-type]
             transport_security=host_check(host, public_base_url),
         )
-        return BearerAuth(inner, api_key, exempt_prefixes=("/connect/", "/neko/", "/signup"), keys=keys)
+        return BearerAuth(
+            inner, api_key, exempt_prefixes=exempt, keys=keys, oauth=oauth, resource_metadata=resource_metadata
+        )
 
 
 SIGN_IN_REQUEST = "sign_in"
@@ -523,7 +566,13 @@ class BearerAuth:
     is user "default", every other key belongs to its user in the KeyStore."""
 
     def __init__(
-        self, app: ASGIApp, api_key: str, exempt_prefixes: tuple[str, ...] = (), keys: KeyStore | None = None
+        self,
+        app: ASGIApp,
+        api_key: str,
+        exempt_prefixes: tuple[str, ...] = (),
+        keys: KeyStore | None = None,
+        oauth: OAuth | None = None,
+        resource_metadata: str | None = None,
     ) -> None:
         if not api_key and keys is None:
             raise ValueError("GATEWAY_API_KEY must be set")
@@ -531,16 +580,25 @@ class BearerAuth:
         self._key = api_key.encode()
         self._keys = keys
         self._exempt = exempt_prefixes  # routes with their own credential (the login link's token, the invite code)
+        self._oauth = oauth
+        # Where OAuth clients find how to sign in (RFC 9728), sent with every 401.
+        challenge = 'Bearer realm="htb-runtime"'
+        if resource_metadata:
+            challenge += f', resource_metadata="{resource_metadata}"'
+        self._challenge = challenge.encode()
 
     def _user_for(self, token: bytes) -> str | None:
         if self._key and hmac.compare_digest(token, self._key):
             return DEFAULT_USER
-        if self._keys is None:
-            return None
         try:
-            return self._keys.user_for(token.decode())
+            text = token.decode()
         except UnicodeDecodeError:
             return None
+        if self._keys is not None and (user := self._keys.user_for(text)) is not None:
+            return user
+        if self._oauth is not None:
+            return self._oauth.user_for_access_token(text)  # signed in through an app (OAuth)
+        return None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = str(scope.get("path", ""))
@@ -559,7 +617,7 @@ class BearerAuth:
                         "status": 401,
                         "headers": [
                             (b"content-type", b"application/json"),
-                            (b"www-authenticate", b'Bearer realm="htb-runtime"'),
+                            (b"www-authenticate", self._challenge),
                             (b"content-length", str(len(body)).encode()),
                         ],
                     }
@@ -688,6 +746,7 @@ def main() -> None:
         keys=KeyStore(db_path),
         signup_code=signup_code,
         public_base_url=public_url,
+        oauth=OAuth(db_path, public_url),
     )
     log.info("sign-up page: %s", f"{public_url}/signup" if signup_code else "off (set SIGNUP_CODE to turn it on)")
     uvicorn.run(app, host=args.host, port=args.port, access_log=False)

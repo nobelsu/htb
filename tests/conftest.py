@@ -24,8 +24,8 @@ def free_port() -> int:
 
 
 class LiveServer:
-    def __init__(self, asgi_app: Any) -> None:
-        self.port = free_port()
+    def __init__(self, asgi_app: Any, port: int | None = None) -> None:
+        self.port = port or free_port()
         self.url = f"http://127.0.0.1:{self.port}"
         config = uvicorn.Config(asgi_app, host="127.0.0.1", port=self.port, log_level="warning")
         self.server = uvicorn.Server(config)

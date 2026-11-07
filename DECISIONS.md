@@ -360,6 +360,26 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   now also allows exactly `PUBLIC_BASE_URL`'s host and origin; any other host is still refused. ngrok was chosen
   over Cloudflare quick tunnels (those don't support server-sent events, which MCP streaming uses) and gives a
   fixed free domain. The video relay for the login browser is metered's free TURN (`NEKO_ICE_SERVERS`).
+- **L11 Sign-in for regular Claude (OAuth) and the account page (asked).** Regular Claude (web, desktop, phone)
+  adds a server as a custom connector and signs in with OAuth; its API-key header option is a limited beta. So the
+  gateway is also an OAuth authorization server: the MCP SDK serves discovery, Dynamic Client Registration,
+  /authorize, /token (PKCE) and /revoke; `runtime/oauth.py` is the provider and `runtime/account_page.py` the
+  pages. `BearerAuth` accepts OAuth access tokens next to API keys, and its 401 names the resource metadata
+  (RFC 9728), which is how Claude finds the sign-in server. The SDK has no Client ID Metadata Document support, so
+  Claude uses "Register automatically" (DCR).
+  - **Sign in with a password, or a key (asked).** Accounts get a password (scrypt; sign-up asks for one; name or
+    email to sign in); "Sign in with an API key instead" covers the .env key (user `default`) and key-only accounts.
+    The sign-in page can also create an account (invite code). Wrong passwords, keys and codes share the per-address
+    limit (10 per 10 minutes).
+  - **30 days (asked).** Access tokens last 1 hour; refresh tokens rotate on every use (the old one is spent) and a
+    sign-in ends 30 days after it started. Revoking either token ends the whole sign-in. Codes are single use and
+    last 5 minutes; the sign-in page request lasts 15 minutes (in memory: a restart means clicking Connect again).
+    Tokens, codes and page sessions are stored as SHA-256 hashes only.
+  - **Account page (asked: all four parts),** `/account`: sign-ins your agent is waiting for (live, every 2 s, with
+    an optional browser notification), the sites you're signed in to (Disconnect), connected apps (Disconnect =
+    revoke their tokens), and a new API key (the old one stops working; not for `default`, whose key is in .env).
+    It's a cookie session (HttpOnly, SameSite=Lax, Secure on https), 30 days; POSTs from another origin are refused.
+    Signing in for an app or signing up also signs you in to the account page.
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
 - **Not handled yet:** per-user quotas (L9); the mapper's own browser doesn't use the residential proxy (L10).

@@ -229,6 +229,20 @@ class ConnectionManager:
             conn.refresh()
         return conn
 
+    def pending_for(self, user: str) -> list[dict[str, Any]]:
+        """Sign-ins waiting for this user (the latest link per site), for their account page."""
+        out = []
+        for (owner, domain), conn in sorted(self._latest.items()):
+            conn.refresh()
+            if owner != user or conn.status != "pending":
+                continue
+            out.append({
+                "domain": domain,
+                "url": f"{self.public_base_url}/connect/{conn.token}",
+                "minutes_left": max(1, int((conn.expires_at - time.time()) // 60)),
+            })
+        return out
+
     async def _verify(
         self, conn: Connection, jar: dict[str, str], identity: BrowserIdentity | None = None
     ) -> ResultCode | None:
