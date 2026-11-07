@@ -1,5 +1,5 @@
-"""The explorer's LLM steps: decide a site's main tasks, write a click/type script per task, and find
-the next-page control. All replies are structured JSON and are checked before use.
+"""The explorer's LLM steps: decide a site's main tasks, then (for the step-by-step driver in agent.py)
+choose the next browser action and check the final page. All replies are structured JSON.
 """
 
 from __future__ import annotations
@@ -7,11 +7,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from mapper.capture import driver
 from mapper.llm import LLM
 
 TASK_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
-STEP_TYPES = ["navigate", "input", "click", "key", "wait", "wait_for", "mark"]
+ACTIONS = ["click", "type", "press", "navigate", "wait", "done", "give_up"]
 _NULLABLE_STR = {"anyOf": [{"type": "string"}, {"type": "null"}]}
 
 
@@ -71,45 +70,45 @@ TASKS_SCHEMA = {
     "additionalProperties": False,
 }
 
-SCRIPT_SCHEMA = {
+ACTION_SCHEMA = {
     "type": "object",
     "properties": {
-        "steps": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {"type": "string", "enum": STEP_TYPES},
-                    "url": _NULLABLE_STR,
-                    "selector": _NULLABLE_STR,
-                    "value": _NULLABLE_STR,
-                    "key": _NULLABLE_STR,
-                },
-                "required": ["type", "url", "selector", "value", "key"],
-                "additionalProperties": False,
-            },
-        },
-        "notes": {"type": "string"},
+        "action": {"type": "string", "enum": ACTIONS},
+        "role": _NULLABLE_STR,
+        "name": _NULLABLE_STR,
+        "text": _NULLABLE_STR,
+        "key": _NULLABLE_STR,
+        "url": _NULLABLE_STR,
+        "performs_task": {"type": "boolean"},
+        "reason": {"type": "string"},
     },
-    "required": ["steps", "notes"],
+    "required": ["action", "role", "name", "text", "key", "url", "performs_task", "reason"],
     "additionalProperties": False,
 }
 
-NEXT_SCHEMA = {
+CHECK_SCHEMA = {
     "type": "object",
-    "properties": {"selector": _NULLABLE_STR, "reason": {"type": "string"}},
-    "required": ["selector", "reason"],
+    "properties": {
+        "ok": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "next_role": _NULLABLE_STR,
+        "next_name": _NULLABLE_STR,
+    },
+    "required": ["ok", "reason", "next_role", "next_name"],
     "additionalProperties": False,
 }
 
-STEP_FORMAT = """Step format (JSON objects, run in order by a Playwright driver):
-- {"type": "navigate", "url": "/path"}             go to a page (relative to the site)
-- {"type": "input", "selector": "#q", "value": "{{params.query}}"}   fill a field
-- {"type": "click", "selector": "button[type=\\"submit\\"]"}
-- {"type": "key", "selector": "#q", "key": "Enter"}
-- {"type": "wait_for", "selector": "#results li"}   wait until something appears
-- {"type": "mark"}   goal mark: right AFTER the click/Enter that performs the task
-Unused fields are null. Use {{params.NAME}} exactly where each user input goes."""
+ACTION_HELP = """Actions (one per reply; unused fields are null):
+- click: role + name of the element, exactly as in the tree (e.g. role "button", name "Search")
+- type: role + name of the field, and text to put in it (replaces what is there)
+- press: key (e.g. "Enter"), optionally with role + name of the element to press it in
+- navigate: url, a path on this site
+- wait: the page is still loading
+- done: the page now shows the result of the task
+- give_up: the task cannot be done here, or you flagged the wrong action (the run then restarts)
+performs_task: true on exactly ONE action: the one that makes the site load the final result the task
+asks for (the search click or Enter, or the filter click if you filter after searching; the submit
+of a form). The recording marks that moment, so flag it on that action itself, never later."""
 
 
 class Planner:
@@ -163,66 +162,58 @@ class Planner:
         path = t["start_path"] if t["start_path"].startswith("/") else "/" + t["start_path"]
         return TaskSpec(name, t["description"], t["kind"], path, inputs, bool(t["paginates"]))
 
-    # --- 2. how to do one task ------------------------------------------------------------------
-    def write_script(self, task: TaskSpec, page: str, feedback: list[str]) -> list[dict]:
-        tries = ""
+    # --- 2. the next action, for the step-by-step driver ----------------------------------------
+    def next_action(
+        self, task: TaskSpec, url: str, tree: str, history: list[str], feedback: list[str]
+    ) -> dict:
+        values = "; ".join(f"{k} = {v!r}" for k, v in task.inputs.items())
+        rules = "Stay on this site. Never log out, delete anything or change settings."
+        if task.kind == "read":
+            rules += " This task only looks things up: do not follow, connect, post, send, save or buy."
+        done = "\n".join(history) or "(nothing yet)"
+        earlier = ""
         if feedback:
-            tries = "\nEarlier attempts failed. Fix the script:\n" + "\n".join(f"- {f}" for f in feedback)
-        inputs = ", ".join(f"{{{{params.{k}}}}} (e.g. {v!r})" for k, v in task.inputs.items())
+            tries = "\n".join(f"- {f}" for f in feedback)
+            earlier = f"\nEarlier attempts failed (the browser restarted):\n{tries}"
         prompt = (
-            f"Task: {task.description} (name {task.name!r}, kind {task.kind}).\n"
-            f"Inputs: {inputs or 'none'}.\n"
-            "Write the script that performs the task on this site, starting on the page below. "
-            "Prefer selectors "
-            "from the snapshot. Do not log in, do not leave the site.\n"
-            f"{STEP_FORMAT}{tries}\n\nPage:\n{page}"
+            "You are operating a web browser for a logged-in user to do ONE task on this site.\n"
+            f"Task: {task.description} (kind {task.kind}).\n"
+            f"Type these values exactly where the task needs them: {values or 'no input needed'}.\n"
+            "If the task names a category or filter (e.g. only companies), make sure it is applied.\n"
+            f"{rules}\n{ACTION_HELP}\n{earlier}\n"
+            f"Done so far:\n{done}\n\n"
+            f"Current page: {url}\nAccessibility tree (typed field contents are hidden):\n{tree}"
         )
-        data = self._ask("script", prompt, SCRIPT_SCHEMA)
-        return self.check_script(task, data["steps"])
+        return self._ask("next action", prompt, ACTION_SCHEMA)
 
-    @staticmethod
-    def check_script(task: TaskSpec, raw: list[dict]) -> list[dict]:
-        steps = [{k: v for k, v in s.items() if v is not None} for s in raw]
-        try:
-            driver.load_script(steps)
-        except driver.ScriptError as e:
-            raise PlanError(str(e)) from e
-        for s in steps:
-            if s["type"] in ("input", "click", "key", "wait_for") and not s.get("selector"):
-                raise PlanError(f"a {s['type']} step has no selector")
-            if s["type"] == "navigate" and not s.get("url"):
-                raise PlanError("a navigate step has no url")
-            if s["type"] == "input" and "value" not in s:
-                raise PlanError("an input step has no value")
-        if not any(s["type"] == "mark" for s in steps):
-            raise PlanError("the script has no goal mark")
-        text = repr(steps)
-        missing = [p for p in task.inputs if "{{params." + p + "}}" not in text]
-        if missing:
-            raise PlanError(f"the script never types the inputs {missing}")
-        return steps
-
-    # --- 3. the next-page control -------------------------------------------------------------
-    def find_next(self, task: TaskSpec, page: str) -> str | None:
+    # --- 3. did it work? --------------------------------------------------------------------------
+    def check_result(self, task: TaskSpec, url: str, tree: str, history: list[str]) -> dict:
+        nxt = (
+            "Also give the role and name of the control that loads the NEXT page of results "
+            "(null if there is none)."
+            if task.paginates
+            else "Leave next_role and next_name null."
+        )
         prompt = (
-            f"This page shows the results of the task {task.description!r}. "
-            "Give the CSS selector of the control "
-            "that loads the NEXT page of results (from the snapshot), or null if there is none.\n\n" + page
+            f"Task: {task.description} (inputs: {task.inputs or 'none'}).\n"
+            "Below is what was done in the browser and the page it ended on. Answer ok=true only if this "
+            "page shows the result of the task, including any category or filter the task names, AND the "
+            "action flagged as performing the task is the one that loaded this result (not an earlier "
+            "or different one). Explain in reason.\n"
+            f"{nxt}\n\nActions:\n" + "\n".join(history) + f"\n\nPage: {url}\n{tree}"
         )
-        data = self._ask("next page", prompt, NEXT_SCHEMA)
-        sel = data.get("selector")
-        return sel or None
+        return self._ask("check result", prompt, CHECK_SCHEMA)
 
 
 @dataclass
 class Attempt:
-    script: list[dict]
+    actions: list[dict]  # what Claude did in the live run, with each action's outcome
     error: str | None = None
 
 
 @dataclass
 class TaskPlan:
     spec: TaskSpec
-    script: list[dict] | None = None
+    script: list[dict] | None = None  # the replay of the live run, used for the other runs
     next_selector: str | None = None
     attempts: list[Attempt] = field(default_factory=list)

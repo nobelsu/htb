@@ -3,6 +3,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -67,6 +68,27 @@ def test_script_substitution_and_validation(tmp_path):
     assert [s["type"] for s in driver.load_script(path)] == ["click", "mark"]
     with pytest.raises(driver.ScriptError):
         driver.load_script([{"type": "teleport"}])
+
+
+def test_navigate_fills_in_params_url_encoded():
+    """The explorer's LLM puts inputs into URLs; they used to reach the site as `{{params.query}}`."""
+    visited = []
+    page = SimpleNamespace(goto=lambda url, wait_until: visited.append(url))
+    tracker = SimpleNamespace(wait_quiet=lambda page: None)
+    steps = [{"type": "navigate", "url": "/search/results/companies/?keywords={{params.query}}&o=1"}]
+    driver.run_script(
+        page,
+        steps,
+        start_url="https://example.com/feed/",
+        params={"query": "robotics & AI"},
+        tracker=tracker,
+        on_mark=lambda: None,
+    )
+    assert visited == ["https://example.com/search/results/companies/?keywords=robotics%20%26%20AI&o=1"]
+    with pytest.raises(driver.ScriptError, match="query"):
+        driver.run_script(
+            page, steps, start_url="https://example.com/", params={}, tracker=tracker, on_mark=lambda: None
+        )
 
 
 # --- browser -------------------------------------------------------------------------------
@@ -227,3 +249,98 @@ def test_cli_headless_capture(chromium, site, tmp_path):
     # nothing sensitive on the console
     sid = next(c["value"] for c in json.loads(state.read_text())["cookies"] if c["name"] == "sid")
     assert sid not in out.stdout + out.stderr
+
+
+@pytest.mark.browser
+def test_selectors_skip_framework_generated_ids(chromium):
+    """React useId / Ember ids change between loads, so recorded selectors must not rely on them."""
+    from playwright.sync_api import sync_playwright
+
+    from mapper.capture.record import _logger_js
+
+    html = """
+    <input id="_r_4_" placeholder="Search">
+    <input id=":r7:" aria-label="City">
+    <input id="ember1234" name="company">
+    <div id="«r2»"><button>Go</button></div>
+    <input id="q">
+    """
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.add_init_script(_logger_js())
+            page.goto("about:blank")
+            page.set_content(html)
+            pick = lambda sel: page.eval_on_selector(sel, "el => window.__mapperSelectorFor(el)")  # noqa: E731
+            assert pick("input[placeholder=Search]") == 'input[placeholder="Search"]'
+            assert pick("input[aria-label=City]") == 'input[aria-label="City"]'
+            assert pick("input[name=company]") == 'input[name="company"]'
+            assert pick("button") == "div > button"
+            assert pick("input:not([placeholder]):not([aria-label]):not([name])") == "#q"  # a real id is kept
+        finally:
+            browser.close()
+
+
+def test_slim_har_keeps_data_and_html_bodies_only(tmp_path):
+    def entry(rtype, text):
+        return {"_resourceType": rtype, "response": {"content": {"mimeType": "x", "text": text}}}
+
+    har = tmp_path / "traffic.har"
+    kinds = ["script", "stylesheet", "image", "media", "font", "fetch", "xhr", "document"]
+    har.write_text(json.dumps({"log": {"entries": [entry(k, f"body of {k}") for k in kinds]}}))
+    from mapper.capture.record import slim_har
+
+    slim_har(har)
+    kept = {
+        e["_resourceType"]: e["response"]["content"].get("text")
+        for e in json.loads(har.read_text())["log"]["entries"]
+    }
+    assert kept == {k: (f"body of {k}" if k in ("fetch", "xhr", "document") else None) for k in kinds}
+
+
+def test_mark_comes_right_after_the_action_and_typing_pauses():
+    """Seen on LinkedIn: waiting for quiet before the mark put it 20 s late, and an instant Enter after
+    typing let suggestion lookups land inside the goal window."""
+    calls = []
+    page = SimpleNamespace(
+        fill=lambda sel, value: calls.append(("fill", value)),
+        press=lambda sel, key: calls.append(("press", key)),
+        click=lambda sel: calls.append(("click", sel)),
+    )
+    tracker = SimpleNamespace(wait_quiet=lambda page, timeout_ms=10_000: calls.append(("quiet", timeout_ms)))
+    steps = [
+        {"type": "input", "selector": "#q", "value": "{{params.query}}"},
+        {"type": "key", "selector": "#q", "key": "Enter"},
+        {"type": "mark"},
+        {"type": "click", "selector": "#more"},
+    ]
+    driver.run_script(
+        page,
+        steps,
+        start_url="https://example.com/",
+        params={"query": "zqxv8841"},
+        tracker=tracker,
+        on_mark=lambda: calls.append(("MARK",)),
+    )
+    assert calls == [
+        ("fill", "zqxv8841"),
+        ("quiet", driver.TYPING_PAUSE_MS),  # pause after typing
+        ("press", "Enter"),  # no wait between the triggering action and the mark
+        ("MARK",),
+        ("quiet", driver.AFTER_MARK_MS),  # keep recording until the answer has loaded
+        ("click", "#more"),
+        ("quiet", 10_000),
+    ]
+
+
+def test_never_ending_connections_do_not_count_as_loading():
+    handlers = {}
+    context = SimpleNamespace(on=lambda event, fn: handlers.setdefault(event, fn))
+    tracker = driver.NetworkTracker(context)
+    live, api = SimpleNamespace(resource_type="eventsource"), SimpleNamespace(resource_type="fetch")
+    handlers["request"](live)
+    handlers["request"](api)
+    assert tracker.inflight == 1  # the live-update stream is ignored
+    handlers["requestfinished"](api)
+    assert tracker.inflight == 0  # so the page can go quiet while the stream stays open

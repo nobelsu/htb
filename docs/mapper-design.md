@@ -176,27 +176,43 @@ prompt is unchanged.
 ## Explorer: no human in the loop
 
 `python -m mapper explore <start_url> --state login.state.json [--tasks "search companies" ...]
-[--include-writes] [--save]` replaces the human operator:
+[--include-writes] [--save]` replaces the human operator. The LLM is just another **driver**: it moves
+the browser and takes the goal mark, and writes the same bundles a person would. Nothing in exploration
+reads network traffic; finding the goal and decoding stay in `map`.
 
 1. **Survey.** Open the start page logged in, plus up to 4 same-site pages it links to (never log-out,
-   delete or similar links), and take a text snapshot of each: headings, links, fields and buttons with
-   their CSS selectors. Snapshots never contain field values.
+   delete or similar links), and take a text snapshot of each: headings, links, fields and buttons.
+   Snapshots never contain field values.
 2. **Pick tasks (LLM).** From the snapshots the LLM lists the 3–6 tasks people come to *this* site for
    (search people/companies on a network, search products/add to cart on a shop), each with a start page,
    the inputs a user would type (with a realistic example), read/write, and whether results paginate.
    `--tasks` names the tasks instead, in plain English.
-3. **Write the script (LLM), dry-run it.** For each task the LLM writes a driver script (the same JSON steps
-   the capture tool runs, with `{{params.NAME}}` for inputs and a `mark` after the performing click). It is
-   dry-run in the browser; if a step fails, or no request carried the typed input, the error and a snapshot
-   of the page at that point go back to the LLM (up to 3 attempts). For paginated reads the LLM then picks
-   the next-page control from the results page.
-4. **Record + map.** The capture tool records m1/m2 (fresh markers), real (the example) and page2 with the
-   script; each recording must contain a goal request; then `map` builds the card as usual.
+3. **Live run (LLM driver, `explore/agent.py`), recorded as `real`.** The LLM does the task with the
+   example input, one action at a time (click, type, press, navigate), choosing each from the page's
+   accessibility tree (roles and names; typed field contents are removed). It is told to apply any
+   filter the task names. It flags the one action that performs the task, and the goal mark is taken the
+   instant that action is done, with no LLM call in between. When it says it is done, a separate LLM
+   check confirms the final page shows the task's result and that the flagged action is the one that
+   loaded it, and (for paginated reads) names the next-page control. A failed attempt is thrown away and
+   redone from the start page with the reason (up to 3 attempts). Log-out/delete-style controls are refused.
+4. **Replays.** The `real` run's `actions.jsonl` becomes a driver script exactly as in healing (typed
+   inputs → `{{params.NAME}}`, marks where they were), recorded again with fresh markers as m1 and m2, and
+   with the next-page click and a second mark added as page2.
+5. **Check + map.** M3 must find a goal in m1 (on the saved files, after the browser is closed); then
+   `map` builds the card as usual.
 
-Write tasks are skipped unless `--include-writes` is given: exploring one performs it for real, four
-times (dry run + m1 + m2 + real), e.g. four follows or connection requests. The LLM is Claude Sonnet 5.5;
-`explore` needs `ANTHROPIC_API_KEY` (set it in `.env`, which the mapper CLI reads; see `.env.example`), and the rest of the pipeline still runs offline. Everything the LLM
-decided is saved in `captures/<domain>/explore.json` and summarised in the mapping report.
+**Driver timing** (all drivers that run scripts, so replays and heal too): the goal mark comes right
+after the triggering click/Enter, then the run keeps recording until the page is quiet (at most 10 s)
+so the answer lands in the HAR. After typing, the driver pauses until the page settles (at most 2 s),
+like a person glancing before pressing Enter, so suggestion lookups happen before the goal window opens.
+Connections a page holds open for good (event streams, websockets) don't count as loading.
+
+Write tasks are skipped unless `--include-writes` is given: exploring one performs it for real, about
+three times (real + m1 + m2), more if an attempt has to be redone. The LLM is Claude Sonnet 5.5;
+`explore` needs `ANTHROPIC_API_KEY` (set it in `.env`, which the mapper CLI reads; see `.env.example`),
+and the rest of the pipeline still runs offline. Everything the LLM did and decided (tasks, every live
+attempt's actions and why it failed, the replay script) is saved in `captures/<domain>/explore.json`
+and summarised in the mapping report.
 
 ## Open items for Nobel
 

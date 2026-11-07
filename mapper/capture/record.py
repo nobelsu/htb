@@ -18,9 +18,11 @@ import queue
 import shutil
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
+from typing import Any
 
 from mapper import BUNDLE_VERSION, __version__
 from mapper.bundle import (
@@ -35,6 +37,25 @@ from mapper.bundle import (
 )
 from mapper.capture import driver
 from mapper.domains import hostname, registrable_domain
+
+# The mapper only reads a site's data requests and HTML pages (M1 drops everything else). Capture
+# still lets the browser load everything, exactly as for a person; only the saved file is trimmed:
+# these entries keep their URL, status and headers but not their body. Scripts alone were 57% of a
+# LinkedIn recording.
+NO_BODY = frozenset({"image", "media", "font", "script", "stylesheet", "manifest", "texttrack"})
+
+
+def slim_har(path: Path) -> None:
+    """Drop the bodies of static files (code, styles, images, video, fonts) from a saved recording."""
+    har = json.loads(path.read_text(encoding="utf-8"))
+    for entry in har.get("log", {}).get("entries", []):
+        content = (entry.get("response") or {}).get("content") or {}
+        if entry.get("_resourceType") in NO_BODY and "text" in content:
+            del content["text"]
+            content.pop("encoding", None)
+            content["comment"] = "body not saved: the mapper does not read static files"
+    path.write_text(json.dumps(har), encoding="utf-8")
+
 
 HUMAN_HELP = (
     "Drive the browser to perform the task.\n"
@@ -60,6 +81,9 @@ class CaptureConfig:
     out: Path = Path("captures")
     headless: bool = False
     script: str | Path | list[dict] | None = None
+    # A live driver, e.g. the explorer's LLM: called as agent(page, tracker, mark) once the start page has
+    # loaded, it moves the browser and calls mark() right after the action that performs the task.
+    agent: Callable[[Any, driver.NetworkTracker, Callable[[], None]], None] | None = None
     force: bool = False
 
     @property
@@ -77,8 +101,10 @@ class CaptureConfig:
             raise CaptureError(f"run {self.run} takes --marker values, not --input")
         if self.run in REAL_RUNS and self.markers:
             raise CaptureError(f"run {self.run} takes --input values, not --marker")
-        if self.headless and self.script is None:
+        if self.headless and self.script is None and self.agent is None:
             raise CaptureError("--headless needs a --script for the scripted driver")
+        if self.script is not None and self.agent is not None:
+            raise CaptureError("a capture has one driver: a script or an agent, not both")
         if self.state is not None and not Path(self.state).is_file():
             raise CaptureError(f"--state file not found: {self.state}")
 
@@ -174,7 +200,7 @@ def record(cfg: CaptureConfig) -> Path:
         "real_inputs": dict(cfg.real_inputs) if cfg.run in REAL_RUNS else {},
         "page": 2 if cfg.run == "page2" else 1,
         "kind_hint": cfg.kind,
-        "driver": "script" if steps is not None else "human",
+        "driver": "script" if steps is not None else "agent" if cfg.agent is not None else "human",
         "goal_marks": [],
         "started_at": iso_now(),
         "ended_at": None,
@@ -210,6 +236,8 @@ def record(cfg: CaptureConfig) -> Path:
                     tracker=tracker,
                     on_mark=lambda: marks.append(iso_now()),
                 )
+            elif cfg.agent is not None:
+                cfg.agent(page, tracker, lambda: marks.append(iso_now()))
             else:
                 _human_loop(context, marks)
 
@@ -225,6 +253,8 @@ def record(cfg: CaptureConfig) -> Path:
             browser.close()
 
     log.finish()
+    if (out / HAR_FILE).exists():
+        slim_har(out / HAR_FILE)
     for name in (HAR_FILE, STATE_FILE):
         _write_private(out / name)
     meta["ended_at"] = iso_now()

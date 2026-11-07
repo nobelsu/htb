@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     hl.set_defaults(handler=_cmd_heal)
 
     ex = sub.add_parser(
-        "explore", help="let an LLM pick the site's main tasks, script and record them, then map the card"
+        "explore", help="let an LLM pick the site's main tasks, do each live while recorded, then map them"
     )
     ex.add_argument("start_url", help="page to start from (logged in, via --state)")
     ex.add_argument("--state", help="logged-in Playwright storage_state to explore with")

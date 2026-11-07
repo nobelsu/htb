@@ -1,18 +1,29 @@
-"""Explorer: an LLM (scripted here) picks the tasks and writes scripts; the browser runs them."""
+"""Explorer: an LLM (scripted here) picks the tasks and does each one live, step by step; replays follow."""
 
 import json
 from types import SimpleNamespace
 
 import pytest
 
+from mapper.capture.driver import AFTER_MARK_MS
+from mapper.explore.agent import accessibility_tree, drive
 from mapper.explore.explorer import EXPLORE_FILE, explore
 from mapper.explore.planner import PlanError, Planner, TaskSpec
 from mapper.llm import LLM
 from mapper.pipeline import map_domain
 
 
-def _step(type_, selector=None, value=None, url=None, key=None):
-    return {"type": type_, "url": url, "selector": selector, "value": value, "key": key}
+def act(action, role=None, name=None, text=None, key=None, url=None, performs=False):
+    return {
+        "action": action,
+        "role": role,
+        "name": name,
+        "text": text,
+        "key": key,
+        "url": url,
+        "performs_task": performs,
+        "reason": "test",
+    }
 
 
 SEARCH_TASK = {
@@ -40,44 +51,41 @@ IMPOSSIBLE_TASK = {
     "paginates": False,
 }
 GOOD_SEARCH = [
-    _step("input", "#q", "{{params.query}}"),
-    _step("click", 'button[type="submit"]'),
-    _step("wait_for", "#summary:not(:empty)"),
-    _step("mark"),
+    act("type", "textbox", "Search companies", text="software"),
+    act("click", "button", "Search", performs=True),
+    act("done"),
 ]
-WRONG_SEARCH = [_step("input", "#query", "{{params.query}}"), _step("click", "button"), _step("mark")]
 GOOD_NOTE = [
-    _step("input", "#text", "{{params.text}}"),
-    _step("click", 'button[type="submit"]'),
-    _step("wait_for", "#status:not(:empty)"),
-    _step("mark"),
+    act("type", "textbox", "Write a note", text="Call Acme about the Q3 renewal"),
+    act("click", "button", "Save note", performs=True),
+    act("done"),
 ]
+OK = {"ok": True, "reason": "results are shown", "next_role": None, "next_name": None}
 
 
 class Brain:
-    """Stands in for the LLM: answers each call by which schema it asks for."""
+    """Stands in for the LLM: answers each call by which schema it asks for, from per-task queues."""
 
-    def __init__(self, tasks, scripts, next_selector="#next"):
-        self.tasks, self.scripts, self.next_selector = (
-            tasks,
-            {k: list(v) for k, v in scripts.items()},
-            next_selector,
-        )
+    def __init__(self, tasks, actions, verdicts):
+        self.tasks = tasks
+        self.actions = {k: list(v) for k, v in actions.items()}  # task description -> next actions
+        self.verdicts = {k: list(v) for k, v in verdicts.items()}  # task description -> check answers
         self.prompts: list[tuple[str, str]] = []
         self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
+
+    @staticmethod
+    def _task(queues, prompt):
+        return next(d for d in queues if f"Task: {d} (" in prompt)
 
     def create(self, **kw):
         schema = kw["output_config"]["format"]["schema"]["properties"]
         prompt = kw["messages"][0]["content"]
         if "tasks" in schema:
             kind, payload = "discover", {"tasks": self.tasks}
-        elif "steps" in schema:
-            kind = "script"
-            name = next(n for n in self.scripts if f"name {n!r}" in prompt)
-            queue = self.scripts[name]
-            payload = {"steps": queue.pop(0) if len(queue) > 1 else queue[0], "notes": ""}
+        elif "action" in schema:
+            kind, payload = "action", self.actions[self._task(self.actions, prompt)].pop(0)
         else:
-            kind, payload = "next", {"selector": self.next_selector, "reason": "next page button"}
+            kind, payload = "check", self.verdicts[self._task(self.verdicts, prompt)].pop(0)
         self.prompts.append((kind, prompt))
         return SimpleNamespace(
             stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(payload))]
@@ -88,22 +96,7 @@ def _llm(brain):
     return LLM(client=brain, enabled=True)
 
 
-# --- planner checks (no browser) ----------------------------------------------------------------
-
-TASK = TaskSpec("search", "Search", "read", "/search", {"query": "software"})
-
-
-def test_script_checks():
-    ok = Planner.check_script(TASK, GOOD_SEARCH)
-    assert ok[0] == {"type": "input", "selector": "#q", "value": "{{params.query}}"}  # nulls dropped
-    for bad, why in [
-        ([_step("input", "#q", "{{params.query}}")], "no goal mark"),
-        ([_step("input", "#q", "hello"), _step("mark")], "never types the inputs"),
-        ([_step("click"), _step("mark")], "no selector"),
-        ([_step("teleport"), _step("mark")], "unknown type"),
-    ]:
-        with pytest.raises(PlanError, match=why):
-            Planner.check_script(TASK, bad)
+# --- planner and driver checks (no browser) -----------------------------------------------------
 
 
 def test_task_specs_are_sanitised():
@@ -118,6 +111,66 @@ def test_explorer_needs_an_llm():
         Planner(LLM(enabled=False)).discover("site")
 
 
+def test_typed_field_contents_never_reach_the_llm():
+    tree = "\n".join(
+        [
+            '- textbox "Search companies": my secret query',
+            "- searchbox: hello",
+            '- button "Search"',
+            '- textbox "Empty"',
+        ]
+    )
+    page = SimpleNamespace(locator=lambda sel: SimpleNamespace(aria_snapshot=lambda: tree))
+    assert (
+        accessibility_tree(page)
+        == '- textbox "Search companies"\n- searchbox\n- button "Search"\n- textbox "Empty"'
+    )
+
+
+class FakeElement:
+    def __init__(self, calls, name):
+        self.calls, self.name = calls, name
+
+    def count(self):
+        return 1
+
+    def nth(self, i):
+        return self
+
+    def is_visible(self):
+        return True
+
+    def click(self):
+        self.calls.append(("click", self.name))
+
+    def fill(self, text):
+        self.calls.append(("fill", text))
+
+
+def test_the_mark_comes_the_instant_the_flagged_action_is_done():
+    calls = []
+    page = SimpleNamespace(
+        url="https://example.com/search",
+        locator=lambda sel: SimpleNamespace(aria_snapshot=lambda: '- textbox "q"\n- button "Search"'),
+        get_by_role=lambda role, name=None, exact=True: FakeElement(calls, name),
+    )
+    tracker = SimpleNamespace(wait_quiet=lambda page, timeout_ms=10_000: calls.append(("quiet", timeout_ms)))
+    spec = TaskSpec("search", "Search companies by keyword", "read", "/search", {"query": "software"})
+    brain = Brain([], {spec.description: GOOD_SEARCH}, {spec.description: [OK]})
+    run = drive(
+        page,
+        tracker,
+        lambda: calls.append(("MARK",)),
+        planner=Planner(_llm(brain)),
+        spec=spec,
+        start_url="https://example.com/search",
+        feedback=[],
+    )
+    assert run.marked and [a["outcome"] for a in run.actions] == ["ok", "ok, goal marked"]
+    i = calls.index(("click", "Search"))
+    assert calls[i + 1 :] == [("MARK",), ("quiet", AFTER_MARK_MS)]  # no wait, no LLM call in between
+
+
 # --- the fixture site, end to end -------------------------------------------------------------
 
 
@@ -129,12 +182,31 @@ def logged_in(site, tmp_path):
 
 
 @pytest.mark.browser
-def test_explore_picks_tasks_fixes_a_bad_script_and_maps_a_card(chromium, site, logged_in, tmp_path):
+def test_explore_drives_live_retries_and_replays(chromium, site, logged_in, tmp_path):
+    never_typed = [act("click", "button", "Search", performs=True), act("done")]
+    wrong_then_right = [
+        act("click", "link", "Log out"),  # refused: it would end the session
+        act("click", "button", "Advanced search"),  # does not exist: Claude is told and goes on
+        *GOOD_SEARCH,  # attempt 2: the final check says no
+        *GOOD_SEARCH,  # attempt 3: works
+    ]
+    wrong = {
+        "ok": False,
+        "reason": "only shows all results, not filtered",
+        "next_role": None,
+        "next_name": None,
+    }
     brain = Brain(
         [SEARCH_TASK, NOTE_TASK, IMPOSSIBLE_TASK],
         {
-            "search_companies": [WRONG_SEARCH, GOOD_SEARCH],
-            "view_notifications": [[_step("click", "#bell"), _step("mark")]],
+            "Search companies by keyword": never_typed + wrong_then_right,
+            "View notifications": [act("give_up")] * 3,
+        },
+        {
+            "Search companies by keyword": [
+                wrong,
+                {**OK, "next_role": "button", "next_name": "Next page"},
+            ],
         },
     )
     result = explore(
@@ -143,30 +215,42 @@ def test_explore_picks_tasks_fixes_a_bad_script_and_maps_a_card(chromium, site, 
         out=tmp_path / "captures",
         llm=_llm(brain),
         step_timeout_ms=1500,
-        max_attempts=2,
+        max_attempts=3,
     )
     by_name = {o.plan.spec.name: o for o in result.tasks}
     search, note, bell = by_name["search_companies"], by_name["add_note"], by_name["view_notifications"]
 
-    # the wrong selector failed in the dry run, the error + page went back to the LLM, attempt 2 worked
-    assert search.status == "recorded" and len(search.plan.attempts) == 2
-    assert "#query" in search.plan.attempts[0].error or "Timeout" in search.plan.attempts[0].error
-    second_prompt = [p for k, p in brain.prompts if k == "script" and "search_companies" in p][1]
-    assert "attempt 1" in second_prompt and "Fields:" in second_prompt
-    assert search.plan.next_selector == "#next" and search.runs == ["m1", "m2", "real", "page2"]
-    # writes are not explored by default; an impossible task fails cleanly
+    # three live attempts, each failure fed back; the third one recorded, then replayed for the others
+    assert search.status == "recorded", search.reason
+    errors = [a.error for a in search.plan.attempts]
+    assert "never typed the input" in errors[0] and "does not show the task's result" in errors[1]
+    assert errors[2] is None
+    outcomes = [a["outcome"] for a in search.plan.attempts[1].actions]
+    assert "not allowed" in outcomes[0] and "no visible button" in outcomes[1]
+    last_action_prompt = [p for k, p in brain.prompts if k == "action" and "Search companies" in p][-1]
+    assert "attempt 1: never typed" in last_action_prompt and "attempt 2:" in last_action_prompt
+    assert search.plan.next_selector == "#next"
+    assert search.runs == ["real", "m1", "m2", "page2"]
+    assert search.plan.script[0] == {"type": "input", "selector": "#q", "value": "{{params.query}}"}
+    assert {"type": "mark"} in search.plan.script
+    meta = json.loads((result.domain_dir / "search_companies" / "real" / "meta.json").read_text())
+    assert meta["driver"] == "agent" and len(meta["goal_marks"]) == 1
+    # writes are not explored by default; an impossible task fails cleanly and leaves no recordings
     assert note.status == "skipped" and "--include-writes" in note.reason
-    assert bell.status == "failed" and len(bell.plan.attempts) == 2
+    assert bell.status == "failed" and len(bell.plan.attempts) == 3 and "gave up" in bell.reason
+    assert not (result.domain_dir / "view_notifications").exists()
 
-    # the survey never clicked "Log out", and nothing secret went into a prompt
+    # nothing clicked "Log out", and nothing secret or typed went into a prompt's page view
     assert ("GET", "/logout") not in site.state.requests
     cookies = json.loads(logged_in.read_text())["cookies"]
     every_prompt = "\n".join(p for _, p in brain.prompts)
     for c in cookies:
         assert c["value"].strip('"') not in every_prompt
+    assert '- textbox "Search companies": software' not in every_prompt
 
     saved = json.loads((result.domain_dir / EXPLORE_FILE).read_text())
     assert [t["status"] for t in saved["tasks"]] == ["recorded", "skipped", "failed"]
+    assert len(saved["tasks"][0]["attempts"]) == 3
 
     mapped = map_domain(result.domain_dir, live=True)
     assert mapped.validation.ok, mapped.validation.errors
@@ -185,7 +269,7 @@ def test_explore_picks_tasks_fixes_a_bad_script_and_maps_a_card(chromium, site, 
 
 @pytest.mark.browser
 def test_explore_writes_when_asked(chromium, site, logged_in, tmp_path):
-    brain = Brain([NOTE_TASK], {"add_note": [GOOD_NOTE]})
+    brain = Brain([NOTE_TASK], {"Save a note": GOOD_NOTE}, {"Save a note": [OK]})
     result = explore(
         site.url + "/",
         state=logged_in,
@@ -197,6 +281,7 @@ def test_explore_writes_when_asked(chromium, site, logged_in, tmp_path):
     )
     [note] = result.tasks
     assert note.status == "recorded", note.reason
+    assert note.runs == ["real", "m1", "m2"]  # not paginated: no page2
     assert "save a note" in brain.prompts[0][1]  # the user's wording reached task discovery
     mapped = map_domain(result.domain_dir)
     assert mapped.validation.ok, mapped.validation.errors

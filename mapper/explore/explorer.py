@@ -1,15 +1,21 @@
-"""The explorer: an LLM decides a site's main tasks and writes a script for each; the browser runs them.
+"""The explorer: an LLM picks a site's main tasks, does each one live in a recorded browser, and the
+other runs replay what it did.
 
-1. **Survey + plan** (one browser session): snapshot the start page and a few main pages, let the LLM pick
-   the site's tasks, then for each task let it write a click/type script and dry-run it. A failed dry run
-   goes back to the LLM with the error and a snapshot of the page where it failed (up to 3 attempts). For
-   paginated reads the LLM also picks the next-page control.
-2. **Record**: the capture tool records m1/m2 (fresh markers), real (the example input) and page2 per task.
-3. **Check**: each recording must contain a goal request (M3); then ``map`` turns it all into a card.
+1. **Survey** (one browser session): snapshots of the start page and a few same-site pages it links to.
+   The LLM picks the site's tasks from them, or describes the ones the user named.
+2. **Live run** per task: the step-by-step LLM driver (agent.py) does the task with the example input
+   while the capture tool records it as the ``real`` run, marking the goal right after the action that
+   performs the task. A failed attempt is thrown away and redone from the start page, with the reason
+   passed on (up to 3 attempts).
+3. **Replays**: the ``real`` run's recorded actions (heal's replay) are re-run with fresh markers for
+   ``m1`` and ``m2``, and with the next-page click added for ``page2``.
+4. **Check**: the mapper's goal finder (M3) must find a goal in m1; then ``map`` builds the card.
 
-Safety: the survey never follows log-out/delete-style links, and write tasks (follow, post, send, add to
-cart...) are skipped unless ``include_writes`` is set, because exploring one really performs it,
-several times.
+Steps 1-3 only drive the browser and write bundles; nothing in them reads network traffic.
+
+Safety: the survey never follows log-out/delete-style links and the driver refuses them; write tasks
+(follow, post, send, add to cart...) are skipped unless ``include_writes`` is set, because exploring
+one really performs it, about four times.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
 import time
 from dataclasses import dataclass, field
@@ -27,16 +34,29 @@ from mapper.bundle import iso_now
 from mapper.capture import driver
 from mapper.capture.replay import new_marker
 from mapper.domains import hostname, registrable_domain, same_site
+from mapper.explore.agent import AgentFailed, AgentRun, drive
 from mapper.explore.planner import Attempt, PlanError, Planner, TaskPlan, TaskSpec
 from mapper.explore.snapshot import as_text, page_snapshot
 from mapper.llm import LLM
-from mapper.pipeline.m3_goal import value_forms
 
 EXPLORE_FILE = "explore.json"
 UNSAFE_LINK = re.compile(
     r"log\s*-?out|sign\s*-?out|log\s*off|delete|remove|deactivate|unsubscribe|close account", re.I
 )
-MAX_FEEDBACK_CHARS = 4000
+RUN_LABELS = {
+    "m1": "replaying it with a made-up word",
+    "m2": "replaying it with a second made-up word",
+    "page2": "replaying it with the example input, then opening page 2",
+}
+
+
+def _say(msg: str) -> None:
+    """Progress for the person watching: the same task runs several times on purpose."""
+    print(f"[explore] {msg}", file=sys.stderr, flush=True)
+
+
+def _first_line(e: Exception) -> str:
+    return f"{type(e).__name__}: {(str(e).strip().splitlines() or [''])[0][:200]}"
 
 
 @dataclass
@@ -54,7 +74,7 @@ class TaskOutcome:
             "runs": self.runs,
             "script": self.plan.script,
             "next_selector": self.plan.next_selector,
-            "attempts": [{"script": a.script, "error": a.error} for a in self.plan.attempts],
+            "attempts": [{"actions": a.actions, "error": a.error} for a in self.plan.attempts],
         }
 
 
@@ -70,7 +90,7 @@ class ExploreResult:
         return [t for t in self.tasks if t.status == "recorded"]
 
 
-# --- phase 1: survey and plan ------------------------------------------------------------------
+# --- phase 1: survey ------------------------------------------------------------------
 
 
 def _goto(page, tracker, url: str) -> None:
@@ -80,6 +100,7 @@ def _goto(page, tracker, url: str) -> None:
 
 def survey(page, tracker, start_url: str, extra_pages: int = 4) -> tuple[str, list[str]]:
     """Snapshots of the start page and a few same-site pages it links to (never log-out links)."""
+    _say(f"looking around the site, starting at {start_url}")
     _goto(page, tracker, start_url)
     first = page_snapshot(page)
     texts, visited = [f"== Page {urlsplit(first['url']).path} ==\n{as_text(first)}"], [first["url"]]
@@ -99,113 +120,107 @@ def survey(page, tracker, start_url: str, extra_pages: int = 4) -> tuple[str, li
         except Exception:  # a page that won't load is just skipped
             continue
         snap = page_snapshot(page)
+        _say(f"looking at {urlsplit(snap['url']).path}")
         visited.append(snap["url"])
         texts.append(f"== Page {urlsplit(snap['url']).path} ==\n{as_text(snap)}")
     return "\n\n".join(texts), visited
 
 
-def dry_run(page, tracker, url: str, steps: list[dict], spec: TaskSpec) -> str | None:
-    """Run the script once (no recording). Returns an error message, or None if it worked."""
-    seen: list[tuple[str, str, str, str]] = []
+# --- phase 2: the live run ------------------------------------------------------------------------
 
-    def on_request(req) -> None:
-        seen.append((req.method, req.url, req.post_data or "", req.resource_type))
 
-    page.on("request", on_request)
-    try:
-        _goto(page, tracker, url)
-        driver.run_script(
-            page, steps, start_url=url, params=spec.inputs, tracker=tracker, on_mark=lambda: None
+@dataclass
+class Capture:
+    """How every run of this exploration is recorded."""
+
+    start_url: str
+    state: Path | None
+    out: Path
+    headless: bool
+    step_timeout_ms: int
+
+    def config(self, spec: TaskSpec, run: str, **driver_kw):
+        from mapper.capture.record import CaptureConfig
+
+        return CaptureConfig(
+            start_url=urljoin(self.start_url, spec.start_path),
+            task=spec.name,
+            run=run,
+            kind=spec.kind,
+            description=spec.description,
+            state=self.state,
+            out=self.out,
+            headless=self.headless,
+            force=True,
+            **driver_kw,
         )
-    except Exception as e:
-        first_line = (str(e).strip().splitlines() or [type(e).__name__])[0]
-        return f"a step failed: {type(e).__name__}: {first_line[:300]}"
-    finally:
-        page.remove_listener("request", on_request)
-    host = hostname(url)
-    calls = [s for s in seen if s[3] in ("fetch", "xhr", "document") and same_site(hostname(s[1]), host)]
-    if spec.inputs:
-        forms = {f for v in spec.inputs.values() for f in value_forms(v).values() if f}
-        if not any(f in s[1] or f in s[2] for s in calls for f in forms):
-            return "the script ran, but no request to the site carried the typed input (did it submit?)"
-    if spec.kind == "write" and not any(s[0] not in ("GET", "HEAD") for s in calls):
-        return "the script ran, but it sent no POST/PUT/DELETE, so the change was never submitted"
-    return None
 
 
-def plan_task(planner: Planner, page, tracker, start_url: str, spec: TaskSpec, max_attempts: int) -> TaskPlan:
-    plan = TaskPlan(spec)
-    url = urljoin(start_url, spec.start_path)
+def live_run(
+    planner: Planner, spec: TaskSpec, cap: Capture, max_attempts: int
+) -> tuple[AgentRun | None, list[Attempt]]:
+    """Claude does the task, recorded as the ``real`` run. Returns its run, or None after max_attempts."""
+    from mapper.capture.record import record
+
+    attempts: list[Attempt] = []
     feedback: list[str] = []
+    url = urljoin(cap.start_url, spec.start_path)
     for n in range(1, max_attempts + 1):
-        _goto(page, tracker, url)
-        try:
-            steps = planner.write_script(spec, as_text(page_snapshot(page)), feedback)
-        except PlanError as e:
-            plan.attempts.append(Attempt([], f"invalid script: {e}"))
-            feedback.append(f"attempt {n}: invalid script: {e}")
-            continue
-        error = dry_run(page, tracker, url, steps, spec)
-        plan.attempts.append(Attempt(steps, error))
-        if error is None:
-            plan.script = steps
-            if spec.paginates and spec.kind == "read":
-                plan.next_selector = _next_control(planner, page, spec)
-            return plan
-        where = as_text(page_snapshot(page))[:MAX_FEEDBACK_CHARS]
-        feedback.append(f"attempt {n} ({json.dumps(steps)}): {error}\nThe page at that point:\n{where}")
-    return plan
-
-
-def _next_control(planner: Planner, page, spec: TaskSpec) -> str | None:
-    try:
-        sel = planner.find_next(spec, as_text(page_snapshot(page)))
-    except PlanError:
-        return None
-    if sel and page.query_selector(sel) is not None:
-        return sel
-    return None
-
-
-# --- phase 2 and 3: record and check -----------------------------------------------------------
-
-
-def record_task(plan: TaskPlan, start_url: str, state: Path | None, out: Path, headless: bool) -> list[str]:
-    from mapper.capture.record import CaptureConfig, record
-
-    spec, steps = plan.spec, plan.script or []
-    url = urljoin(start_url, spec.start_path)
-    runs: dict[str, tuple[dict, dict, list[dict]]] = {
-        "m1": ({k: new_marker() for k in spec.inputs}, {}, steps),
-        "m2": ({k: new_marker() for k in spec.inputs}, {}, steps),
-        "real": ({}, dict(spec.inputs), steps),
-    }
-    if plan.next_selector:
-        page2 = [
-            *steps,
-            {"type": "click", "selector": plan.next_selector},
-            {"type": "wait", "ms": 300},
-            {"type": "mark"},
-        ]
-        runs["page2"] = ({}, dict(spec.inputs), page2)
-    for run, (markers, real, script) in runs.items():
-        record(
-            CaptureConfig(
-                start_url=url,
-                task=spec.name,
-                run=run,
-                markers=markers,
-                real_inputs=real,
-                kind=spec.kind,
-                description=spec.description,
-                state=state,
-                out=out,
-                headless=headless,
-                script=script,
-                force=True,
-            )
+        _say(
+            f"{spec.name}: Claude is doing the task live (attempt {n} of {max_attempts}), recorded as 'real'"
         )
-    return list(runs)
+        done: dict[str, AgentRun] = {}
+
+        def agent(page, tracker, mark, done=done) -> None:
+            page.set_default_timeout(cap.step_timeout_ms)
+            done["run"] = drive(
+                page, tracker, mark, planner=planner, spec=spec, start_url=url, feedback=feedback
+            )
+
+        try:
+            record(cap.config(spec, "real", real_inputs=dict(spec.inputs), agent=agent))
+        except AgentFailed as e:
+            actions, error = (e.run.actions if e.run else []), str(e)
+        except Exception as e:  # the browser, the LLM call or the recording itself failed
+            actions, error = [], _first_line(e)
+        else:
+            run = done["run"]
+            attempts.append(Attempt(run.actions, None))
+            _say(f"{spec.name}: done in {len(run.actions)} actions; final check: {run.verdict}")
+            return run, attempts
+        attempts.append(Attempt(actions, error))
+        feedback.append(f"attempt {n}: {error}")
+        _say(f"{spec.name}: attempt {n} failed: {error}")
+    return None, attempts
+
+
+# --- phase 3: the replays ----------------------------------------------------------------------------
+
+
+def replay_runs(spec: TaskSpec, run: AgentRun, cap: Capture, task_dir: Path) -> tuple[list[dict], list[str]]:
+    """Re-run the live run's recorded actions for m1, m2 (fresh markers) and page2. Returns its steps."""
+    from mapper.capture.record import record
+    from mapper.capture.replay import plan_bundle
+
+    plan = plan_bundle(task_dir / "real")
+    steps = plan.steps
+    untyped = [k for k in spec.inputs if "{{params." + k + "}}" not in json.dumps(steps)]
+    if untyped:
+        raise RuntimeError(
+            f"the recorded actions never type the input(s) {untyped}, so they can't be replayed"
+        )
+    runs: dict[str, dict] = {
+        "m1": {"markers": {k: new_marker() for k in spec.inputs}, "script": steps},
+        "m2": {"markers": {k: new_marker() for k in spec.inputs}, "script": steps},
+    }
+    if run.next_selector:
+        page2 = [*steps, {"type": "click", "selector": run.next_selector}, {"type": "mark"}]
+        runs["page2"] = {"real_inputs": dict(spec.inputs), "script": page2}
+    for name, kw in runs.items():
+        words = ", ".join((kw.get("markers") or kw.get("real_inputs") or {}).values())
+        _say(f"{spec.name}: recording '{name}', {RUN_LABELS[name]}" + (f" ({words})" if words else ""))
+        record(cap.config(spec, name, **kw))
+    return steps, ["real", *runs]
 
 
 def check_task(task_dir: Path, kind: str) -> str | None:
@@ -241,6 +256,7 @@ def explore(
     out = Path(out)
     state = Path(state) if state else None
     domain_dir = out / registrable_domain(hostname(start_url))
+    cap = Capture(start_url, state, out, headless, step_timeout_ms)
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless)
@@ -251,34 +267,36 @@ def explore(
             page = context.new_page()
             page.set_default_timeout(step_timeout_ms)
             site, pages = survey(page, tracker, start_url, extra_pages)
-            specs = planner.discover(site, max_tasks, wanted)
-            outcomes = []
-            for spec in specs:
-                if spec.kind == "write" and not include_writes:
-                    reason = "write task: exploring it really performs it; pass --include-writes"
-                    outcomes.append(TaskOutcome(TaskPlan(spec), "skipped", reason))
-                    continue
-                plan = plan_task(planner, page, tracker, start_url, spec, max_attempts)
-                if plan.script is None:
-                    outcomes.append(
-                        TaskOutcome(plan, "failed", plan.attempts[-1].error or "no working script")
-                    )
-                else:
-                    outcomes.append(TaskOutcome(plan, "planned"))
         finally:
             context.close()
             browser.close()
 
-    for o in outcomes:
-        if o.status != "planned":
+    specs = planner.discover(site, max_tasks, wanted)
+    _say(f"the AI picked {len(specs)} task(s): {', '.join(s.name for s in specs)}")
+    outcomes = []
+    for spec in specs:
+        plan = TaskPlan(spec)
+        if spec.kind == "write" and not include_writes:
+            reason = "write task: exploring it really performs it; pass --include-writes"
+            _say(f"{spec.name}: skipped ({reason})")
+            outcomes.append(TaskOutcome(plan, "skipped", reason))
             continue
+        task_dir = domain_dir / spec.name
+        shutil.rmtree(task_dir, ignore_errors=True)  # no leftover runs from an earlier exploration
+        run, plan.attempts = live_run(planner, spec, cap, max_attempts)
+        if run is None:
+            shutil.rmtree(task_dir, ignore_errors=True)  # a failed live run leaves nothing to map
+            outcomes.append(TaskOutcome(plan, "failed", plan.attempts[-1].error or "not done"))
+            continue
+        plan.next_selector = run.next_selector
         try:
-            o.runs = record_task(o.plan, start_url, state, out, headless)
+            plan.script, runs = replay_runs(spec, run, cap, task_dir)
         except Exception as e:
-            o.status, o.reason = "failed", f"recording failed: {type(e).__name__}: {str(e)[:200]}"
+            shutil.rmtree(task_dir, ignore_errors=True)
+            outcomes.append(TaskOutcome(plan, "failed", f"replay failed: {_first_line(e)}"))
             continue
-        problem = check_task(domain_dir / o.plan.spec.name, o.plan.spec.kind)
-        o.status, o.reason = ("failed", problem) if problem else ("recorded", "")
+        problem = check_task(task_dir, spec.kind)
+        outcomes.append(TaskOutcome(plan, "failed" if problem else "recorded", problem or "", runs))
 
     result = ExploreResult(start_url, domain_dir, pages, outcomes)
     domain_dir.mkdir(parents=True, exist_ok=True)
