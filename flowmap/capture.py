@@ -379,35 +379,43 @@ async def capture_flow(
     runs: list[Run] = []
     async with async_playwright() as p:
         browser = None
+        shared = None  # a persistent profile is one context for every run
         if profile_dir is not None:
             profile_dir.mkdir(parents=True, exist_ok=True)
-            context = await p.chromium.launch_persistent_context(str(profile_dir), headless=headless)
+            shared = await p.chromium.launch_persistent_context(str(profile_dir), headless=headless)
         else:
             browser = await p.chromium.launch(headless=headless)
-            context = await browser.new_context(
-                storage_state=str(storage_state) if storage_state else None,
-                user_agent=await _plain_user_agent(browser) if headless else None,
-            )
+            user_agent = await _plain_user_agent(browser) if headless else None
         try:
             for i, (kind, values, markers) in enumerate(run_plan(flow, marker_runs, real_runs)):
                 if i and pause_s:
                     await asyncio.sleep(pause_s)
                 n = sum(1 for r in runs if r.kind == kind)
-                run = await capture_run(
-                    context,
-                    flow,
-                    kind=kind,
-                    index=n,
-                    values=values,
-                    markers=markers,
-                    session=session,
-                    timeout_ms=timeout_ms,
+                # Otherwise a fresh context per run: cookies the site sets differ between runs, so inference
+                # can tell where they come from.
+                context = shared or await browser.new_context(  # type: ignore[union-attr]
+                    storage_state=str(storage_state) if storage_state else None, user_agent=user_agent
                 )
+                try:
+                    run = await capture_run(
+                        context,
+                        flow,
+                        kind=kind,
+                        index=n,
+                        values=values,
+                        markers=markers,
+                        session=session,
+                        timeout_ms=timeout_ms,
+                    )
+                finally:
+                    if shared is None:
+                        await context.close()
                 runs.append(run)
                 if root is not None:
                     save_run(run, root)
         finally:
-            await context.close()
+            if shared is not None:
+                await shared.close()
             if browser is not None:
                 await browser.close()
     return runs
