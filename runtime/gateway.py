@@ -75,13 +75,19 @@ HEAL_STATUS_TOOL = types.Tool(
 )
 
 
-def _domain_tool(name: str, description: str, extra: dict[str, Any] | None = None) -> types.Tool:
+def _domain_tool(
+    name: str,
+    description: str,
+    extra: dict[str, Any] | None = None,
+    annotations: types.ToolAnnotations | None = None,
+) -> types.Tool:
     props: dict[str, Any] = {"domain": {"type": "string", "description": "the site's domain, e.g. linkedin.com"}}
     props.update(extra or {})
     return types.Tool(
         name=name,
         description=description,
         input_schema={"type": "object", "properties": props, "required": ["domain"], "additionalProperties": False},
+        annotations=annotations,
     )
 
 
@@ -102,6 +108,14 @@ CONNECTION_TOOLS = {
         _domain_tool(
             "connection_status",
             "Whether the user is connected to a site (connected, expired, pending or not_connected).",
+        ),
+        _domain_tool(
+            "disconnect",
+            "Disconnect the user's account on a site: permanently deletes the stored login session and the "
+            "server-side browser profile for it, and cancels any pending login link. Only call this when the user "
+            "asks to disconnect or log out of that site.",
+            {"provider": {"type": "string", "description": "optional connect provider id; default: all of them"}},
+            types.ToolAnnotations(destructive_hint=True, idempotent_hint=True, read_only_hint=False),
         ),
     )
 }
@@ -267,6 +281,11 @@ class Gateway:
             out = self.connections.start(DEFAULT_USER, domain, provider if isinstance(provider, str) else None)
         elif name == "poll_connection":
             out = self.connections.poll(DEFAULT_USER, domain)
+        elif name == "disconnect":
+            provider = args.get("provider")
+            out = await self.connections.disconnect(
+                DEFAULT_USER, domain, provider if isinstance(provider, str) else None
+            )
         else:
             out = self.connections.status(DEFAULT_USER, domain)
         if "error" in out:

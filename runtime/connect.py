@@ -272,6 +272,44 @@ class ConnectionManager:
         if self.neko is not None:
             await self.neko.close()
 
+    # ---- disconnect --------------------------------------------------------
+
+    async def disconnect(self, user: str, domain: str, provider: str | None = None) -> dict[str, Any]:
+        """Forget the user's login for a site: the encrypted session, the server-side browser profile and any
+        pending login link. `provider` None = every provider of the site."""
+        card = self._card(domain)
+        if card is None:
+            return {"error": f"unknown domain {domain!r}"}
+        if provider is not None and card.provider(provider) is None:
+            return {"error": f"{domain} has no provider {provider!r}"}
+        ids = [provider] if provider is not None else [p.id for p in card.connect_providers]
+        results = []
+        for pid in ids:
+            record = self.store.record(user, domain, pid)
+            self.store.delete(user, domain, pid)
+            profile_deleted = False
+            if self.pool is not None:
+                profile_deleted = await self.pool.delete_profile(ProfileKey(user, domain, pid))
+            results.append(
+                {
+                    "provider": pid,
+                    "was_connected": record is not None and record.status == "connected",
+                    "session_deleted": record is not None,
+                    "browser_profile_deleted": profile_deleted,
+                }
+            )
+        conn = self._latest.get((user, domain))
+        if conn is not None and conn.provider in ids and conn.status != "expired":
+            conn.status, conn.message = "expired", "disconnected by the user"
+            await self._stop_browser(conn)
+        log.info("%s disconnected from %s (%s)", user, domain, ", ".join(ids) or "no providers")
+        return {
+            "domain": domain,
+            "disconnected": True,
+            "providers": results,
+            "next_step": "the agent will get AUTH_REQUIRED for this site until the user connects again",
+        }
+
     # ---- keep-alive --------------------------------------------------------
 
     async def keepalive_once(self) -> dict[str, str]:
