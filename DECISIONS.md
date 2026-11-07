@@ -32,3 +32,11 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   A `null` value for an optional param is treated as "not given".
 - `BAD_PARAMS` field errors go in `error.message` as `name: problem; ...` (no extra envelope field).
 - `envelope.data` is a list of dicts when `output.fields` is set, otherwise the raw extracted items.
+
+## Registry
+- `rollback(domain, version)` re-activates the existing row; it does not copy it into a new version.
+- `save(..., activate=False)` stores an inactive version (for later use by heal candidates / review).
+- The in-memory active copy is refreshed after every local write, and by `refresh()`, which notices writes from
+  other processes (the mapper) via `PRAGMA data_version`. The gateway polls `refresh()`.
+- Cards are stored as canonical JSON (sorted keys) of only the fields the mapper set, so inheritance
+  (explicit `auth_provider: null` vs absent) survives the round trip.
