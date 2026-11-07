@@ -32,9 +32,10 @@ from runtime.connect_page import routes as connect_routes
 from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
+from runtime.mapper_remapper import MapperRemapper
 from runtime.registry import Registry, StoredCard
 from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
-from runtime.sessions import DevEnvSessionStore
+from runtime.sessions import DevEnvSessionStore, SessionStore
 from runtime.tiers import default_tiers
 from runtime.state import StateStore
 from schema import load_card
@@ -499,10 +500,16 @@ def load_into_registry(registry: Registry, path: Path) -> int | None:
     return registry.save(card, note=f"loaded from {path.name}")
 
 
-def load_remapper(spec: str | None) -> Remapper | None:
-    """`module.path:Name` -> an instance of Name (or Name itself if it is already an instance)."""
+def load_remapper(
+    spec: str | None, sessions: SessionStore | None = None, captures_dir: str | Path = "captures"
+) -> Remapper | None:
+    """`mapper` -> the heal adapter (WeiWei's mapper); `module.path:Name` -> an instance of Name (or Name itself
+    if it is already an instance)."""
     if not spec:
         return None
+    if spec == "mapper":
+        log.info("using the mapper to heal (recordings in %s)", captures_dir)
+        return MapperRemapper(captures_dir, sessions=sessions)
     module_name, _, attr = spec.partition(":")
     obj = getattr(importlib.import_module(module_name), attr)
     remapper: Remapper = obj() if isinstance(obj, type) else obj
@@ -550,8 +557,9 @@ def main() -> None:
     )
     tiers = default_tiers()
     tiers["browser"] = BrowserTier(pool)
+    sessions = ChainedSessionStore(session_store, DevEnvSessionStore(os.environ.get("DEV_SESSION_COOKIES")))
     executor = Executor(
-        ChainedSessionStore(session_store, DevEnvSessionStore(os.environ.get("DEV_SESSION_COOKIES"))),
+        sessions,
         Confirmer(os.environ.get("CONFIRMATION_SECRET", "")),
         tiers=tiers,
     )
@@ -578,7 +586,8 @@ def main() -> None:
             d.strip() for d in os.environ.get("HEALTH_CHECK_DISABLED_DOMAINS", "").split(",") if d.strip()
         ),
     )
-    healer = HealManager(registry, StateStore(db_path), executor, load_remapper(os.environ.get("REMAPPER")), config)
+    remapper = load_remapper(os.environ.get("REMAPPER"), sessions, os.environ.get("CAPTURES_DIR", "./captures"))
+    healer = HealManager(registry, StateStore(db_path), executor, remapper, config)
     gateway = Gateway(
         registry, executor, healer=healer, connections=connections, pool=pool,
         keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")),

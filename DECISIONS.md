@@ -156,6 +156,21 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   post/buy/follow, and writes usually have no examples), so the job result lists them under `unvalidated`. The
   `heal_candidates` table is no longer written; it stays in the schema for history. `CARD_SPEC.md` "Healing" is
   updated to match.
+- **H5 Heal adapter (asked).** `runtime/mapper_remapper.py` is the `Remapper` done by WeiWei's mapper; Nobel builds
+  it (runtime side), calling the mapper's own `recapture` and `map_domain` without changing `mapper/`. Turned on
+  with `REMAPPER=mapper`; recordings are read from `CAPTURES_DIR/<domain>/<action>/`.
+  - **Only the broken actions are re-recorded (asked).** Each broken action's recordings are replayed, then the
+    whole card is rebuilt from every recording. Faster than WeiWei's `mapper heal` (which replays everything); the
+    runtime still validates every changed action before it goes live.
+  - **Sign-in for the replay (asked).** The user's current sign-in from our encrypted store (the one made through
+    the login link), else the sign-in saved inside the recording. The cookies go to a private (0600) Playwright
+    storage-state file in a private temp folder that is deleted as soon as the replays finish; values are never
+    logged. Cookies are written host-only for the card's `base_url` host.
+  - Errors from the mapper (no recordings, goal not found, replay failed, invalid card) become `RemapError`, so
+    the job fails cleanly, the action is marked degraded and the cooldown applies. Re-records run one at a time
+    (the mapper stages bundles in a shared folder) in a worker thread (the mapper uses Playwright's sync API).
+  - If one of several broken actions fails to replay, the ones already replayed keep their new recordings (the
+    mapper keeps the old ones in `<domain>.prev/`); no card is produced.
 - **Site-level fields** = everything except `actions` and `provenance`. A site-level change is all or nothing:
   if any read action fails its examples under it, nothing is activated.
 - **Degraded** is set when an action is kept on its old definition after a failed heal, and cleared when a later

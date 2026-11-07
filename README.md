@@ -50,7 +50,7 @@ Captures, HAR files, `state.json` and `.env` hold live login sessions: never com
 ## Healing
 
 When an action returns `PAGE_CHANGED`, the runtime queues a heal job, pre-checks it (a block or an expired login
-cancels it), then asks the mapper to re-map just that action:
+cancels it), then asks the mapper to re-record just the broken action and re-map the site:
 
 ```python
 class Remapper(Protocol):  # runtime/healing.py
@@ -58,9 +58,13 @@ class Remapper(Protocol):  # runtime/healing.py
 ```
 
 Return the whole proposed card. The runtime validates the changed actions against their `examples` and saves a
-new version; writes are never auto-activated. Set `REMAPPER=module:Class` in `.env`. For the fixture shop,
-`REMAPPER=tests.fixture_site.remapper:FixtureRemapper` demos the full loop: break the site, call `shop_get_item`,
-watch `heal_status`, call again.
+new version (healed writes go live too, listed as unvalidated).
+
+- `REMAPPER=mapper` (the default in `.env.example`) uses WeiWei's mapper (`runtime/mapper_remapper.py`): it replays
+  the broken action's recordings from `CAPTURES_DIR/<domain>/<action>/` in a headless browser, signed in as the
+  user, then re-maps the site. Sites need recordings made with `python -m mapper capture`.
+- `REMAPPER=tests.fixture_site.remapper:FixtureRemapper` is a stand-in for the fixture shop (which has no
+  recordings): break the site, call `get_item`, watch `heal_status`, call again.
 
 ## Login (connect a site) and the browser tier
 
@@ -81,4 +85,4 @@ Setup:
 
 Fixture shop login for testing: `demo` / `demo-password`. Tests needing Docker/Neko or Playwright's Chromium skip
 themselves when those aren't installed.
-The mapper's `heal` re-records and re-maps the whole site (see `docs/mapper-design.md`, "Healing"); wiring it in as the runtime's `Remapper` is the next step.
+Heal jobs use the mapper automatically with `REMAPPER=mapper`; `python -m mapper heal` still works by hand.
