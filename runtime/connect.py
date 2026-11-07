@@ -26,6 +26,7 @@ from schema import Card, ResultCode
 
 log = logging.getLogger("runtime.connect")
 MAX_POLL_WAIT_S = 45.0
+UNOPENED_POLL_WAIT_S = 6.0  # until the link is opened, don't hold the agent: it may not have sent the link
 R = ResultCode
 
 ConnStatus = Literal["pending", "connected", "expired"]
@@ -47,6 +48,7 @@ class Connection:
     # signed-out, so we wait for the user to confirm instead of auto-connecting (None = not checked yet).
     check_is_weak: bool | None = None
     first_cookies: dict[str, str] | None = None  # the login browser's cookies when first read
+    page_opened: bool = False  # someone loaded the connect page (so the user has the link)
 
     def refresh(self) -> None:
         if self.status == "pending" and time.time() > self.expires_at:
@@ -132,9 +134,10 @@ class ConnectionManager:
         out = conn.public(self.public_base_url)
         out["user_message"] = _poll_message(conn, out.get("url"))
         out["instructions"] = (
-            "Show the user the user_message. They sign in to the site themselves on that page; their password is "
-            "never shared with you. Then call poll_connection right away: it waits until they've signed in. If it "
-            "returns 'pending', call it again. Once 'connected', retry the original tool."
+            "The user can't see this result. First write the user_message (it contains the link) in your reply to "
+            "them. They sign in to the site themselves on that page; their password is never shared with you. Then "
+            "call poll_connection: it waits until they've signed in. If it returns 'pending', call it again. Once "
+            "'connected', retry the original tool."
         )
         return out
 
@@ -143,10 +146,12 @@ class ConnectionManager:
         conn = self._latest.get((user, domain))
         if conn is None:
             return self.status(user, domain)
-        deadline = time.monotonic() + max(0.0, min(wait_s, MAX_POLL_WAIT_S))
+        started = time.monotonic()
+        wait_s = max(0.0, min(wait_s, MAX_POLL_WAIT_S))
         while True:
             conn.refresh()
-            if conn.status != "pending" or time.monotonic() >= deadline:
+            limit = wait_s if conn.page_opened else min(wait_s, UNOPENED_POLL_WAIT_S)
+            if conn.status != "pending" or time.monotonic() - started >= limit:
                 break
             await asyncio.sleep(0.25)
         out = conn.public(self.public_base_url)
@@ -156,6 +161,13 @@ class ConnectionManager:
             "pending": "still waiting for the user to sign in; call poll_connection again",
             "expired": "call start_connection again for a new link",
         }[conn.status]
+        out["link_opened"] = conn.page_opened
+        if conn.status == "pending" and not conn.page_opened:
+            out["hint"] = (
+                "The user hasn't opened the sign-in link yet, probably because they haven't seen it: they can't see "
+                "tool results. Write the user_message (with the link) in your reply to them now, then call "
+                "poll_connection again."
+            )
         return out
 
     def status(self, user: str, domain: str) -> dict[str, Any]:
@@ -197,6 +209,11 @@ class ConnectionManager:
             "user_message": message,
             "providers": providers,
         }
+
+    def mark_opened(self, token: str) -> None:
+        conn = self._by_token.get(token)
+        if conn is not None:
+            conn.page_opened = True
 
     def by_token(self, token: str) -> Connection | None:
         conn = self._by_token.get(token)

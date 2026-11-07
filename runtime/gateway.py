@@ -67,7 +67,9 @@ INSTRUCTIONS = (
     "When you talk to the user, describe outcomes in plain terms (\"You're signed out of linkedin.com\", "
     "\"Sign in here: <link>\", \"The site changed; I'll retry in a moment\"). Don't mention tool names, status "
     "codes, sessions, cookies, browser profiles, cards or other internals unless the user asks how it works. "
-    "Results about signing in include a `user_message`; use it."
+    "Results about signing in include a `user_message`; use it.\n"
+    "The user cannot see tool results. When start_connection gives you a sign-in link, write that link in your "
+    "reply to the user before you call poll_connection, or they will have nothing to click."
 )
 
 
@@ -106,8 +108,8 @@ CONNECTION_TOOLS = {
         _domain_tool(
             "start_connection",
             "Get a sign-in link for a site, after a tool result says the user needs to sign in (AUTH_REQUIRED or "
-            "AUTH_EXPIRED). Show the user the result's user_message (it contains the link); they sign in to the site "
-            "themselves on that page. Then call poll_connection straight away: it waits for them.",
+            "AUTH_EXPIRED). The user can't see tool results: write the result's user_message (it contains the link) "
+            "in your reply to them first. Then call poll_connection: it waits until they've signed in.",
             {"provider": {"type": "string", "description": "optional connect provider id, if the site has several"}},
         ),
         _domain_tool(

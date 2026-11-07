@@ -147,6 +147,7 @@ def routes(manager: ConnectionManager) -> list[BaseRoute]:
         conn = manager.by_token(request.path_params["token"])
         if conn is None:
             return HTMLResponse("<p>Unknown login link.</p>", status_code=404, headers=NO_STORE)
+        manager.mark_opened(conn.token)
         return HTMLResponse(render_page(conn, *size), headers=NO_STORE)
 
     async def status(request: Request) -> Response:

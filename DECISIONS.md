@@ -202,6 +202,9 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **Agents continue by themselves.** `poll_connection` waits server-side (default 25 s, max 45 s, like AgentWeb's) and
   returns the moment the sign-in lands; agents are told to call it right after showing the link and again while
   it says `pending`. The page replaces the browser with a clear "You're signed in" panel when done.
+  Because users can't see tool results, the instructions tell agents to write the sign-in link in their reply
+  before polling. As a safety net, until someone opens the link `poll_connection` waits at most 6 s and returns a
+  hint to send the link (an agent once started waiting without ever showing it).
 - **Neko details.** One container per login link (`ghcr.io/m1k1o/neko/chromium`, Neko 3.2), started when the user
   clicks "Log in", removed once connected or expired; leftovers are removed at startup (label `htb.neko`).
   Chromium runs in kiosk mode on the provider's `login_url`, at 1920x1200 with device scale 1.5 (sites lay out at

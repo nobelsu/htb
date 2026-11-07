@@ -207,3 +207,28 @@ async def test_poll_waits_for_the_sign_in(tmp_path: Path, fixture_card: dict[str
     still = await manager.poll("v", DOMAIN, wait_s=0.5)
     assert still["status"] == "pending" and 0.4 < loop.time() - timeout_started < 2
     registry.close()
+
+
+async def test_poll_does_not_hang_when_the_link_was_never_opened(
+    tmp_path: Path, fixture_card: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import runtime.connect as connect_module
+
+    monkeypatch.setattr(connect_module, "UNOPENED_POLL_WAIT_S", 0.4)
+    manager, registry = make_manager(tmp_path, fixture_card, FakeNeko())
+    started = manager.start("u", DOMAIN)
+    token = started["url"].rsplit("/", 1)[1]
+    loop = asyncio.get_running_loop()
+
+    t0 = loop.time()
+    out = await manager.poll("u", DOMAIN, wait_s=30)
+    assert loop.time() - t0 < 2  # didn't hold for 30 s
+    assert out["status"] == "pending" and out["link_opened"] is False
+    assert "can't see tool results" in out["hint"] and started["url"] in out["user_message"]
+
+    manager.mark_opened(token)
+    t0 = loop.time()
+    out = await manager.poll("u", DOMAIN, wait_s=1)
+    assert loop.time() - t0 >= 0.9  # opened: the full wait applies
+    assert out["link_opened"] is True and "can't see tool results" not in out["hint"]
+    registry.close()
