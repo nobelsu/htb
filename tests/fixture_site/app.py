@@ -146,7 +146,10 @@ def orders(request: Request, sid: str | None = Cookie(default=None)) -> Response
         return RedirectResponse("/login?next=/account", status_code=302)
     if sid != VALID_SID or request.headers.get("x-csrf") != CSRF:
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
-    return JSONResponse({"orders": [{"id": "o1", "total": 30}, {"id": "o2", "total": 12}]})
+    resp = JSONResponse({"orders": [{"id": "o1", "total": 30}, {"id": "o2", "total": 12}]})
+    state.rotations += 1
+    resp.set_cookie("visits", str(state.rotations))  # like real sites: a cookie that changes as you use the site
+    return resp
 
 
 # ---- a site that rotates its sign-in cookie on every signed-in response -------------------------------------
