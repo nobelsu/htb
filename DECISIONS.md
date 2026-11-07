@@ -206,6 +206,11 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   link-in-the-result flow above. Caveat found in testing: Claude Code declares URL elicitation but its desktop app
   and `claude -p` answer "cancel" instantly without showing anything, so "cancel" is treated as "the app couldn't
   show it": the result carries the link and tells the agent to write it and call poll_connection in the same turn. The gateway logs each client's name and elicitation support once.
+- **L6 Instant "decline" means the app answered (judgement call).** Since Claude Code 2.1.318 the desktop app
+  answers URL prompts with "decline" instead of "cancel", still within ~10 ms and without showing anything, so the
+  agent was told "cancelled" and stopped waiting. No person answers in under 2 s (`HUMAN_REPLY_MIN_S`), so a decline
+  faster than that gets the same fallback as "cancel" (agent writes the link, then calls poll_connection). A slower
+  decline is still a real "no".
 - **Neko details.** One container per login link (`ghcr.io/m1k1o/neko/chromium`, Neko 3.2), started when the user
   clicks "Log in", removed once connected or expired; leftovers are removed at startup (label `htb.neko`).
   Chromium runs in kiosk mode on the provider's `login_url`, at 1920x1200 with device scale 1.5 (sites lay out at

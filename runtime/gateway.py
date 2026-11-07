@@ -12,6 +12,7 @@ import importlib
 import json
 import logging
 import os
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -183,6 +184,7 @@ class Gateway:
         self.keepalive_s = keepalive_s
         self.poll_interval_s = poll_interval_s
         self._seen_clients: set[tuple[object, object, object]] = set()
+        self._prompted_at: dict[str, float] = {}  # sign-in token -> when we asked the client to show the link
         self.server: Server[dict[str, Any]] = Server(
             "htb-runtime",
             version="0.1.0",
@@ -324,6 +326,7 @@ class Gateway:
                     )
                 )
                 log.info("start_connection: asking the client to show the sign-in link (URL elicitation)")
+                self._prompted_at[token] = time.monotonic()
                 return types.InputRequiredResult(input_requests={SIGN_IN_REQUEST: request}, request_state=token)
         elif name == "poll_connection":
             wait = args.get("wait_seconds", 25)
@@ -350,6 +353,12 @@ class Gateway:
             return _error_result("unknown or expired sign-in; call start_connection again")
         response = (params.input_responses or {}).get(SIGN_IN_REQUEST)
         action = getattr(response, "action", None)
+        prompted_at = self._prompted_at.pop(conn.token, None)
+        answered_in = time.monotonic() - prompted_at if prompted_at is not None else None
+        if action == "decline" and answered_in is not None and answered_in < HUMAN_REPLY_MIN_S:
+            # Claude Code's desktop app declines URL prompts by itself within milliseconds; no person is that fast.
+            log.info("start_connection: the client answered the sign-in prompt itself (%.0f ms)", answered_in * 1000)
+            action = "cancel"
         if action == "decline":  # the user said no
             out = await self.connections.poll(conn.user, conn.domain)
             out.pop("url", None)
@@ -415,6 +424,8 @@ class Gateway:
 
 
 SIGN_IN_REQUEST = "sign_in"
+# An answer to the sign-in prompt faster than this came from the app, not the person (see DECISIONS.md L6).
+HUMAN_REPLY_MIN_S = 2.0
 
 
 def _supports_url_elicitation(ctx: Any) -> bool:
