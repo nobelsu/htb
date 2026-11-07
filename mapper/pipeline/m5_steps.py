@@ -87,9 +87,14 @@ class StepPlan:
     request: dict
     extract: dict[str, dict] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    expect: dict = field(default_factory=dict)  # filled by M6
 
     def as_card(self) -> dict:
-        return {"id": self.id, "request": self.request, "extract": self.extract}
+        card: dict = {"id": self.id, "request": self.request}
+        if self.expect:
+            card["expect"] = self.expect
+        card["extract"] = self.extract
+        return card
 
 
 class _Renderer:

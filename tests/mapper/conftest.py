@@ -127,3 +127,9 @@ def fixture_captures(chromium, tmp_path_factory):
     capture.site = site
     yield capture
     site.stop()
+
+
+@pytest.fixture(autouse=True)
+def _no_llm(monkeypatch):
+    """Mapper tests never call the Anthropic API, even when the developer has a key set."""
+    monkeypatch.setenv("MAPPER_NO_LLM", "1")

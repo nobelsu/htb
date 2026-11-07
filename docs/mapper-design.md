@@ -168,5 +168,12 @@ python -m mapper capture <start_url> --task NAME --run m1|m2|real|page2 \
     [--headless --script steps.jsonl] [--out captures] [--force]
 python -m mapper map captures/<domain>/            # all tasks → card + report
 python -m mapper map captures/<domain>/ --task NAME # one action (used by healing)
-python -m mapper validate path/to/card.json
+    [--live] [--save --db runtime.db] [--out DIR]
+python -m mapper validate path/to/card.json [--live --state path/to/state.json]
 ```
+
+Validation = `schema.validate_card` + `tools/check_card.py` + `mapper/checks.py` (no live session value may
+appear in the card). `--live` runs each read action's examples through `runtime.executor.Executor` (via the
+`Executor` protocol in `mapper/validate.py`) with the capture's session; it sends real requests, so it is
+opt-in. `--save` writes a valid card to `runtime.registry.Registry`. Optional LLM steps use Claude Sonnet 5.5
+(`claude-sonnet-5-5`) when `ANTHROPIC_API_KEY` is set and the `[llm]` extra is installed.

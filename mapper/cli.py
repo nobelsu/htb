@@ -68,10 +68,17 @@ def build_parser() -> argparse.ArgumentParser:
     mp.add_argument("captures_dir", help="captures/<domain>/")
     mp.add_argument("--task", help="re-map only this task (used by healing)")
     mp.add_argument("--out", help="output directory (default: the captures dir)")
+    mp.add_argument(
+        "--live", action="store_true", help="run read examples through the executor (sends real requests)"
+    )
+    mp.add_argument("--save", action="store_true", help="save the card to the registry if it is valid")
+    mp.add_argument("--db", help="registry SQLite file (default: $REGISTRY_DB or ./runtime.db)")
     mp.set_defaults(handler=_cmd_map)
 
     val = sub.add_parser("validate", help="run save-time validation on a card")
     val.add_argument("card", help="path/to/card.json")
+    val.add_argument("--live", action="store_true", help="run read examples through the executor")
+    val.add_argument("--state", help="state.json with the session to use for --live")
     val.set_defaults(handler=_cmd_validate)
 
     return parser
