@@ -341,3 +341,22 @@ async def test_clients_without_url_elicitation_get_the_link(strong_gateway: tupl
         assert out["status"] == "pending" and out["user_message"].startswith("**[Sign in to fixture.test →](")
 
 
+
+
+async def test_pending_sign_in_results_lead_with_the_link_in_plain_text(strong_gateway: tuple[str, FakeNeko]) -> None:
+    """Agents summarised the JSON's user_message as "use the link" and dropped the URL; a plain first line holding
+    the link itself is what they copy."""
+    import mcp_types as types
+
+    base, _ = strong_gateway
+    async with connect(f"{base}/mcp", "auto") as client:
+        result = await client.call_tool("start_connection", {"domain": DOMAIN})
+        out = envelope(result)
+        first = result.content[0]
+        assert isinstance(first, types.TextContent) and len(result.content) == 2
+        assert first.text.startswith("Show this to the user now.") and out["url"] in first.text
+        assert first.text.endswith(out["user_message"])
+        polled = await client.call_tool("poll_connection", {"domain": DOMAIN, "wait_seconds": 0})
+        assert out["url"] in polled.content[0].text  # still waiting: still leads with the link
+        status = await client.call_tool("connection_status", {"domain": DOMAIN})
+        assert len(status.content) == 1  # nothing to show: plain JSON

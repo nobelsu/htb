@@ -59,9 +59,10 @@ def act(action: str, params: dict[str, Any] | None = None, site: str = "fixture.
 
 
 def envelope(result: types.CallToolResult) -> dict[str, Any]:
-    first = result.content[0]
-    assert isinstance(first, types.TextContent)
-    data: dict[str, Any] = json.loads(first.text)
+    """The result's JSON block (sign-in results may lead with a plain line for the user before it)."""
+    last = result.content[-1]
+    assert isinstance(last, types.TextContent)
+    data: dict[str, Any] = json.loads(last.text)
     assert result.structured_content == data
     return data
 

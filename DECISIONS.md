@@ -221,6 +221,9 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   link-in-the-result flow above. Caveat found in testing: Claude Code declares URL elicitation but its desktop app
   and `claude -p` answer "cancel" instantly without showing anything, so "cancel" is treated as "the app couldn't
   show it": the result carries the link and tells the agent to write it and call poll_connection in the same turn. The gateway logs each client's name and elicitation support once.
+  Still, agents sometimes summarised the JSON's user_message as "use the link" and dropped the URL (the unopened-link
+  safety net then recovered ~30 s later). So while a link is waiting, sign-in results lead with a plain text line,
+  "Show this to the user now..." followed by the link itself, before the JSON.
 - **L6 Instant "decline" means the app answered (judgement call).** Since Claude Code 2.1.318 the desktop app
   answers URL prompts with "decline" instead of "cancel", still within ~10 ms and without showing anything, so the
   agent was told "cancelled" and stopped waiting. No person answers in under 2 s (`HUMAN_REPLY_MIN_S`), so a decline
@@ -319,8 +322,24 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   - Not covered: the IP address (residential proxies, still to do), time zone, screen size and other JS-visible
     traits (only the `browser` tier runs JS); the `browser` tier's real Chrome engine version may differ from the
     version it claims.
+- **L9 Several users (asked).** Each API key belongs to one user, and every tool call acts as that user (the
+  executor, sign-ins, browser profiles, login links and device identities were already per user; the gateway's
+  hard-coded `default` is gone). `BearerAuth` resolves the key and puts the user on the request; tools read it
+  from `ctx.request`. Cards, heal jobs and health checks stay shared (they're about sites, not users).
+  - **The .env key stays user `default` (asked),** so existing sign-ins keep working.
+  - **Keys come from a sign-up page (asked) behind an invite code (asked)**, `SIGNUP_CODE` in `.env`; empty = no
+    page (404). The form asks for a name and an email (asked; the email isn't verified, we don't send mail). The
+    key is shown once with the `claude mcp add` line. Also a command line: `python -m runtime.keys add | list |
+    reissue | revoke`.
+  - Judgement calls: names are 2-32 of `a-z 0-9 - _` (they end up in profile folder names); `default`, `_shared`,
+    `admin`, `root` are reserved. Keys are `htb_` + 32 random bytes; only their SHA-256 is stored (high-entropy
+    keys don't need a slow hash). Wrong invite codes: 10 per 10 minutes per client address, then every attempt
+    from it is refused until they age out (behind a proxy that's the proxy's address). The page is no-store,
+    no-referrer and can't be framed. Logs name new users but never the key, the code or the email.
+  - A URL sign-in prompt's retry is only accepted from the user who started it.
+  - Not done: users can't see or rotate their own key on the page (lost key = `reissue` by us); no per-user
+    rate limits or quotas; `heal_status` shows any job (jobs are about sites).
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
 - **Not handled yet:** sites that bind sessions to an IP may notice the switch from the login browser to server
-  requests (planned: residential proxies; the device identity is handled, L8); per-user API keys (everything is
-  user `default`).
+  requests (planned: residential proxies; the device identity is handled, L8); per-user quotas (several users: L9).

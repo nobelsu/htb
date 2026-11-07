@@ -29,9 +29,11 @@ from runtime.browser.tier import BrowserTier
 from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
 from runtime.connect_page import routes as connect_routes
+from runtime.signup_page import routes as signup_routes
 from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
+from runtime.keys import ENV_KEY_USER, KeyStore
 from runtime.mapper_remapper import MapperRemapper
 from runtime.registry import Registry, StoredCard
 from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
@@ -42,7 +44,7 @@ from schema import load_card
 
 log = logging.getLogger("runtime.gateway")
 
-DEFAULT_USER = "default"  # one API key = one user for now (TODO: per-user keys)
+DEFAULT_USER = ENV_KEY_USER  # the .env key's user; other keys belong to their own users (runtime/keys.py)
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -245,7 +247,7 @@ class Gateway:
         if params.name == FIND_ACTIONS_TOOL.name:
             return self._find_actions(dict(params.arguments or {}))
         if params.name == RUN_ACTION_TOOL.name:
-            return await self._run_action(dict(params.arguments or {}))
+            return await self._run_action(dict(params.arguments or {}), caller(ctx))
         return _error_result(f"unknown tool {params.name!r}")
 
     def _find_actions(self, args: dict[str, Any]) -> types.CallToolResult:
@@ -257,7 +259,7 @@ class Gateway:
             return _error_result(str(out["error"]))
         return _json_result(out)
 
-    async def _run_action(self, args: dict[str, Any]) -> types.CallToolResult:
+    async def _run_action(self, args: dict[str, Any], user: str = DEFAULT_USER) -> types.CallToolResult:
         site, action, params = args.get("site"), args.get("action"), args.get("params", {})
         if not isinstance(site, str) or not isinstance(action, str):
             return _error_result("site and action (strings) are required; use find_actions to look them up")
@@ -272,13 +274,13 @@ class Gateway:
         confirmation_id = args.get("confirmation_id")
         if confirmation_id is not None:
             call_args["_confirmation_id"] = confirmation_id
-        return await self._execute(stored, action, call_args, f"{site}/{action}")
+        return await self._execute(stored, action, call_args, f"{site}/{action}", user)
 
     async def _execute(
-        self, stored: StoredCard, action: str, args: dict[str, Any], label: str
+        self, stored: StoredCard, action: str, args: dict[str, Any], label: str, user: str = DEFAULT_USER
     ) -> types.CallToolResult:
         try:
-            env = await self.executor.run(stored, action, args, user=DEFAULT_USER)
+            env = await self.executor.run(stored, action, args, user=user)
         except Exception:
             log.exception("executor crashed on %s", label)
             return _error_result(f"internal error running {label}")
@@ -305,14 +307,15 @@ class Gateway:
         self, name: str, args: dict[str, Any], ctx: Any = None, params: types.CallToolRequestParams | None = None
     ) -> types.CallToolResult | types.InputRequiredResult:
         assert self.connections is not None
+        user = caller(ctx)
         domain = args.get("domain")
         if not isinstance(domain, str) or not domain:
             return _error_result("domain (string) is required")
         if name == "start_connection" and params is not None and params.request_state:
-            return await self._finish_url_sign_in(params)
+            return await self._finish_url_sign_in(params, user)
         if name == "start_connection":
             provider = args.get("provider")
-            out = self.connections.start(DEFAULT_USER, domain, provider if isinstance(provider, str) else None)
+            out = self.connections.start(user, domain, provider if isinstance(provider, str) else None)
             if out.get("status") == "pending" and "url" in out and _supports_url_elicitation(ctx):
                 # Let the client itself show the link (MCP URL elicitation), so it never depends on the model
                 # copying it into its reply. The client retries this call once the user has responded.
@@ -332,25 +335,25 @@ class Gateway:
         elif name == "poll_connection":
             wait = args.get("wait_seconds", 25)
             wait_s = float(wait) if isinstance(wait, (int, float)) and not isinstance(wait, bool) else 25.0
-            out = await self.connections.poll(DEFAULT_USER, domain, wait_s)
+            out = await self.connections.poll(user, domain, wait_s)
         elif name == "disconnect":
             provider = args.get("provider")
             out = await self.connections.disconnect(
-                DEFAULT_USER, domain, provider if isinstance(provider, str) else None
+                user, domain, provider if isinstance(provider, str) else None
             )
         else:
-            out = self.connections.status(DEFAULT_USER, domain)
+            out = self.connections.status(user, domain)
         if "error" in out:
             return _error_result(str(out["error"]))
-        return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(out))], structured_content=out)
+        return _connection_result(out)
 
-    async def _finish_url_sign_in(self, params: types.CallToolRequestParams) -> types.CallToolResult:
+    async def _finish_url_sign_in(self, params: types.CallToolRequestParams, user: str) -> types.CallToolResult:
         """The client's retry after showing the sign-in link: wait for the sign-in, then report."""
         assert self.connections is not None
         log.info("start_connection: client retried after the sign-in prompt: %s",
                  {k: getattr(v, "action", type(v).__name__) for k, v in (params.input_responses or {}).items()})
         conn = self.connections.by_token(params.request_state or "")
-        if conn is None:
+        if conn is None or conn.user != user:
             return _error_result("unknown or expired sign-in; call start_connection again")
         response = (params.input_responses or {}).get(SIGN_IN_REQUEST)
         action = getattr(response, "action", None)
@@ -365,7 +368,7 @@ class Gateway:
             out.pop("url", None)
             out["user_message"] = f"Signing in to {conn.domain} was cancelled."
             out["hint"] = "the user declined to open the sign-in page; ask whether they want to sign in"
-            return _json_result(out)
+            return _connection_result(out)
         if action != "accept":
             # "cancel" (or anything else): the app couldn't show the prompt (some clients cancel URL requests
             # automatically). Fall back to the agent showing the link and waiting in the same turn.
@@ -375,9 +378,9 @@ class Gateway:
                 "exactly as given (a markdown link), then immediately call poll_connection; don't end your turn, it "
                 "waits for them to sign in."
             )
-            return _json_result(out)
+            return _connection_result(out)
         out = await self.connections.poll(conn.user, conn.domain, wait_s=40, opened=True)
-        return _json_result(out)
+        return _connection_result(out)
 
     @asynccontextmanager
     async def _lifespan(self, _server: Server[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
@@ -418,13 +421,27 @@ class Gateway:
 
     # ---- HTTP --------------------------------------------------------------
 
-    def asgi_app(self, api_key: str, host: str = "127.0.0.1") -> ASGIApp:
+    def asgi_app(
+        self, api_key: str, host: str = "127.0.0.1", keys: KeyStore | None = None, signup_code: str = ""
+    ) -> ASGIApp:
         extra = connect_routes(self.connections) if self.connections is not None else []
+        if keys is not None:
+            connections = self.connections
+            extra += signup_routes(keys, signup_code, lambda: connections.public_base_url if connections else None)
         inner = self.server.streamable_http_app(host=host, custom_starlette_routes=extra)  # type: ignore[arg-type]
-        return BearerAuth(inner, api_key, exempt_prefixes=("/connect/", "/neko/"))
+        return BearerAuth(inner, api_key, exempt_prefixes=("/connect/", "/neko/", "/signup"), keys=keys)
 
 
 SIGN_IN_REQUEST = "sign_in"
+
+
+def caller(ctx: Any) -> str:
+    """The user whose API key made this request (BearerAuth puts it on the HTTP request)."""
+    request = getattr(ctx, "request", None)
+    scope = getattr(request, "scope", None)
+    state = scope.get("state") if isinstance(scope, dict) else None
+    user = state.get(USER_STATE_KEY) if isinstance(state, dict) else None
+    return user if isinstance(user, str) and user else DEFAULT_USER
 # An answer to the sign-in prompt faster than this came from the app, not the person (see DECISIONS.md L6).
 HUMAN_REPLY_MIN_S = 2.0
 
@@ -447,19 +464,57 @@ def _json_result(out: dict[str, Any]) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(out))], structured_content=out)
 
 
+SHOW_LINK = (
+    "Show this to the user now. They can't see tool results, so unless your reply contains this exact line, "
+    "link included, they have nothing to click. Then call poll_connection in the same turn.\n\n"
+)
+
+
+def _connection_result(out: dict[str, Any]) -> types.CallToolResult:
+    """Sign-in results. While a link is waiting to be used, the result leads with a plain line holding the link (not
+    buried in JSON, where agents tend to summarise it as "use the link" and drop the URL)."""
+    message = out.get("user_message")
+    if out.get("status") != "pending" or not isinstance(message, str) or "](" not in message:
+        return _json_result(out)
+    return types.CallToolResult(
+        content=[
+            types.TextContent(type="text", text=SHOW_LINK + message),
+            types.TextContent(type="text", text=json.dumps(out)),
+        ],
+        structured_content=out,
+    )
+
+
 def _error_result(message: str) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(type="text", text=message)], is_error=True)
 
 
-class BearerAuth:
-    """Rejects HTTP requests without `Authorization: Bearer <api key>`."""
+USER_STATE_KEY = "htb_user"
 
-    def __init__(self, app: ASGIApp, api_key: str, exempt_prefixes: tuple[str, ...] = ()) -> None:
-        if not api_key:
+
+class BearerAuth:
+    """Rejects HTTP requests without `Authorization: Bearer <api key>`, and records whose key it is: the .env key
+    is user "default", every other key belongs to its user in the KeyStore."""
+
+    def __init__(
+        self, app: ASGIApp, api_key: str, exempt_prefixes: tuple[str, ...] = (), keys: KeyStore | None = None
+    ) -> None:
+        if not api_key and keys is None:
             raise ValueError("GATEWAY_API_KEY must be set")
         self.app = app
         self._key = api_key.encode()
-        self._exempt = exempt_prefixes  # routes with their own credential (the login link's token)
+        self._keys = keys
+        self._exempt = exempt_prefixes  # routes with their own credential (the login link's token, the invite code)
+
+    def _user_for(self, token: bytes) -> str | None:
+        if self._key and hmac.compare_digest(token, self._key):
+            return DEFAULT_USER
+        if self._keys is None:
+            return None
+        try:
+            return self._keys.user_for(token.decode())
+        except UnicodeDecodeError:
+            return None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = str(scope.get("path", ""))
@@ -469,7 +524,8 @@ class BearerAuth:
                 return
             auth = dict(scope.get("headers") or []).get(b"authorization", b"")
             scheme, _, token = auth.partition(b" ")
-            if scheme.lower() != b"bearer" or not hmac.compare_digest(token.strip(), self._key):
+            user = self._user_for(token.strip()) if scheme.lower() == b"bearer" else None
+            if user is None:
                 body = json.dumps({"error": "missing or invalid bearer token"}).encode()
                 await send(
                     {
@@ -484,6 +540,7 @@ class BearerAuth:
                 )
                 await send({"type": "http.response.body", "body": body})
                 return
+            scope.setdefault("state", {})[USER_STATE_KEY] = user
         await self.app(scope, receive, send)
 
 
@@ -593,7 +650,11 @@ def main() -> None:
         registry, executor, healer=healer, connections=connections, pool=pool,
         keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")),
     )
-    app = gateway.asgi_app(os.environ.get("GATEWAY_API_KEY", ""), host=args.host)
+    signup_code = os.environ.get("SIGNUP_CODE", "")
+    app = gateway.asgi_app(
+        os.environ.get("GATEWAY_API_KEY", ""), host=args.host, keys=KeyStore(db_path), signup_code=signup_code
+    )
+    log.info("sign-up page: %s", f"{public_url}/signup" if signup_code else "off (set SIGNUP_CODE to turn it on)")
     uvicorn.run(app, host=args.host, port=args.port, access_log=False)
 
 
