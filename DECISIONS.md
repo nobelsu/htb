@@ -203,7 +203,9 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   with a random per-container password, and is reverse-proxied by the gateway under `/neko/{token}/` (HTTP and the
   `/api/ws` signalling WebSocket), so it is same-origin and works behind HTTPS. WebRTC media goes directly to the
   container over one published port per login (`NEKO_UDP_PORTS`), on UDP and, as a fallback, TCP (Neko's TCP mux:
-  some browsers, VPNs and office networks won't do WebRTC over UDP), advertised as `NEKO_PUBLIC_IP`; a TURN
+  some browsers, VPNs and office networks won't do WebRTC over UDP). The advertised address (`NEKO_PUBLIC_IP`)
+  defaults to `auto`, the machine's network IP detected per login: advertising `127.0.0.1` broke Firefox, which
+  refuses WebRTC to loopback (`media.peerconnection.ice.loopback` is off by default), advertised as `NEKO_PUBLIC_IP`; a TURN
   server can be set with `NEKO_ICE_SERVERS` for users behind strict networks.
 - **Reading the login.** Every 2 s the watcher reads the browser's cookies with one browser-level DevTools command
   (`Storage.getCookies` over Chrome's WebSocket, exposed through a small in-container forwarder because Chrome binds

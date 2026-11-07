@@ -434,7 +434,7 @@ def main() -> None:
         neko = NekoManager(
             NekoConfig(
                 image=os.environ.get("NEKO_IMAGE", "ghcr.io/m1k1o/neko/chromium:latest"),
-                public_ip=os.environ.get("NEKO_PUBLIC_IP", "127.0.0.1"),
+                public_ip=os.environ.get("NEKO_PUBLIC_IP", "auto"),
                 udp_ports=(int(low), int(high or low)),
                 ice_servers=os.environ.get("NEKO_ICE_SERVERS", ""),
             )

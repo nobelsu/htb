@@ -59,7 +59,9 @@ user=%(ENV_USER)s
 @dataclass
 class NekoConfig:
     image: str = "ghcr.io/m1k1o/neko/chromium:latest"
-    public_ip: str = "127.0.0.1"  # the address users' browsers reach for WebRTC media (NAT1TO1)
+    # The address users' browsers reach for WebRTC media (NAT1TO1). "auto" = this machine's network IP, detected
+    # per login. Never advertise loopback by default: Firefox refuses WebRTC to 127.0.0.1.
+    public_ip: str = "auto"
     udp_ports: tuple[int, int] = (52000, 52099)  # one per running login, published to the host (UDP and TCP)
     transports: tuple[str, ...] = ("udp", "tcp")  # TCP for browsers/networks that won't do WebRTC over UDP
     width: int = 1920  # streamed screen size, in device pixels
@@ -96,6 +98,19 @@ class NekoSession:
 
 class NekoUnavailable(RuntimeError):
     pass
+
+
+def resolve_public_ip(setting: str) -> str:
+    """`auto` -> the IP of the interface that routes to the internet (no packet is sent); else `setting`."""
+    if setting != "auto":
+        return setting
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))  # TEST-NET address: only selects a route
+            ip = str(s.getsockname()[0])
+    except OSError:
+        return "127.0.0.1"  # offline: only same-machine Chromium-based browsers will connect
+    return ip if not ip.startswith("127.") else "127.0.0.1"
 
 
 def _free_port() -> int:
@@ -196,7 +211,7 @@ class NekoManager:
             "NEKO_SESSION_IMPLICIT_HOSTING": "true",
             "NEKO_WEBRTC_UDPMUX": str(udp),
             "NEKO_WEBRTC_TCPMUX": str(udp),  # same port number, TCP: ICE-TCP fallback
-            "NEKO_WEBRTC_NAT1TO1": cfg.public_ip,
+            "NEKO_WEBRTC_NAT1TO1": resolve_public_ip(cfg.public_ip),
         }
         if cfg.ice_servers:
             env["NEKO_WEBRTC_ICESERVERS_FRONTEND"] = cfg.ice_servers
