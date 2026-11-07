@@ -1,0 +1,21 @@
+{
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "BrowserSignin": 0,
+  "DefaultNotificationsSetting": 2,
+  "DeveloperToolsAvailability": 2,
+  "RemoteDebuggingAllowed": true,
+  "EditBookmarksEnabled": false,
+  "IncognitoModeAvailability": 1,
+  "SyncDisabled": true,
+  "BrowserAddPersonEnabled": false,
+  "BrowserGuestModeEnabled": false,
+  "DefaultPopupsSetting": 1,
+  "DownloadRestrictions": 3,
+  "AllowFileSelectionDialogs": false,
+  "PromptForDownloadLocation": false,
+  "BookmarkBarEnabled": false,
+  "PasswordManagerEnabled": false,
+  "TranslateEnabled": false,
+  "DefaultCookiesSetting": 1
+}

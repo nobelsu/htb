@@ -27,11 +27,19 @@ from mcp.server.models import InitializationOptions
 from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, ToolsListChanged
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
+from runtime.browser.pool import BrowserConfig, BrowserPool
+from runtime.browser.tier import BrowserTier
 from runtime.confirm import Confirmer
+from runtime.connect import ConnectionManager
+from runtime.connect_page import routes as connect_routes
+from runtime.extension import manifest_extension_id
+from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
 from runtime.registry import Registry
+from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
 from runtime.sessions import DevEnvSessionStore
+from runtime.tiers import default_tiers
 from runtime.state import StateStore
 from schema import load_card
 from schema.params import input_schema, tool_description
@@ -67,6 +75,38 @@ HEAL_STATUS_TOOL = types.Tool(
 )
 
 
+def _domain_tool(name: str, description: str, extra: dict[str, Any] | None = None) -> types.Tool:
+    props: dict[str, Any] = {"domain": {"type": "string", "description": "the site's domain, e.g. linkedin.com"}}
+    props.update(extra or {})
+    return types.Tool(
+        name=name,
+        description=description,
+        input_schema={"type": "object", "properties": props, "required": ["domain"], "additionalProperties": False},
+    )
+
+
+CONNECTION_TOOLS = {
+    t.name: t
+    for t in (
+        _domain_tool(
+            "start_connection",
+            "Connect the user's account on a site (after an AUTH_REQUIRED or AUTH_EXPIRED result). Returns a link: "
+            "give it to the user, who logs in to the site in their own browser and clicks Connect on that page. "
+            "Then call poll_connection.",
+            {"provider": {"type": "string", "description": "optional connect provider id, if the site has several"}},
+        ),
+        _domain_tool(
+            "poll_connection",
+            "Check a login started with start_connection. When status is 'connected', retry the original tool.",
+        ),
+        _domain_tool(
+            "connection_status",
+            "Whether the user is connected to a site (connected, expired, pending or not_connected).",
+        ),
+    )
+}
+
+
 class _Server(Server[dict[str, Any]]):
     """Advertises `tools.listChanged` on handshake-era connections too."""
 
@@ -88,10 +128,18 @@ class Gateway:
         executor: Executor,
         poll_interval_s: float = 1.0,
         healer: HealManager | None = None,
+        connections: ConnectionManager | None = None,
+        pool: BrowserPool | None = None,
+        keepalive_s: float = 0.0,
+        extension_id: str | None = None,
     ) -> None:
         self.registry = registry
         self.executor = executor
         self.healer = healer
+        self.connections = connections
+        self.pool = pool
+        self.keepalive_s = keepalive_s
+        self.extension_id = extension_id or manifest_extension_id()
         self.poll_interval_s = poll_interval_s
         self.bus = InMemorySubscriptionBus()  # 2026-07-28 clients: subscriptions/listen
         self._legacy_connections: weakref.WeakSet[Connection] = weakref.WeakSet()  # handshake-era clients
@@ -171,10 +219,14 @@ class Gateway:
         tools = [e.tool for e in self._tools.values()]
         if self.healer is not None:
             tools.append(HEAL_STATUS_TOOL)
+        if self.connections is not None:
+            tools.extend(CONNECTION_TOOLS.values())
         return types.ListToolsResult(tools=tools)
 
     async def _call_tool(self, ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
         self._track(ctx)
+        if params.name in CONNECTION_TOOLS and self.connections is not None:
+            return await self._connection_tool(params.name, dict(params.arguments or {}))
         if params.name == HEAL_STATUS_TOOL.name and self.healer is not None:
             return self._heal_status(dict(params.arguments or {}))
         entry = self._tools.get(params.name)
@@ -205,6 +257,22 @@ class Gateway:
             content=[types.TextContent(type="text", text=json.dumps(status))], structured_content=status
         )
 
+    async def _connection_tool(self, name: str, args: dict[str, Any]) -> types.CallToolResult:
+        assert self.connections is not None
+        domain = args.get("domain")
+        if not isinstance(domain, str) or not domain:
+            return _error_result("domain (string) is required")
+        if name == "start_connection":
+            provider = args.get("provider")
+            out = self.connections.start(DEFAULT_USER, domain, provider if isinstance(provider, str) else None)
+        elif name == "poll_connection":
+            out = self.connections.poll(DEFAULT_USER, domain)
+        else:
+            out = self.connections.status(DEFAULT_USER, domain)
+        if "error" in out:
+            return _error_result(str(out["error"]))
+        return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(out))], structured_content=out)
+
     @asynccontextmanager
     async def _lifespan(self, _server: Server[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
         async with anyio.create_task_group() as tg:
@@ -212,8 +280,27 @@ class Gateway:
             if self.healer is not None:
                 tg.start_soon(self.healer.run_forever)
                 tg.start_soon(self.healer.health_checks_forever)
-            yield {}
-            tg.cancel_scope.cancel()
+            if self.pool is not None:
+                tg.start_soon(self.pool.reap_forever)
+            if self.connections is not None:
+                tg.start_soon(self.connections.keepalive_forever, self.keepalive_s)
+                if self.connections.neko is not None:
+                    if not await self.connections.neko.available():
+                        log.warning("Neko image not available (docker pull %s); 'log in here' is off",
+                                    self.connections.neko.config.image)
+                        self.connections.neko = None
+                    else:
+                        removed = await self.connections.neko.cleanup_stale()
+                        if removed:
+                            log.info("removed %d leftover login browsers", removed)
+            try:
+                yield {}
+            finally:
+                tg.cancel_scope.cancel()
+                if self.connections is not None:
+                    await self.connections.close()
+                if self.pool is not None:
+                    await self.pool.close()
 
     async def _poll(self) -> None:
         while True:
@@ -226,8 +313,9 @@ class Gateway:
     # ---- HTTP --------------------------------------------------------------
 
     def asgi_app(self, api_key: str, host: str = "127.0.0.1") -> ASGIApp:
-        inner = self.server.streamable_http_app(host=host)
-        return BearerAuth(inner, api_key)
+        extra = connect_routes(self.connections, self.extension_id) if self.connections is not None else []
+        inner = self.server.streamable_http_app(host=host, custom_starlette_routes=extra)  # type: ignore[arg-type]
+        return BearerAuth(inner, api_key, exempt_prefixes=("/connect/", "/neko/"))
 
 
 def _error_result(message: str) -> types.CallToolResult:
@@ -237,14 +325,19 @@ def _error_result(message: str) -> types.CallToolResult:
 class BearerAuth:
     """Rejects HTTP requests without `Authorization: Bearer <api key>`."""
 
-    def __init__(self, app: ASGIApp, api_key: str) -> None:
+    def __init__(self, app: ASGIApp, api_key: str, exempt_prefixes: tuple[str, ...] = ()) -> None:
         if not api_key:
             raise ValueError("GATEWAY_API_KEY must be set")
         self.app = app
         self._key = api_key.encode()
+        self._exempt = exempt_prefixes  # routes with their own credential (the login link's token)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http":
+        path = str(scope.get("path", ""))
+        if scope["type"] in ("http", "websocket") and not path.startswith(self._exempt):
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 4401})
+                return
             auth = dict(scope.get("headers") or []).get(b"authorization", b"")
             scheme, _, token = auth.partition(b" ")
             if scheme.lower() != b"bearer" or not hmac.compare_digest(token.strip(), self._key):
@@ -289,6 +382,14 @@ def load_remapper(spec: str | None) -> Remapper | None:
     return remapper
 
 
+class _DropWebSocketLines(logging.Filter):
+    """uvicorn logs each WebSocket handshake with its full URL (login tokens, Neko session tokens)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not (message.startswith(("connection open", "connection closed")) or '"WebSocket ' in message)
+
+
 def main() -> None:
     import uvicorn
     from dotenv import load_dotenv
@@ -300,15 +401,47 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(os.environ.get("GATEWAY_PORT", "8765")))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # URL-level request logs would record login tokens (/connect/<token>), the login browser's password and users'
+    # query parameters, so they stay off; the runtime logs its own redacted events.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.error").addFilter(_DropWebSocketLines())
 
     db_path = os.environ.get("REGISTRY_DB", "./runtime.db")
     registry = Registry(db_path)
     for path in args.load:
         version = load_into_registry(registry, path)
         log.info("%s: %s", path, f"saved as version {version}" if version else "unchanged")
+    session_store = EncryptedSessionStore(db_path, os.environ.get("SESSION_KEY", ""))
+    pool = BrowserPool(
+        BrowserConfig(
+            profiles_dir=Path(os.environ.get("PROFILES_DIR", "./profiles")),
+            channel=os.environ.get("BROWSER_CHANNEL", "chrome"),
+            headless=os.environ.get("BROWSER_HEADLESS", "1") != "0",
+            idle_s=float(os.environ.get("BROWSER_IDLE_S", "600")),
+        )
+    )
+    tiers = default_tiers()
+    tiers["browser"] = BrowserTier(pool)
     executor = Executor(
-        DevEnvSessionStore(os.environ.get("DEV_SESSION_COOKIES")),
+        ChainedSessionStore(session_store, DevEnvSessionStore(os.environ.get("DEV_SESSION_COOKIES"))),
         Confirmer(os.environ.get("CONFIRMATION_SECRET", "")),
+        tiers=tiers,
+    )
+    public_url = os.environ.get("PUBLIC_BASE_URL", f"http://{args.host}:{args.port}")
+    neko = None
+    if os.environ.get("NEKO_ENABLED", "1") != "0":
+        low, _, high = os.environ.get("NEKO_UDP_PORTS", "52000-52099").partition("-")
+        neko = NekoManager(
+            NekoConfig(
+                image=os.environ.get("NEKO_IMAGE", "ghcr.io/m1k1o/neko/chromium:latest"),
+                public_ip=os.environ.get("NEKO_PUBLIC_IP", "auto"),
+                udp_ports=(int(low), int(high or low)),
+                ice_servers=os.environ.get("NEKO_ICE_SERVERS", ""),
+            )
+        )
+    connections = ConnectionManager(
+        registry, session_store, executor, public_url, pool=pool,
+        timeout_s=float(os.environ.get("CONNECT_TIMEOUT_S", "600")), neko=neko,
     )
     config = HealConfig(
         retry_after_s=int(os.environ.get("HEAL_RETRY_AFTER_S", "30")),
@@ -318,9 +451,12 @@ def main() -> None:
         ),
     )
     healer = HealManager(registry, StateStore(db_path), executor, load_remapper(os.environ.get("REMAPPER")), config)
-    gateway = Gateway(registry, executor, healer=healer)
+    gateway = Gateway(
+        registry, executor, healer=healer, connections=connections, pool=pool,
+        keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")),
+    )
     app = gateway.asgi_app(os.environ.get("GATEWAY_API_KEY", ""), host=args.host)
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(app, host=args.host, port=args.port, access_log=False)
 
 
 if __name__ == "__main__":

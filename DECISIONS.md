@@ -193,3 +193,59 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - `session_check` (heal pre-check) starts on the card's default tier but does not escalate.
 - Not recorded yet: which tier worked, in `action_state` (the spec puts that learning there). The executor always
   starts from the card's tier.
+
+## Login flow and browser tier
+- **L1 How the user logs in (asked; changed twice).** The connect page offers two ways in:
+  1. **"Log in here" (default, no install):** a real Chromium in a short-lived [Neko](https://github.com/m1k1o/neko)
+     container, streamed to the user over **WebRTC** (asked: option A). This replaced the first version's
+     screenshot-over-WebSocket stream (blurry, laggy).
+  2. **"Use my existing login" (HTB Connect extension):** shown only when the extension is installed. The user's
+     own browser session is captured (`chrome.cookies.getAll`, httpOnly included) and posted back.
+- **Neko details.** One container per login link (`ghcr.io/m1k1o/neko/chromium`, Neko 3.2), started when the user
+  clicks "Log in", removed once connected or expired; leftovers are removed at startup (label `htb.neko`).
+  Chromium runs in kiosk mode on the provider's `login_url`, at 1920x1200 with device scale 1.5 (sites lay out at
+  1280x800; the stream stays sharp on retina screens), ~25 fps. The client runs in Neko's `embed` mode, logged in
+  with a random per-container password, and is reverse-proxied by the gateway under `/neko/{token}/` (HTTP and the
+  `/api/ws` signalling WebSocket), so it is same-origin and works behind HTTPS. WebRTC media goes directly to the
+  container over one published port per login (`NEKO_UDP_PORTS`), on UDP and, as a fallback, TCP (Neko's TCP mux:
+  some browsers, VPNs and office networks won't do WebRTC over UDP). The advertised address (`NEKO_PUBLIC_IP`)
+  defaults to `auto`, the machine's network IP detected per login: advertising `127.0.0.1` broke Firefox, which
+  refuses WebRTC to loopback (`media.peerconnection.ice.loopback` is off by default), advertised as `NEKO_PUBLIC_IP`; a TURN
+  server can be set with `NEKO_ICE_SERVERS` for users behind strict networks.
+- **Reading the login.** Every 2 s the watcher reads the browser's cookies with one browser-level DevTools command
+  (`Storage.getCookies` over Chrome's WebSocket, exposed through a small in-container forwarder because Chrome binds
+  DevTools to localhost) and keeps those the site would receive for `base_url`. Page-level DevTools stays disabled
+  by policy, so the user can't open DevTools in the streamed browser.
+- **Local development.** If the site is on the Docker host's loopback (the fixture shop), the forwarder maps the
+  container's `127.0.0.1:<port>` to `host.docker.internal:<port>`.
+- **Typing.** Click into a field before typing: Neko's client keeps the Tab key for its own page.
+- **No URL-level request logs.** The gateway runs uvicorn without its access log, filters uvicorn's WebSocket
+  handshake lines and keeps httpx at WARNING: those lines would record login tokens, the login browser's per-container password and users' query parameters.
+- **Verification before storing.** The gateway runs the provider's `session_check` with the posted cookies (card's
+  default tier). Only if it passes are they stored; otherwise the link stays pending and the user can log in and
+  retry. Links are single-use and expire (`CONNECT_TIMEOUT_S`, default 10 min). One pending link per (user, site).
+- **Extension security.** Only gateway origins listed in the manifest (`externally_connectable`) can message the
+  extension; it trusts the browser-reported sender origin, never the message body, for where cookies go. It
+  shows the destination host on its approval page. Site access is an *optional* permission requested at connect
+  time for just that site (`scheme://host/*`, plus `scheme://*.domain/*` when the site's host is a subdomain of the
+  card's domain), via a user click, so the install prompt asks for no site access.
+- **Pinned extension ID.** The manifest has a public `key`, so the ID is fixed and the connect page knows whom to
+  message (`runtime/extension.py`). No private key is in the repo (not needed to load unpacked). Hosted gateway
+  origins are added with `uv run python -m runtime.extension --origin https://...`.
+- **Only name/value are stored.** Cookie domain/path are dropped (as before); the browser tier seeds the user's
+  server-side profile with them for the site's `base_url`.
+- **L2 Browser (asked).** The server-side browser tier uses real Google Chrome (`BROWSER_CHANNEL=chrome`),
+  headless, with the plain "Chrome" User-Agent (headless Chrome otherwise says "HeadlessChrome").
+- **L3 Warm (asked).** One persistent Chrome profile per (user, site, provider) under `PROFILES_DIR`, kept running
+  while used and closed after `BROWSER_IDLE_S` idle. Keep-alive runs every connected session's `session_check`
+  every `KEEPALIVE_INTERVAL_S` and marks logged-out ones `expired`; blocks, rate limits and errors are not a verdict.
+- **L4 Cookie storage (asked).** Fernet-encrypted with `SESSION_KEY` in the `sessions` table; a wrong key reads as
+  "not connected". The encrypted store is consulted first, then `DEV_SESSION_COOKIES`.
+- **L5 Browser tier (asked).** Each step runs as `fetch()` in a tab on the request's origin, so it goes out as real
+  Chrome. Browser-owned headers (cookie, user-agent, origin, referer, host...) are dropped. Only a redirect's final
+  URL is visible, so `redirect:` signals see the final path only.
+- **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
+  their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
+- **Not handled yet:** sites that bind sessions to the device/IP may reject the imported cookies (they fail the
+  session check, so the user sees a clear error); Chrome Web Store publishing (load unpacked for now); browsers
+  other than Chromium-based ones; per-user API keys (everything is user `default`).
