@@ -51,6 +51,8 @@ class SiteState:
         self.sessions: dict[str, Session] = {}
         self.requests: list[tuple[str, str]] = []  # (method, path) log for tests
         self.note_seq = 0
+        # "site redesign" switch for healing tests: search moves from /api/search to /api/v2/search
+        self.search_endpoint = "/api/search"
 
     def new_session(self) -> Session:
         with self.lock:
@@ -122,7 +124,7 @@ class Handler(BaseHTTPRequestHandler):
             "/search": self._search_page,
             "/compose": self._compose_page,
             "/api/session": self._api_session,
-            "/api/search": self._api_search,
+            self.state.search_endpoint: self._api_search,
             "/api/notes": self._api_notes_list,
         }.get(url.path)
         if route:
@@ -181,7 +183,7 @@ class Handler(BaseHTTPRequestHandler):
             "page": "/search",
             "buildId": BUILD_ID,
         }
-        self._html(200, pages.search(next_data))
+        self._html(200, pages.search(next_data, self.state.search_endpoint))
 
     def _compose_page(self, _query) -> None:
         sess = self._require_page_login()
@@ -300,6 +302,10 @@ class FixtureSite:
 
     def __exit__(self, *exc) -> None:
         self.stop()
+
+    def move_search(self, moved: bool = True) -> None:
+        """Simulate a site change: the search API moves to /api/v2/search (the old path 404s)."""
+        self.state.search_endpoint = "/api/v2/search" if moved else "/api/search"
 
     def login_state(self, path: str | Path | None = None) -> dict:
         """A logged-in Playwright ``storage_state`` (optionally written to ``path``)."""

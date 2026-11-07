@@ -75,6 +75,19 @@ def build_parser() -> argparse.ArgumentParser:
     mp.add_argument("--db", help="registry SQLite file (default: $REGISTRY_DB or ./runtime.db)")
     mp.set_defaults(handler=_cmd_map)
 
+    hl = sub.add_parser(
+        "heal", help="re-record the whole site by replaying its recordings, then re-map and save the card"
+    )
+    hl.add_argument("captures_dir", help="captures/<domain>/")
+    hl.add_argument("--task", help="replay only this task (the card is still rebuilt from every task)")
+    hl.add_argument("--state", help="login session to replay with (default: each bundle's own state.json)")
+    hl.add_argument("--headed", action="store_true", help="show the browser while replaying")
+    hl.add_argument("--live", action="store_true", help="run read examples through the executor")
+    hl.add_argument("--save", action="store_true", help="save the new card to the registry if it is valid")
+    hl.add_argument("--db", help="registry SQLite file (default: $REGISTRY_DB or ./runtime.db)")
+    hl.add_argument("--out", help="output directory for card.json/report (default: the captures dir)")
+    hl.set_defaults(handler=_cmd_heal)
+
     val = sub.add_parser("validate", help="run save-time validation on a card")
     val.add_argument("card", help="path/to/card.json")
     val.add_argument("--live", action="store_true", help="run read examples through the executor")
@@ -103,6 +116,12 @@ def _cmd_map(args: argparse.Namespace) -> int:
     except ImportError:
         return _not_ready("map")
     return pipeline.main(args)
+
+
+def _cmd_heal(args: argparse.Namespace) -> int:
+    from mapper import pipeline
+
+    return pipeline.heal_main(args)
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:

@@ -161,7 +161,22 @@ only knows logged-in traffic, so it writes the smallest schema-valid placeholder
 capture's `start_url`, `session_check` = a parameter-free logged-in GET from the capture, and
 `logged_out_signals: []` (a 401 already means `AUTH_EXPIRED`). The mapping report flags it.
 
+## Healing (decided 2026-11-07, for the hackathon)
+
+`python -m mapper heal captures/<domain>/ [--live] [--save --db runtime.db]` re-records the **whole site**
+by replaying every saved recording (`actions.jsonl` → driver script; fresh markers for m1/m2, same real
+inputs, each bundle's own `state.json` as the session unless `--state` is given), re-maps every action,
+validates, and saves the new card as the active version. Old bundles are kept in `<domain>.prev/`.
+
+This deliberately overrides `CARD_SPEC.md` "Healing" points 4–5 for this project: the whole site is
+re-mapped (not only the broken action) and the new card replaces the old one whole, **write actions
+included, with no human approval step**. The per-call `requires_confirmation` prompt is unchanged.
+
 ## Open items for Nobel
+
+- **Healing differs from the spec (decided by WeiWei).** The mapper's `heal` re-maps the whole site and
+  saves the result as the active version, write actions included; there is no `heal_candidates` hold-back.
+  A heal job only needs to call it (see "Healing" above).
 
 - **HIGH PRIORITY: real `connect_providers` values.** Login works through our hosted server: it generates a
   link, the user opens it from the chat and logs in to the site in a browser running on our server, and
@@ -185,6 +200,7 @@ python -m mapper map captures/<domain>/            # all tasks → card + report
 python -m mapper map captures/<domain>/ --task NAME # one action (used by healing)
     [--live] [--save --db runtime.db] [--out DIR]
 python -m mapper validate path/to/card.json [--live --state path/to/state.json]
+python -m mapper heal captures/<domain>/ [--live] [--save --db runtime.db]   # replay everything, re-map, save
 ```
 
 Validation = `schema.validate_card` + `tools/check_card.py` + `mapper/checks.py` (no live session value may

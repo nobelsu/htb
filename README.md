@@ -42,6 +42,7 @@ The mapper imports `schema` (`validate_card`, `Card`, `Envelope`) and saves thro
 uv run python -m mapper capture <start_url> --task NAME --run m1|m2|real|page2 [--marker query=zqxv8841]
 uv run python -m mapper map captures/<domain>/
 uv run python -m mapper validate path/to/card.json
+uv run python -m mapper heal captures/<domain>/ --save   # site changed: replay all recordings, re-map, save
 ```
 
 Captures, HAR files, `state.json` and `.env` hold live login sessions: never commit them.

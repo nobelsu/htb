@@ -34,10 +34,10 @@ def login(next_path: str = "/") -> str:
     )
 
 
-def search(next_data: dict) -> str:
+def search(next_data: dict, endpoint: str = "/api/search") -> str:
     blob = json.dumps(next_data).replace("</", "<\\/")
     body = (
-        '<form id="search-form">'
+        f'<form id="search-form" data-endpoint="{html.escape(endpoint)}">'
         '<input name="q" id="q" autocomplete="off" placeholder="Search companies">'
         '<button type="submit">Search</button></form>'
         '<p id="summary"></p><ul id="results"></ul>'
@@ -82,7 +82,8 @@ SEARCH_JS = r"""
 
   async function run() {
     const token = await sessionToken();
-    const url = "/api/search?q=" + encodeURIComponent(state.q) + "&start=" + state.start;
+    const endpoint = document.getElementById("search-form").dataset.endpoint;
+    const url = endpoint + "?q=" + encodeURIComponent(state.q) + "&start=" + state.start;
     const r = await fetch(url, {
       credentials: "same-origin",
       headers: {

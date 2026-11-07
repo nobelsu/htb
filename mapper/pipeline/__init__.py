@@ -293,3 +293,50 @@ def main(args: argparse.Namespace) -> int:
         version = save_card(result.card, db, note=f"mapper {result.captures_dir}")
         print(f"saved {result.card['domain']} v{version} to {db}")
     return 0 if v.ok else 1
+
+
+def heal(
+    captures_dir: str | Path,
+    *,
+    task: str | None = None,
+    state: str | Path | None = None,
+    headless: bool = True,
+    live: bool = False,
+    executor: Executor | None = None,
+) -> tuple[DomainResult, list[str]]:
+    """Re-record the whole site by replaying its recordings, then re-map everything.
+
+    Project decision (docs/mapper-design.md "Healing"): the new card replaces the old one whole, write
+    actions included, with no approval hold-back. Returns (result, replay warnings).
+    """
+    from mapper.capture.replay import recapture
+
+    _, replay_warnings = recapture(captures_dir, task=task, state=state, headless=headless)
+    result = map_domain(captures_dir, live=live, executor=executor)
+    return result, replay_warnings
+
+
+def heal_main(args: argparse.Namespace) -> int:
+    try:
+        result, replay_warnings = heal(
+            args.captures_dir, task=args.task, state=args.state, headless=not args.headed, live=args.live
+        )
+    except (MapError, GoalNotFound, FileNotFoundError) as e:
+        print(f"mapper heal: {e}", file=sys.stderr)
+        return 2
+    for w in replay_warnings:
+        print(f"replay warning: {w}")
+    card_path, report_path = write_outputs(result, args.out or args.captures_dir)
+    v = result.validation
+    print(
+        f"re-recorded and re-mapped {len(result.tasks)} action(s)\ncard: {card_path}\nreport: {report_path}"
+    )
+    print("VALID" if v.ok else f"INVALID ({len(v.errors)} error(s), see report)")
+    if args.save:
+        if not v.ok:
+            print("not saved: the card is invalid", file=sys.stderr)
+            return 1
+        db = args.db or os.environ.get("REGISTRY_DB", "./runtime.db")
+        version = save_card(result.card, db, note=f"mapper heal {result.captures_dir}")
+        print(f"saved {result.card['domain']} v{version} to {db} (active)")
+    return 0 if v.ok else 1
