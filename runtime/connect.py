@@ -141,11 +141,16 @@ class ConnectionManager:
         )
         return out
 
-    async def poll(self, user: str, domain: str, wait_s: float = 0.0) -> dict[str, Any]:
-        """Report the latest sign-in. With wait_s, hold until it finishes (or wait_s passes) before answering."""
+    async def poll(self, user: str, domain: str, wait_s: float = 0.0, opened: bool = False) -> dict[str, Any]:
+        """Report the latest sign-in. With wait_s, hold until it finishes (or wait_s passes) before answering.
+
+        `opened`: the client confirmed the user was sent to the link (URL elicitation), so wait the full time.
+        """
         conn = self._latest.get((user, domain))
         if conn is None:
             return self.status(user, domain)
+        if opened:
+            conn.page_opened = True
         started = time.monotonic()
         wait_s = max(0.0, min(wait_s, MAX_POLL_WAIT_S))
         while True:

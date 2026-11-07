@@ -232,3 +232,78 @@ async def test_poll_does_not_hang_when_the_link_was_never_opened(
     assert loop.time() - t0 >= 0.9  # opened: the full wait applies
     assert out["link_opened"] is True and "can't see tool results" not in out["hint"]
     registry.close()
+
+
+# ---- the client shows the link itself (MCP URL elicitation) -------------------
+
+
+@pytest.fixture
+def strong_gateway(tmp_path: Path, fixture_card: dict[str, Any]) -> Iterator[tuple[str, FakeNeko]]:
+    neko = FakeNeko()
+    manager, registry = make_manager(tmp_path, fixture_card, neko)
+    gateway = Gateway(registry, manager.executor, poll_interval_s=0.05, connections=manager)
+    with LiveServer(gateway.asgi_app(API_KEY)) as server:
+        manager.public_base_url = server.url
+        yield server.url, neko
+    registry.close()
+
+
+async def _client_with_elicitation(base: str, on_url: Any) -> Any:
+    import httpx2
+    from mcp import Client
+    from mcp.client.streamable_http import streamable_http_client
+
+    http = httpx2.AsyncClient(headers={"Authorization": f"Bearer {API_KEY}"}, timeout=60)
+    transport = streamable_http_client(f"{base}/mcp", http_client=http)
+    return http, Client(transport, elicitation_callback=on_url, cache=None)  # type: ignore[arg-type]
+
+
+async def test_client_shows_the_link_and_the_call_waits(strong_gateway: tuple[str, FakeNeko], site_url: str) -> None:
+    import httpx
+    import mcp_types as types
+
+    base, neko = strong_gateway
+    shown: list[tuple[str, str]] = []
+
+    async def on_url(context: Any, params: Any) -> Any:
+        assert params.mode == "url"
+        shown.append((params.message, params.url))
+        # Play the user: open the page, start the login browser, sign in a moment later.
+        assert httpx.get(params.url).status_code == 200
+        assert httpx.post(params.url + "/browser").status_code == 200
+
+        async def sign_in() -> None:
+            await asyncio.sleep(0.5)
+            neko.cookies_now = dict(SIGNED_IN)
+
+        asyncio.get_running_loop().create_task(sign_in())
+        return types.ElicitResult(action="accept")
+
+    http, client = await _client_with_elicitation(base, on_url)
+    async with http, client:
+        out = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
+        assert len(shown) == 1 and shown[0][0].startswith("Sign in to fixture.test")
+        assert shown[0][1].startswith(f"{base}/connect/")
+        assert out["status"] == "connected" and out["user_message"] == "You're signed in to fixture.test."
+        assert envelope(await client.call_tool("shop_list_orders", {}))["status"] == "SUCCESS"
+
+
+async def test_declining_the_link(strong_gateway: tuple[str, FakeNeko]) -> None:
+    import mcp_types as types
+
+    base, _ = strong_gateway
+
+    async def on_url(context: Any, params: Any) -> Any:
+        return types.ElicitResult(action="decline")
+
+    http, client = await _client_with_elicitation(base, on_url)
+    async with http, client:
+        out = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
+        assert out["status"] == "pending" and out["user_message"] == "Signing in to fixture.test was cancelled."
+
+
+async def test_clients_without_url_elicitation_get_the_link(strong_gateway: tuple[str, FakeNeko]) -> None:
+    base, _ = strong_gateway
+    async with connect(f"{base}/mcp", "auto") as client:  # no elicitation callback
+        out = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
+        assert out["status"] == "pending" and out["user_message"].startswith("Sign in to fixture.test here: ")

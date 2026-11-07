@@ -205,6 +205,12 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   Because users can't see tool results, the instructions tell agents to write the sign-in link in their reply
   before polling. As a safety net, until someone opens the link `poll_connection` waits at most 6 s and returns a
   hint to send the link (an agent once started waiting without ever showing it).
+  **The real fix: MCP URL elicitation.** Claude Code (2.1.317+, protocol 2026-07-28) declares URL elicitation, and
+  the model kept assuming the link was visible because Claude Code does display tool results (collapsed). So for
+  clients that declare it, `start_connection` returns an input-required result with a URL elicitation: the *client*
+  shows the user the sign-in link with an open button; on accept it retries the call, which then waits (up to 40 s)
+  for the sign-in and returns `connected`. Declining returns a plain "cancelled" message. Other clients keep the
+  link-in-the-result flow above. The gateway logs each client's name and elicitation support once.
 - **Neko details.** One container per login link (`ghcr.io/m1k1o/neko/chromium`, Neko 3.2), started when the user
   clicks "Log in", removed once connected or expired; leftovers are removed at startup (label `htb.neko`).
   Chromium runs in kiosk mode on the provider's `login_url`, at 1920x1200 with device scale 1.5 (sites lay out at
