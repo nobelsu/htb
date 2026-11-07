@@ -1,0 +1,304 @@
+{
+  "schema_version": "0.4",
+  "domain": "linkedin.com",
+  "tool_prefix": "linkedin",
+  "base_url": "https://www.linkedin.com",
+  "blocked_signals": [
+    "status:403",
+    "status:999"
+  ],
+  "changed_signals": [],
+  "provenance": {
+    "mapped_at": "2026-11-07T15:02:11Z",
+    "source": "network_capture",
+    "mapper_version": "0.1.0"
+  },
+  "connect_providers": [
+    {
+      "id": "linkedin",
+      "login_url": "https://www.linkedin.com/login",
+      "session_check": {
+        "method": "GET",
+        "url": "{{base_url}}/voyager/api/me",
+        "expect": {
+          "status": [
+            200
+          ],
+          "content_type": "json",
+          "paths": [
+            "$.miniProfile"
+          ]
+        }
+      },
+      "logged_out_signals": [
+        "status:401",
+        "redirect:/login",
+        "redirect:/checkpoint"
+      ]
+    }
+  ],
+  "defaults": {
+    "tier": "browser",
+    "auth_provider": "linkedin",
+    "headers": {
+      "accept": "application/json",
+      "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}"
+    },
+    "timeout_ms": 10000,
+    "cache_ttl_s": 120,
+    "rate_limit_per_min": 20
+  },
+  "actions": [
+    {
+      "name": "search_companies",
+      "description": "Search companies by keyword. Returns name, subtitle and URL for each match.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "cache_ttl_s": 300,
+      "params": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "search text",
+          "example": "palantir"
+        },
+        "page": {
+          "type": "integer",
+          "required": false,
+          "default": 1,
+          "description": "1-based page number"
+        }
+      },
+      "steps": [
+        {
+          "id": "search",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/graphql",
+            "query": {
+              "queryId": "voyagerSearchDashClusters.PLACEHOLDER",
+              "variables": "(keywords:{{params.query | escape_restli}},start:{{params.page | offset:10}})"
+            },
+            "headers": {},
+            "body": null
+          },
+          "timeout_ms": 8000,
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.data.searchDashClustersByAll.elements"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.data.searchDashClustersByAll.elements[*].items[*].item.entityResult"
+            },
+            "total": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.data.searchDashClustersByAll.paging.total"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.search.items",
+        "fields": {
+          "name": "$.title.text",
+          "subtitle": "$.primarySubtitle.text",
+          "url": "$.navigationUrl"
+        },
+        "limit": 10,
+        "next_params": {
+          "param": "page",
+          "increment": 1,
+          "page_size": 10,
+          "until": "steps.search.total"
+        }
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "query": "palantir"
+          },
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "get_company_people",
+      "description": "List people at a company, given the company slug from its URL (linkedin.com/company/<slug>).",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "company": {
+          "type": "string",
+          "required": true,
+          "description": "company slug",
+          "example": "anthropicresearch"
+        }
+      },
+      "steps": [
+        {
+          "id": "company",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/organization/companies",
+            "query": {
+              "q": "universalName",
+              "universalName": "{{params.company}}"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.elements"
+            ]
+          },
+          "extract": {
+            "id": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.elements[0].entityUrn"
+            }
+          }
+        },
+        {
+          "id": "people",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/search/PLACEHOLDER",
+            "query": {
+              "company": "{{steps.company.id}}"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.elements"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.elements[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.people.items",
+        "fields": {
+          "name": "$.title.text",
+          "headline": "$.headline.text",
+          "url": "$.navigationUrl"
+        },
+        "limit": 10,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "company": "anthropicresearch"
+          },
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "follow_company",
+      "description": "Follow a company on the connected LinkedIn account.",
+      "kind": "write",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": true,
+      "params": {
+        "company_id": {
+          "type": "string",
+          "required": true,
+          "description": "company ID (URN) from search or get_company_people",
+          "example": "urn:li:fsd_company:PLACEHOLDER"
+        }
+      },
+      "steps": [
+        {
+          "id": "follow",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/voyager/api/feed/PLACEHOLDER",
+            "query": {},
+            "headers": {
+              "content-type": "application/json"
+            },
+            "body": {
+              "urn": "{{params.company_id}}",
+              "following": true
+            }
+          },
+          "expect": {
+            "status": [
+              200,
+              201,
+              204
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {}
+        }
+      ],
+      "output": {
+        "from": null,
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": {
+        "request": {
+          "method": "GET",
+          "url": "{{base_url}}/voyager/api/feed/followingStates/{{params.company_id | urlencode}}",
+          "query": {},
+          "headers": {},
+          "body": null
+        },
+        "expect": {
+          "status": [
+            200
+          ],
+          "content_type": "json",
+          "paths": [
+            "$.following"
+          ]
+        },
+        "assert": {
+          "type": "jsonpath",
+          "expr": "$.following",
+          "equals": true
+        }
+      },
+      "examples": []
+    }
+  ]
+}
