@@ -156,8 +156,13 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **"Pass".** For validation and health checks: every example returns `SUCCESS`/`EMPTY` with at least `min_items`.
 - **Activation.** Changed actions = those whose definition differs from the active card. Actions the remapper
   adds are ignored; actions it drops are kept. Changed reads that pass go in; changed reads that fail keep the old
-  definition and are marked degraded; changed writes go to `heal_candidates` (old kept, degraded). A broken
+  definition and are marked degraded; changed writes go live (H4). A broken
   action the remapper didn't change stays degraded. No change → no new version.
+- **H4 Healed writes go live (asked; spec changed).** A healed write action goes into the new version like a read
+  (WeiWei's mapper decision, approved by Nobel). Writes are never executed to validate them (that would really
+  post/buy/follow, and writes usually have no examples), so the job result lists them under `unvalidated`. The
+  `heal_candidates` table is no longer written; it stays in the schema for history. `CARD_SPEC.md` "Healing" is
+  updated to match.
 - **Site-level fields** = everything except `actions` and `provenance`. A site-level change is all or nothing:
   if any read action fails its examples under it, nothing is activated.
 - **Degraded** is set when an action is kept on its old definition after a failed heal, and cleared when a later
@@ -166,7 +171,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   `HEALTH_CHECK_DISABLED_DOMAINS`). A no-login site is one where no action has an effective `auth_provider`.
   Actions with an open heal job are skipped. A failure queues a heal (`trigger: health_check`), which still goes
   through the pre-check.
-- **Job statuses.** `queued`, `running`, `succeeded`, `needs_review` (only write candidates), `failed`,
+- **Job statuses.** `queued`, `running`, `succeeded`, `failed`,
   `cancelled`. Jobs left `running` by a crash are marked `failed` on startup.
 - **`heal_status(job_id)`** is an unprefixed runtime tool. It returns the job record, plus `retry_after_s` while
   the job is open.
