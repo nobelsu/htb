@@ -1,4 +1,5 @@
-"""MCP server: one tool per active card action, served over Streamable HTTP with Bearer-key auth.
+"""MCP server: a fixed set of generic tools (find_actions, run_action, sign-in, heal) over every active card,
+served over Streamable HTTP with Bearer-key auth.
 
 Run:  uv run python -m runtime.gateway --load tests/fixture_site.json
 """
@@ -11,20 +12,14 @@ import importlib
 import json
 import logging
 import os
-import threading
-import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import anyio
 import mcp_types as types
-from mcp.server.connection import Connection
-from mcp.server.lowlevel.server import NotificationOptions, Server
-from mcp.server.models import InitializationOptions
-from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, ToolsListChanged
+from mcp.server.lowlevel.server import Server
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from runtime.browser.pool import BrowserConfig, BrowserPool
@@ -42,7 +37,6 @@ from runtime.sessions import DevEnvSessionStore
 from runtime.tiers import default_tiers
 from runtime.state import StateStore
 from schema import load_card
-from schema.params import input_schema, tool_description
 
 log = logging.getLogger("runtime.gateway")
 
@@ -53,13 +47,6 @@ Message = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
-
-
-@dataclass(frozen=True)
-class ToolEntry:
-    domain: str
-    action: str
-    tool: types.Tool
 
 
 INSTRUCTIONS = (
@@ -76,8 +63,6 @@ INSTRUCTIONS = (
     "it show the link to the user themselves; then start_connection simply returns once they've signed in.)"
 )
 
-
-TOOLS_MODES = ("generic", "per_action")
 
 FIND_ACTIONS_TOOL = types.Tool(
     name="find_actions",
@@ -179,20 +164,6 @@ CONNECTION_TOOLS = {
 }
 
 
-class _Server(Server[dict[str, Any]]):
-    """Advertises `tools.listChanged` on handshake-era connections too."""
-
-    def create_initialization_options(
-        self,
-        notification_options: NotificationOptions | None = None,
-        experimental_capabilities: dict[str, dict[str, Any]] | None = None,
-        extensions: dict[str, dict[str, Any]] | None = None,
-    ) -> InitializationOptions:
-        return super().create_initialization_options(
-            notification_options or NotificationOptions(tools_changed=True), experimental_capabilities, extensions
-        )
-
-
 class Gateway:
     def __init__(
         self,
@@ -203,96 +174,32 @@ class Gateway:
         connections: ConnectionManager | None = None,
         pool: BrowserPool | None = None,
         keepalive_s: float = 0.0,
-        tools_mode: str = "generic",
     ) -> None:
-        if tools_mode not in TOOLS_MODES:
-            raise ValueError(f"tools_mode must be one of {TOOLS_MODES}")
         self.registry = registry
         self.executor = executor
         self.healer = healer
         self.connections = connections
         self.pool = pool
         self.keepalive_s = keepalive_s
-        self.tools_mode = tools_mode
         self.poll_interval_s = poll_interval_s
-        self.bus = InMemorySubscriptionBus()  # 2026-07-28 clients: subscriptions/listen
-        self._legacy_connections: weakref.WeakSet[Connection] = weakref.WeakSet()  # handshake-era clients
-        self._tools: dict[str, ToolEntry] = {}
         self._seen_clients: set[tuple[object, object, object]] = set()
-        self._dirty = threading.Event()
-        self.server = _Server(
+        self.server: Server[dict[str, Any]] = Server(
             "htb-runtime",
             version="0.1.0",
             instructions=INSTRUCTIONS,
             lifespan=self._lifespan,
             on_list_tools=self._list_tools,
             on_call_tool=self._call_tool,
-            on_subscriptions_listen=ListenHandler(self.bus),
         )
-        self.server.add_notification_handler(
-            "notifications/initialized", types.NotificationParams, self._on_initialized
-        )
-        registry.on_change(lambda _domain: self._dirty.set())
-        self.rebuild()
 
-    # ---- tool table --------------------------------------------------------
+    # ---- registry --------------------------------------------------------
 
-    def rebuild(self) -> None:
-        tools: dict[str, ToolEntry] = {}
-        if self.tools_mode == "generic":
-            # Actions are reached through find_actions / run_action; the tool list doesn't depend on the cards.
-            self._tools = tools
-            log.info("serving generic tools over %d sites", len(self.registry.active_cards()))
-            return
-        for domain, stored in sorted(self.registry.active_cards().items()):
-            card = stored.card
-            for action in card.actions:
-                name = f"{card.tool_prefix}_{action.name}"
-                if name in tools:
-                    log.warning("tool %s from %s clashes with %s; skipped", name, domain, tools[name].domain)
-                    continue
-                tool = types.Tool(
-                    name=name,
-                    description=tool_description(action),
-                    input_schema=input_schema(action.params, action.requires_confirmation),
-                )
-                tools[name] = ToolEntry(domain, action.name, tool)
-        self._tools = tools
-        log.info("serving %d tools", len(tools))
-
-    def tool_names(self) -> list[str]:
-        return list(self._tools)
-
-    async def reload_if_changed(self) -> bool:
-        """Pick up registry changes (including from other processes) and notify clients."""
-        self.registry.refresh()
-        if not self._dirty.is_set():
-            return False
-        self._dirty.clear()
-        self.rebuild()
-        if self.tools_mode == "per_action":  # generic tools don't change when cards do
-            await self.notify_tools_changed()
-        return True
-
-    async def notify_tools_changed(self) -> None:
-        await self.bus.publish(ToolsListChanged())
-        for conn in list(self._legacy_connections):
-            await conn.send_tool_list_changed()  # best-effort; never raises
+    def refresh_registry(self) -> set[str]:
+        """Pick up cards saved by other processes (the mapper). The tool list never changes: new cards and
+        actions are found through find_actions."""
+        return self.registry.refresh()
 
     # ---- MCP handlers ------------------------------------------------------
-
-    def _track(self, ctx: Any) -> None:
-        """Remember handshake-era connections so list-changed can reach their standalone stream.
-
-        `ctx.session` is a per-request proxy; the long-lived per-client object is its `Connection`,
-        which the 2.3.0 SDK only exposes as `ServerSession._connection` (see DECISIONS.md).
-        """
-        conn = getattr(getattr(ctx, "session", None), "_connection", None)
-        if isinstance(conn, Connection) and conn.protocol_version not in MODERN_PROTOCOL_VERSIONS:
-            self._legacy_connections.add(conn)
-
-    async def _on_initialized(self, ctx: Any, params: types.NotificationParams) -> None:
-        self._track(ctx)
 
     def _log_client(self, ctx: Any) -> None:
         """Log each client's identity and elicitation support once (decides how sign-in links are shown)."""
@@ -317,11 +224,8 @@ class Gateway:
         )
 
     async def _list_tools(self, ctx: Any, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
-        self._track(ctx)
         self._log_client(ctx)
-        tools = [e.tool for e in self._tools.values()]
-        if self.tools_mode == "generic":
-            tools = [FIND_ACTIONS_TOOL, RUN_ACTION_TOOL]
+        tools = [FIND_ACTIONS_TOOL, RUN_ACTION_TOOL]
         if self.healer is not None:
             tools.append(HEAL_STATUS_TOOL)
         if self.connections is not None:
@@ -331,20 +235,15 @@ class Gateway:
     async def _call_tool(
         self, ctx: Any, params: types.CallToolRequestParams
     ) -> types.CallToolResult | types.InputRequiredResult:
-        self._track(ctx)
         if params.name in CONNECTION_TOOLS and self.connections is not None:
             return await self._connection_tool(params.name, dict(params.arguments or {}), ctx, params)
         if params.name == HEAL_STATUS_TOOL.name and self.healer is not None:
             return self._heal_status(dict(params.arguments or {}))
-        if self.tools_mode == "generic" and params.name == FIND_ACTIONS_TOOL.name:
+        if params.name == FIND_ACTIONS_TOOL.name:
             return self._find_actions(dict(params.arguments or {}))
-        if self.tools_mode == "generic" and params.name == RUN_ACTION_TOOL.name:
+        if params.name == RUN_ACTION_TOOL.name:
             return await self._run_action(dict(params.arguments or {}))
-        entry = self._tools.get(params.name)
-        stored = self.registry.get(entry.domain) if entry else None
-        if entry is None or stored is None or stored.card.action(entry.action) is None:
-            return _error_result(f"unknown tool {params.name!r}")
-        return await self._execute(stored, entry.action, dict(params.arguments or {}), params.name)
+        return _error_result(f"unknown tool {params.name!r}")
 
     def _find_actions(self, args: dict[str, Any]) -> types.CallToolResult:
         query, site = args.get("query"), args.get("site")
@@ -503,7 +402,7 @@ class Gateway:
         while True:
             await anyio.sleep(self.poll_interval_s)
             try:
-                await self.reload_if_changed()
+                self.refresh_registry()
             except Exception:
                 log.exception("registry reload failed")
 
@@ -672,7 +571,6 @@ def main() -> None:
     gateway = Gateway(
         registry, executor, healer=healer, connections=connections, pool=pool,
         keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")),
-        tools_mode=os.environ.get("TOOLS_MODE", "generic"),
     )
     app = gateway.asgi_app(os.environ.get("GATEWAY_API_KEY", ""), host=args.host)
     uvicorn.run(app, host=args.host, port=args.port, access_log=False)

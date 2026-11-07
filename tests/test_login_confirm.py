@@ -20,7 +20,7 @@ from runtime.registry import Registry
 from runtime.session_store import EncryptedSessionStore, new_session_key
 from tests.conftest import LiveServer
 from tests.fixture_site.app import CSRF, VALID_SID
-from tests.test_gateway import API_KEY, connect, envelope
+from tests.test_gateway import API_KEY, act, connect, envelope
 
 DOMAIN = "fixture.test"
 SIGNED_IN = {"sid": VALID_SID, "csrftoken": CSRF}
@@ -144,7 +144,7 @@ async def test_confirm_needs_a_started_browser(tmp_path: Path, fixture_card: dic
 def weak_gateway(tmp_path: Path, fixture_card: dict[str, Any]) -> Iterator[tuple[str, FakeNeko]]:
     neko = FakeNeko()
     manager, registry = make_manager(tmp_path, weak_card(fixture_card), neko)
-    gateway = Gateway(registry, manager.executor, poll_interval_s=0.05, tools_mode="per_action", connections=manager)
+    gateway = Gateway(registry, manager.executor, poll_interval_s=0.05, connections=manager)
     with LiveServer(gateway.asgi_app(API_KEY)) as server:
         manager.public_base_url = server.url
         yield server.url, neko
@@ -178,7 +178,7 @@ async def test_signed_in_button_on_the_page(weak_gateway: tuple[str, FakeNeko], 
             assert await page.is_hidden("#viewer")
             await browser.close()
         assert envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "connected"
-        assert envelope(await client.call_tool("shop_list_orders", {}))["status"] == "SUCCESS"
+        assert envelope(await client.call_tool(*act("list_orders", {})))["status"] == "SUCCESS"
 
 
 async def test_poll_waits_for_the_sign_in(tmp_path: Path, fixture_card: dict[str, Any], site_url: str) -> None:
@@ -241,7 +241,7 @@ async def test_poll_does_not_hang_when_the_link_was_never_opened(
 def strong_gateway(tmp_path: Path, fixture_card: dict[str, Any]) -> Iterator[tuple[str, FakeNeko]]:
     neko = FakeNeko()
     manager, registry = make_manager(tmp_path, fixture_card, neko)
-    gateway = Gateway(registry, manager.executor, poll_interval_s=0.05, tools_mode="per_action", connections=manager)
+    gateway = Gateway(registry, manager.executor, poll_interval_s=0.05, connections=manager)
     with LiveServer(gateway.asgi_app(API_KEY)) as server:
         manager.public_base_url = server.url
         yield server.url, neko
@@ -285,7 +285,7 @@ async def test_client_shows_the_link_and_the_call_waits(strong_gateway: tuple[st
         assert len(shown) == 1 and shown[0][0].startswith("Sign in to fixture.test")
         assert shown[0][1].startswith(f"{base}/connect/")
         assert out["status"] == "connected" and out["user_message"] == "You're signed in to fixture.test."
-        assert envelope(await client.call_tool("shop_list_orders", {}))["status"] == "SUCCESS"
+        assert envelope(await client.call_tool(*act("list_orders", {})))["status"] == "SUCCESS"
 
 
 async def test_declining_the_link(strong_gateway: tuple[str, FakeNeko]) -> None:
