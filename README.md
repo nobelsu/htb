@@ -20,3 +20,18 @@ The MCP endpoint is `http://127.0.0.1:8765/mcp` (Streamable HTTP, `Authorization
 `POST http://127.0.0.1:8900/_admin/break` moves one fixture endpoint, `/_admin/reset` restores it.
 
 The mapper imports `schema` (`validate_card`, `Card`, `Envelope`) and saves through `runtime.registry.Registry`.
+
+## Healing
+
+When an action returns `PAGE_CHANGED`, the runtime queues a heal job, pre-checks it (a block or an expired login
+cancels it), then asks the mapper to re-map just that action:
+
+```python
+class Remapper(Protocol):  # runtime/healing.py
+    async def remap(self, card: Card, actions: list[str], reason: str) -> Card | dict: ...
+```
+
+Return the whole proposed card. The runtime validates the changed actions against their `examples` and saves a
+new version; writes are never auto-activated. Set `REMAPPER=module:Class` in `.env`. For the fixture shop,
+`REMAPPER=tests.fixture_site.remapper:FixtureRemapper` demos the full loop: break the site, call `shop_get_item`,
+watch `heal_status`, call again.

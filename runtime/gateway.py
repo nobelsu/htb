@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import importlib
 import json
 import logging
 import os
@@ -28,8 +29,10 @@ from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from runtime.confirm import Confirmer
 from runtime.executor import Executor
+from runtime.healing import HealConfig, HealManager, Remapper
 from runtime.registry import Registry
 from runtime.sessions import DevEnvSessionStore
+from runtime.state import StateStore
 from schema import load_card
 from schema.params import input_schema, tool_description
 
@@ -51,6 +54,19 @@ class ToolEntry:
     tool: types.Tool
 
 
+HEAL_STATUS_TOOL = types.Tool(
+    name="heal_status",
+    description="Status of a heal job started by a PAGE_CHANGED result (its heal.job_id). When the status is "
+    "'succeeded', call the original tool again.",
+    input_schema={
+        "type": "object",
+        "properties": {"job_id": {"type": "string", "description": "heal.job_id from a PAGE_CHANGED result"}},
+        "required": ["job_id"],
+        "additionalProperties": False,
+    },
+)
+
+
 class _Server(Server[dict[str, Any]]):
     """Advertises `tools.listChanged` on handshake-era connections too."""
 
@@ -66,9 +82,16 @@ class _Server(Server[dict[str, Any]]):
 
 
 class Gateway:
-    def __init__(self, registry: Registry, executor: Executor, poll_interval_s: float = 1.0) -> None:
+    def __init__(
+        self,
+        registry: Registry,
+        executor: Executor,
+        poll_interval_s: float = 1.0,
+        healer: HealManager | None = None,
+    ) -> None:
         self.registry = registry
         self.executor = executor
+        self.healer = healer
         self.poll_interval_s = poll_interval_s
         self.bus = InMemorySubscriptionBus()  # 2026-07-28 clients: subscriptions/listen
         self._legacy_connections: weakref.WeakSet[Connection] = weakref.WeakSet()  # handshake-era clients
@@ -145,10 +168,15 @@ class Gateway:
 
     async def _list_tools(self, ctx: Any, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
         self._track(ctx)
-        return types.ListToolsResult(tools=[e.tool for e in self._tools.values()])
+        tools = [e.tool for e in self._tools.values()]
+        if self.healer is not None:
+            tools.append(HEAL_STATUS_TOOL)
+        return types.ListToolsResult(tools=tools)
 
     async def _call_tool(self, ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
         self._track(ctx)
+        if params.name == HEAL_STATUS_TOOL.name and self.healer is not None:
+            return self._heal_status(dict(params.arguments or {}))
         entry = self._tools.get(params.name)
         stored = self.registry.get(entry.domain) if entry else None
         if entry is None or stored is None or stored.card.action(entry.action) is None:
@@ -165,10 +193,25 @@ class Gateway:
             is_error=False,  # the envelope's `status` carries the outcome, including failures
         )
 
+    def _heal_status(self, args: dict[str, Any]) -> types.CallToolResult:
+        assert self.healer is not None
+        job_id = args.get("job_id")
+        if not isinstance(job_id, str):
+            return _error_result("job_id (string) is required")
+        status = self.healer.heal_status(job_id)
+        if status is None:
+            return _error_result(f"no heal job {job_id!r}")
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=json.dumps(status))], structured_content=status
+        )
+
     @asynccontextmanager
     async def _lifespan(self, _server: Server[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
         async with anyio.create_task_group() as tg:
             tg.start_soon(self._poll)
+            if self.healer is not None:
+                tg.start_soon(self.healer.run_forever)
+                tg.start_soon(self.healer.health_checks_forever)
             yield {}
             tg.cancel_scope.cancel()
 
@@ -235,6 +278,17 @@ def load_into_registry(registry: Registry, path: Path) -> int | None:
     return registry.save(card, note=f"loaded from {path.name}")
 
 
+def load_remapper(spec: str | None) -> Remapper | None:
+    """`module.path:Name` -> an instance of Name (or Name itself if it is already an instance)."""
+    if not spec:
+        return None
+    module_name, _, attr = spec.partition(":")
+    obj = getattr(importlib.import_module(module_name), attr)
+    remapper: Remapper = obj() if isinstance(obj, type) else obj
+    log.info("using remapper %s", spec)
+    return remapper
+
+
 def main() -> None:
     import uvicorn
     from dotenv import load_dotenv
@@ -247,7 +301,8 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    registry = Registry(os.environ.get("REGISTRY_DB", "./runtime.db"))
+    db_path = os.environ.get("REGISTRY_DB", "./runtime.db")
+    registry = Registry(db_path)
     for path in args.load:
         version = load_into_registry(registry, path)
         log.info("%s: %s", path, f"saved as version {version}" if version else "unchanged")
@@ -255,7 +310,15 @@ def main() -> None:
         DevEnvSessionStore(os.environ.get("DEV_SESSION_COOKIES")),
         Confirmer(os.environ.get("CONFIRMATION_SECRET", "")),
     )
-    gateway = Gateway(registry, executor)
+    config = HealConfig(
+        retry_after_s=int(os.environ.get("HEAL_RETRY_AFTER_S", "30")),
+        health_interval_s=float(os.environ.get("HEALTH_CHECK_INTERVAL_S", "0")),
+        health_disabled_domains=frozenset(
+            d.strip() for d in os.environ.get("HEALTH_CHECK_DISABLED_DOMAINS", "").split(",") if d.strip()
+        ),
+    )
+    healer = HealManager(registry, StateStore(db_path), executor, load_remapper(os.environ.get("REMAPPER")), config)
+    gateway = Gateway(registry, executor, healer=healer)
     app = gateway.asgi_app(os.environ.get("GATEWAY_API_KEY", ""), host=args.host)
     uvicorn.run(app, host=args.host, port=args.port)
 

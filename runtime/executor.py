@@ -53,16 +53,31 @@ class Stop(Exception):
     http_status: int | None = None  # the 4xx behind an ERROR, used by the probe
 
 
-class HealQueue(Protocol):
-    def enqueue(self, domain: str, action: str, reason: str) -> Heal | None: ...
+class HealingHooks(Protocol):
+    """What the executor tells the healing system about agent-facing runs (see runtime/healing.py)."""
+
+    def page_changed(self, domain: str, action: str, reason: str, user: str) -> Heal | None:
+        """Queue (or join) a heal job for a PAGE_CHANGED result."""
+        ...
+
+    def record_result(self, domain: str, action: str, code: ResultCode, user: str) -> None:
+        """Every fresh agent-facing result, for EMPTY-spike tracking."""
+        ...
+
+    def is_degraded(self, domain: str, action: str) -> bool: ...
 
 
-class NoHealQueue:
-    """TODO(healing): real heal jobs. Until then PAGE_CHANGED returns `heal: null`."""
+class NoHealing:
+    """No healing: PAGE_CHANGED returns `heal: null`, nothing is tracked."""
 
-    def enqueue(self, domain: str, action: str, reason: str) -> Heal | None:
-        log.info("heal requested for %s.%s: %s (healing not built yet)", domain, action, reason)
+    def page_changed(self, domain: str, action: str, reason: str, user: str) -> Heal | None:
         return None
+
+    def record_result(self, domain: str, action: str, code: ResultCode, user: str) -> None:
+        return None
+
+    def is_degraded(self, domain: str, action: str) -> bool:
+        return False
 
 
 @dataclass
@@ -74,7 +89,7 @@ class _Run:
     params: dict[str, Any]
     session: Session
     deadline: float
-    allow_probe: bool
+    primary: bool  # an agent-facing run (False for probes, health checks and heal validation)
     auth: str | None
     steps: dict[tuple[str, str], list[Any]] = field(default_factory=dict)
 
@@ -97,13 +112,13 @@ class Executor:
         sessions: SessionStore,
         confirmer: Confirmer,
         tiers: dict[str, TierClient] | None = None,
-        heal_queue: HealQueue | None = None,
+        healing: HealingHooks | None = None,
         action_cap_s: float = ACTION_CAP_S,
     ) -> None:
         self.sessions = sessions
         self.confirmer = confirmer
         self.tiers: dict[str, TierClient] = tiers or {"http": HttpTier()}
-        self.heal_queue = heal_queue or NoHealQueue()
+        self.healing: HealingHooks = healing or NoHealing()
         self.action_cap_s = action_cap_s
 
     async def run(self, stored: StoredCard, action_name: str, args: dict[str, Any], user: str = "default") -> Envelope:
@@ -112,8 +127,59 @@ class Executor:
             raise KeyError(f"{stored.domain} has no action {action_name!r}")
         # TODO(cache): look up (domain, action, canonical_params, session_id) for SUCCESS/EMPTY reads.
         # TODO(rate-limit): per-(domain, session) bucket; every outgoing request counts.
-        env, _ = await self._execute(stored.card, action, stored.version, args, user, allow_probe=True)
+        env, _ = await self._execute(stored.card, action, stored.version, args, user, primary=True)
         return env
+
+    async def run_internal(
+        self, card: Card, version: int, action_name: str, args: dict[str, Any], user: str = "default"
+    ) -> Envelope:
+        """Run an action for the runtime itself (examples for health checks and heal validation).
+
+        No 4xx probe, no heal queueing, no EMPTY tracking. Confirmation is bypassed: only read
+        actions should be run this way.
+        """
+        action = card.action(action_name)
+        if action is None:
+            raise KeyError(f"{card.domain} has no action {action_name!r}")
+        env, _ = await self._execute(card, action, version, args, user, primary=False)
+        return env
+
+    async def check_session(self, card: Card, provider_id: str, user: str) -> ResultCode | None:
+        """Run a provider's `session_check`. Returns None if it passes, else the result code."""
+        provider = card.provider(provider_id)
+        if provider is None:
+            return R.ERROR
+        cookies = self.sessions.get(user, card.domain, provider_id)
+        if cookies is None:
+            return R.AUTH_REQUIRED
+        check = provider.session_check
+        session = self.tiers["http"].open(card.base_url, cookies)
+        try:
+            ctx = Context(card.base_url, {}, session.cookies, {})
+            try:
+                built = build_request(check, merge_headers(card.defaults.headers, check.headers), ctx)
+            except MissingCookie:
+                return R.AUTH_EXPIRED
+            except TemplateError:
+                return R.ERROR
+            try:
+                resp = await session.send(built, DEFAULT_TIMEOUT_MS / 1000)
+            except (TransportTimeout, TransportError):
+                return R.ERROR
+        finally:
+            await session.aclose()
+        listed = resp.status in check.expect.status
+        if not listed and resp.status == 429:
+            return R.RATE_LIMITED
+        if (not listed and resp.status == 401) or match_signal(provider.logged_out_signals, resp):
+            return R.AUTH_EXPIRED
+        if match_signal(card.blocked_signals, resp):
+            return R.BLOCKED
+        if not listed or not content_type_ok(check.expect.content_type, resp.headers.get("content-type")):
+            return R.ERROR
+        if _missing_paths(check.expect.paths, resp.text):
+            return R.ERROR
+        return None
 
     # ---- one execution -----------------------------------------------------
 
@@ -124,7 +190,7 @@ class Executor:
         version: int,
         args: dict[str, Any],
         user: str,
-        allow_probe: bool,
+        primary: bool,
         deadline: float | None = None,
     ) -> tuple[Envelope, int | None]:
         started = time.monotonic()
@@ -135,9 +201,11 @@ class Executor:
 
         def envelope(code: ResultCode, data: list[Any] | None = None, **kw: Any) -> Envelope:
             ms = int((time.monotonic() - started) * 1000)
-            env = Envelope(
-                status=code, data=data, meta=Meta(ms=ms, tier=tier.name, map_version=version, run_id=run_id), **kw
-            )
+            degraded = self.healing.is_degraded(card.domain, action.name)
+            meta = Meta(ms=ms, tier=tier.name, degraded=degraded, map_version=version, run_id=run_id)
+            env = Envelope(status=code, data=data, meta=meta, **kw)
+            if primary:
+                self.healing.record_result(card.domain, action.name, code, user)
             if env.error is not None:
                 env.error.message = scrub(env.error.message, secrets_seen)
             log.info("%s %s.%s -> %s in %dms", run_id, card.domain, action.name, code, ms)
@@ -145,8 +213,8 @@ class Executor:
 
         def failed(stop: Stop, data: list[Any] | None = None) -> Envelope:
             heal = None
-            if stop.code == R.PAGE_CHANGED and allow_probe:
-                heal = self.heal_queue.enqueue(card.domain, action.name, stop.message)
+            if stop.code == R.PAGE_CHANGED and primary:
+                heal = self.healing.page_changed(card.domain, action.name, stop.message, user)
             error = ErrorInfo(
                 code=stop.code, message=stop.message, hint=stop.hint, step=stop.step, retry_after_s=stop.retry_after_s
             )
@@ -197,7 +265,7 @@ class Executor:
             params=params,
             session=session,
             deadline=deadline if deadline is not None else started + self.action_cap_s,
-            allow_probe=allow_probe,
+            primary=primary,
             auth=auth,
         )
         try:
@@ -218,7 +286,6 @@ class Executor:
                 verdict = await self._verify(run)
                 if verdict is not None:
                     return failed(Stop(R.VERIFY_FAILED, verdict, step="verify"), data), None
-            # TODO(empty-tracking): count consecutive fresh EMPTY results in action_state.
             return envelope(code, data, next_params=next_params), None
         finally:
             await session.aclose()
@@ -337,11 +404,11 @@ class Executor:
         """Row 5: a 4xx. Reads with examples run one example (once, never probed again)."""
         base = f"HTTP {status} from {where}"
         a = run.action
-        if not (run.allow_probe and a.kind == "read" and a.examples):
+        if not (run.primary and a.kind == "read" and a.examples):
             return Stop(R.ERROR, base, step=step_id, http_status=status)
         example = a.examples[0]
         env, probe_status = await self._execute(
-            run.card, a, run.version, dict(example.params), run.user, allow_probe=False, deadline=run.deadline
+            run.card, a, run.version, dict(example.params), run.user, primary=False, deadline=run.deadline
         )
         if env.status == R.ERROR and probe_status == status:
             return Stop(

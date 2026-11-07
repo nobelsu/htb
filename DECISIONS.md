@@ -133,3 +133,41 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - This is advisory: the agent still holds the confirmation id. Layer 2 (not built, needs agreement as it changes
   the spec's flow): MCP elicitation for `spends: true`, so the gateway asks the user directly and the agent
   never holds the approval; the HMAC id flow stays as the fallback for clients without elicitation.
+
+## Healing
+- **H1 Mapper hand-off (asked).** A Python interface, `runtime.healing.Remapper`:
+  `async remap(card, actions, reason) -> Card | dict`. It returns the whole proposed card; the runtime picks what
+  to activate. Configured with `REMAPPER=module:Class`. `tests/fixture_site/remapper.py:FixtureRemapper` is a
+  stand-in for the fixture shop (asked) that probes which item endpoint answers.
+- **H2 Repeat PAGE_CHANGED (asked).** While a job for the site covers the action, every PAGE_CHANGED returns that
+  job's id. A different action gets its own job. One worker runs jobs one at a time, so at most one job per
+  domain runs.
+- **H3 EMPTY spikes (asked).** Built now. Only fresh agent-facing `EMPTY` results count; `SUCCESS` resets the
+  count; other codes leave it alone. At 5 the count resets and one example with `min_items >= 1` runs in the
+  background; if it is `EMPTY` too, a heal is queued (`trigger: empty_spike`).
+- **Cooldown (my addition, not in the spec).** After a heal for an action ends `failed`, `cancelled` or
+  `needs_review`, PAGE_CHANGED for that action returns the finished job's id with the remaining cooldown as
+  `retry_after_s` (default 300 s), instead of queueing a heal on every call.
+- **Pre-check.** Runs `session_check` for each provider the broken actions use, then one example of the first
+  broken read. `BLOCKED`, `AUTH_EXPIRED`, `RATE_LIMITED` and `AUTH_REQUIRED` cancel the job (nothing degraded).
+  If the example now *passes*, the job is also cancelled (the break was input-specific, e.g. an ambiguous SKU);
+  this case is not in the spec.
+- **"Pass".** For validation and health checks: every example returns `SUCCESS`/`EMPTY` with at least `min_items`.
+- **Activation.** Changed actions = those whose definition differs from the active card. Actions the remapper
+  adds are ignored; actions it drops are kept. Changed reads that pass go in; changed reads that fail keep the old
+  definition and are marked degraded; changed writes go to `heal_candidates` (old kept, degraded). A broken
+  action the remapper didn't change stays degraded. No change → no new version.
+- **Site-level fields** = everything except `actions` and `provenance`. A site-level change is all or nothing:
+  if any read action fails its examples under it, nothing is activated.
+- **Degraded** is set when an action is kept on its old definition after a failed heal, and cleared when a later
+  heal activates a new definition for it. `meta.degraded` reads it on every result.
+- **Health checks.** Off by default (`HEALTH_CHECK_INTERVAL_S=0`; per-domain opt-out with
+  `HEALTH_CHECK_DISABLED_DOMAINS`). A no-login site is one where no action has an effective `auth_provider`.
+  Actions with an open heal job are skipped. A failure queues a heal (`trigger: health_check`), which still goes
+  through the pre-check.
+- **Job statuses.** `queued`, `running`, `succeeded`, `needs_review` (only write candidates), `failed`,
+  `cancelled`. Jobs left `running` by a crash are marked `failed` on startup.
+- **`heal_status(job_id)`** is an unprefixed runtime tool. It returns the job record, plus `retry_after_s` while
+  the job is open.
+- `Executor.run_internal` runs examples for the runtime (no probe, no heal, no EMPTY counting, confirmation
+  bypassed), so it must only be used for read actions.

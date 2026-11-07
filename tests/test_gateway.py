@@ -187,3 +187,31 @@ async def test_rollback_notifies_and_restores(registry: Registry, gateway: Gatew
     assert await gateway.reload_if_changed()
     assert "shop_find_products" not in gateway.tool_names()
     assert not await gateway.reload_if_changed()
+
+
+async def test_break_and_heal_over_mcp(registry: Registry, tmp_path: Path, site_url: str) -> None:
+    from runtime.healing import HealConfig, HealManager
+    from runtime.state import StateStore
+    from tests.fixture_site.remapper import FixtureRemapper
+
+    executor = Executor(InMemorySessionStore(), Confirmer("s"))
+    healer = HealManager(registry, StateStore(tmp_path / "gw.db"), executor, FixtureRemapper(), HealConfig(poll_s=0.05))
+    gw = Gateway(registry, executor, poll_interval_s=0.05, healer=healer)
+    with LiveServer(gw.asgi_app(API_KEY)) as server:
+        async with connect(f"{server.url}/mcp", "auto") as client:
+            assert "heal_status" in {t.name for t in (await client.list_tools()).tools}
+            httpx.post(f"{site_url}/_admin/break")
+            env = envelope(await client.call_tool("shop_get_item", {"id": "p1"}))
+            assert env["status"] == "PAGE_CHANGED" and env["heal"]["retry_after_s"] == 30
+            job_id = env["heal"]["job_id"]
+            with anyio.fail_after(10):
+                while True:
+                    status = envelope(await client.call_tool("heal_status", {"job_id": job_id}))
+                    if status["status"] not in ("queued", "running"):
+                        break
+                    await anyio.sleep(0.05)
+            assert status["status"] == "succeeded" and status["new_version"] == 2
+            env = envelope(await client.call_tool("shop_get_item", {"id": "p1"}))
+            assert env["status"] == "SUCCESS" and env["meta"]["map_version"] == 2
+            missing = await client.call_tool("heal_status", {"job_id": "h_nope"})
+            assert missing.is_error
