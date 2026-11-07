@@ -1,4 +1,4 @@
-"""The Spine pages: the home page, sign-in modes, changing your password, and the shared design rules."""
+"""The Margin pages: the home page, sign-in modes, changing your password, and the shared design rules."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import re
 import httpx
 import pytest
 
-from runtime.ui import short_name, spine_size
+from runtime.ui import short_name
 from tests.test_oauth import PASSWORD, Env, account_session, env  # noqa: F401  (fixture)
 
 
@@ -48,7 +48,7 @@ async def test_change_password(env: Env) -> None:
 
 
 async def test_pages_follow_the_design_rules(env: Env) -> None:
-    """Black and white, no emoji or arrow symbols in the copy (icons are SVG), one spine per page."""
+    """No emoji or arrow symbols in the copy (icons are SVG); every page has the spider panel and one heading."""
     async with httpx.AsyncClient(follow_redirects=False) as http:
         pages = [await http.get(f"{env.base}{path}") for path in ("/", "/signup", "/account/login")]
         await account_session(env, http)
@@ -57,12 +57,12 @@ async def test_pages_follow_the_design_rules(env: Env) -> None:
         text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", page.text, flags=re.S)
         visible = html.unescape(re.sub(r"<[^>]+>", " ", text))
         assert not re.search("[←-⇿✀-➿\U0001f300-\U0001faff]", visible), page.url
-        assert page.text.count('class="spine"') == 1
+        assert page.text.count('<canvas id="web"') == 1 and page.text.count("<h1") == 1, page.url
+        assert "Linen" not in visible and "#F5EDE2" in page.text  # the Linen palette
 
 
-def test_spine_word_fits() -> None:
+def test_short_name() -> None:
     assert short_name("www.github.com") == "github" and short_name("fixture.test") == "fixture"
-    assert spine_size("Join") == 200 and spine_size("Account") == 180 and spine_size("Password") == 140
 
 
 # ---- motion ---------------------------------------------------------------------------------------------------
@@ -117,11 +117,11 @@ async def test_invite_code_is_a_plain_field_password_managers_skip(env: Env) -> 
             assert 'data-lpignore="true"' in tag and 'spellcheck="false"' in tag
 
 
-async def test_fields_have_no_focus_outline_and_hide_the_cursor(env: Env) -> None:
+async def test_fields_have_no_focus_outline_and_no_custom_cursor(env: Env) -> None:
     async with httpx.AsyncClient() as http:
         text = (await http.get(f"{env.base}/signup")).text
     assert ".field:focus,.field:focus-visible{outline:none}" in text  # the outline made a second line
-    assert 'closest("input, textarea, select")' in text and ".cursor.off{opacity:0}" in text
+    assert "cursor" not in text.split("<style>")[1].split("</style>")[0].replace("cursor:pointer", "")
 
 
 async def test_form_errors_use_the_page_not_browser_bubbles(env: Env, chromium: None) -> None:
@@ -134,7 +134,7 @@ async def test_form_errors_use_the_page_not_browser_bubbles(env: Env, chromium: 
             await page.goto(f"{env.base}/signup")
             assert await page.evaluate("document.querySelector('form').noValidate")
             await page.click("button.bar")
-            assert await page.text_content(".notice") == "Fill in your invite code."
+            assert await page.text_content(".fld:has([name=code]) .ferr") == "Fill in your invite code."
             assert await page.get_attribute("input[name=code]", "aria-invalid") == "true"
             assert page.url == f"{env.base}/signup"  # nothing was sent
             await page.fill("input[name=code]", "x")
@@ -143,7 +143,8 @@ async def test_form_errors_use_the_page_not_browser_bubbles(env: Env, chromium: 
             await page.fill("input[name=email]", "not-an-email")
             await page.fill("input[name=password]", "long enough password")
             await page.click("button.bar")
-            assert await page.text_content(".notice") == "That email doesn't look right."
+            assert await page.text_content(".fld:has([name=email]) .ferr") == "That email doesn't look right."
+            assert await page.locator(".ferr").count() == 1  # the code's error went once it was filled in
             await page.fill("input[name=email]", "bob@example.com")
             await page.click("button.bar")  # now the server answers, in the same place
             await page.wait_for_load_state()

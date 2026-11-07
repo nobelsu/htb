@@ -373,21 +373,19 @@ def routes(
             tiles.append(f'<a class="tile" href="/account/password">{icon("lock", 28, 1.8)}<span>Password</span></a>')
         tiles.append(f'<button class="tile" type="button" id="alerts">{icon("bell", 28, 1.8)}<span>Alerts</span></button>')
         new_key_rows = (
-            notice("Your new key is below. Your old key no longer works.")
+            notice("Your new key is below. Your old key no longer works.", error=False)
             + copy_row("Claude Code", "claude mcp add", mcp_add_command(base, new_key), "Copy the Claude Code command, which holds your new key")
             if new_key else ""
         )
         body = (
-            notice(message) + new_key_rows
+            f'<h1 class="title">{esc(user)}</h1>' + notice(message, error=False) + new_key_rows
             + f'<div id="waiting" data-seen="{esc(json.dumps([p["url"] for p in pending]))}">{waiting_rows}</div>'
             + site_rows + app_rows + empty
             + f'<div class="tiles">{"".join(tiles)}</div>'
         )
         sign_out = (
             '<form method="post" action="/account/logout" style="margin:0">'
-            '<button type="submit" aria-label="Sign out" style="width:44px;height:44px;border:2px solid currentColor;'
-            f'background:transparent;color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center">'
-            f'{icon("signout", 22)}</button></form>'
+            '<button type="submit">Sign out</button></form>'
         )
         return page(
             title=f"Account, {user}", spine="Account", body=body, spine_end=sign_out,
