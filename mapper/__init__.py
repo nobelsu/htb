@@ -2,7 +2,7 @@
 
 __version__ = "0.1.0"
 
-#: Card ``schema_version`` this mapper emits (docs/card-spec-v0.4.md).
+#: Card ``schema_version`` this mapper emits (CARD_SPEC.md).
 SCHEMA_VERSION = "0.4"
 
 #: Capture bundle format version written to ``meta.json``.

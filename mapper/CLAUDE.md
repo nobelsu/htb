@@ -1,7 +1,7 @@
 # Mapper agent instructions
 
 You build the **mapper**: capture scripts plus the pipeline that turns captures into cards.
-Read `docs/card-spec-v0.4.md` (the contract) and `docs/mapper-design.md` (the design) before writing code.
+Read `CARD_SPEC.md` (the contract) and `docs/mapper-design.md` (the design) before writing code.
 
 ## Scope
 - Work only in `mapper/`, `tests/mapper/` and `docs/mapper-design.md`.

@@ -1,7 +1,7 @@
 # Mapper design
 
 The mapper turns a **capture** of a person (or agent) using a website into a **card** (see
-`docs/card-spec-v0.4.md`). The executor (Nobel's) runs the cards. The mapper never runs anything live
+`CARD_SPEC.md`). The executor (Nobel's) runs the cards. The mapper never runs anything live
 except during validation.
 
 ```
@@ -139,6 +139,20 @@ seen during capture (e.g. a captcha page returned with 200).
 
 **`tool_prefix`:** the registrable domain minus its TLD, lowercased, `[a-z0-9_]` only, max 20 chars
 (`linkedin.com` → `linkedin`).
+
+**`connect_providers` (owned by Nobel's login flow, see "Open items").** When any request carries session
+cookies, M8 adds one provider (`id` = `tool_prefix`) and sets `defaults.auth_provider` to it. The mapper
+only knows logged-in traffic, so it writes the smallest schema-valid placeholder: `login_url` = the
+capture's `start_url`, `session_check` = a parameter-free logged-in GET from the capture, and
+`logged_out_signals: []` (a 401 already means `AUTH_EXPIRED`). The mapping report flags it.
+
+## Open items for Nobel
+
+- **HIGH PRIORITY: real `connect_providers` values.** Login works through our hosted server: it generates a
+  link, the user opens it from the chat and logs in to the site in a browser running on our server, and
+  actions then run server-side in that logged-in session (which also gets past anti-bot checks). The
+  provider's `login_url`, `session_check` and `logged_out_signals` belong to that flow. The mapper's values
+  are placeholders that only keep the card valid.
 
 ## Mapping report
 

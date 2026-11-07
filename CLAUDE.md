@@ -4,7 +4,7 @@ We turn websites into "action maps" (cards): JSON describing a site's own intern
 so an AI agent can call `linkedin_search_companies(query=...)` as a tool, without a browser.
 
 ## The contract
-`docs/card-spec-v0.4.md` is the frozen card spec. It is the single source of truth.
+`CARD_SPEC.md` is the frozen card spec. It is the single source of truth.
 If code and spec disagree, the spec wins; raise a question rather than changing the spec.
 
 ## Ownership (do not edit the other side's code)
