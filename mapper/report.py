@@ -5,6 +5,7 @@ warnings, validation and the LLM calls made. Cookie values and csrf/auth/token v
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
@@ -171,6 +172,24 @@ def _section_task(tr: TaskResult, secrets: set[str]) -> list[str]:
     return out
 
 
+def _section_recon(r) -> list[str]:
+    out = ["## Site recon (M0, informational)", ""]
+    if not r.platforms and not r.json_ld_types and not r.embedded:
+        out += ["No known platform markers or embedded data.", ""]
+        return out
+    for platform, evidence in r.platforms.items():
+        out.append(f"- **{platform}**: {'; '.join(evidence)}")
+    if r.json_ld_types:
+        out.append(f"- JSON-LD types: {', '.join(r.json_ld_types)}")
+    for emb in r.embedded:
+        out.append(
+            f'- Embedded JSON on `{emb.page}`: `<script id="{emb.script_id}">` with keys {emb.top_keys}.'
+        )
+        out.append(f"  Suggested extract: `{json.dumps(emb.extract)}`")
+    out.append("")
+    return out
+
+
 def _section_llm(calls: list[LLMCall], enabled: bool) -> list[str]:
     out = ["## LLM calls", ""]
     if not enabled:
@@ -235,6 +254,8 @@ def render(result: DomainResult) -> str:
         out.append("- live validation not run (pass `--live` to run examples through the executor)")
     out.append("")
 
+    if result.recon is not None:
+        out += _section_recon(result.recon)
     for tr in result.tasks:
         out += _section_task(tr, result.secrets)
     out += _section_llm(result.llm.calls, bool(result.llm.enabled))

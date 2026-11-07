@@ -12,6 +12,7 @@ from pathlib import Path
 from mapper import checks
 from mapper.llm import LLM
 from mapper.pipeline import pagination
+from mapper.pipeline.m0_recon import Recon, recon
 from mapper.pipeline.m3_goal import (
     Goal,
     GoalNotFound,
@@ -199,6 +200,7 @@ class DomainResult:
     llm: LLM
     captures_dir: Path
     live_requested: bool = False
+    recon: Recon | None = None
 
 
 def task_dirs(captures_dir: Path, task: str | None = None) -> list[Path]:
@@ -243,7 +245,11 @@ def map_domain(
     if live:
         session = dict(first.runs["m1"].state_cookies)
         validation.live = live_validate(card, executor or RuntimeExecutor(), session)
-    return DomainResult(card, tasks, validation, notes, secrets, llm, captures_dir, live)
+    every_entry = [
+        e for tr in tasks for b in tr.runs.values() for e in (*b.entries, *(d for d, _ in b.dropped))
+    ]
+    site = recon(every_entry)
+    return DomainResult(card, tasks, validation, notes, secrets, llm, captures_dir, live, site)
 
 
 def write_outputs(result: DomainResult, out_dir: str | Path) -> tuple[Path, Path]:
@@ -340,3 +346,27 @@ def heal_main(args: argparse.Namespace) -> int:
         version = save_card(result.card, db, note=f"mapper heal {result.captures_dir}")
         print(f"saved {result.card['domain']} v{version} to {db} (active)")
     return 0 if v.ok else 1
+
+
+def recon_main(args: argparse.Namespace) -> int:
+    from mapper.pipeline.runs import load_bundle
+
+    captures_dir = Path(args.captures_dir)
+    entries = []
+    for meta in sorted(captures_dir.glob("*/*/meta.json")):
+        b = load_bundle(meta.parent)
+        entries += [*b.entries, *(d for d, _ in b.dropped)]
+    if not entries:
+        print(f"mapper recon: no bundles under {captures_dir}", file=sys.stderr)
+        return 2
+    r = recon(entries)
+    for platform, evidence in r.platforms.items():
+        print(f"{platform}: {'; '.join(evidence)}")
+    if not r.platforms:
+        print("no known platform markers")
+    for t in r.json_ld_types:
+        print(f"JSON-LD type: {t}")
+    for emb in r.embedded:
+        print(f"embedded JSON on {emb.page}: <script id={emb.script_id!r}> keys {emb.top_keys}")
+        print(f"  extract: {json.dumps(emb.extract)}")
+    return 0

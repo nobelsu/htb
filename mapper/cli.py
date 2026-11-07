@@ -88,6 +88,10 @@ def build_parser() -> argparse.ArgumentParser:
     hl.add_argument("--out", help="output directory for card.json/report (default: the captures dir)")
     hl.set_defaults(handler=_cmd_heal)
 
+    rc = sub.add_parser("recon", help="guess what a captured site is built with (informational)")
+    rc.add_argument("captures_dir", help="captures/<domain>/")
+    rc.set_defaults(handler=_cmd_recon)
+
     val = sub.add_parser("validate", help="run save-time validation on a card")
     val.add_argument("card", help="path/to/card.json")
     val.add_argument("--live", action="store_true", help="run read examples through the executor")
@@ -122,6 +126,12 @@ def _cmd_heal(args: argparse.Namespace) -> int:
     from mapper import pipeline
 
     return pipeline.heal_main(args)
+
+
+def _cmd_recon(args: argparse.Namespace) -> int:
+    from mapper import pipeline
+
+    return pipeline.recon_main(args)
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:

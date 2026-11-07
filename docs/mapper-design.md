@@ -85,7 +85,7 @@ Event types: `input` (final value of a field), `click`, `key` (Enter only, so fo
 
 | Stage | Input → output | How | LLM |
 |---|---|---|---|
-| **M0 recon** (stretch) | domain → platform guess | Look for `__NEXT_DATA__`, JSON-LD, Shopify/WordPress markers. Informational for now | no |
+| **M0 recon** (stretch) | domain → platform guess | Look for `__NEXT_DATA__`, JSON-LD, Shopify/WordPress markers (also Nuxt, GraphQL, Rest.li). Embedded JSON blobs get a suggested `regex` + `parse: "json"` extract. Informational: goes into the report and `python -m mapper recon`, never into the card | no |
 | **M1 load + filter** | HAR → candidate entries | Keep same-site hosts (registrable domain match), methods any, mime JSON/HTML/text/form. Drop images, fonts, css, js, media, known analytics/ads hosts, OPTIONS preflights | no |
 | **M2 normalize** | entries → fields | Address every field (see Definitions). Flatten JSON bodies to JSONPath leaves. Parse form bodies, and Rest.li `(k:v,...)` and GraphQL `variables` query values into sub-fields | no |
 | **M3 goal** | fields + markers + goal_marks → goal entry | Read: entries whose fields contain a marker (in any encoding) and whose response has a list-like structure; the earliest such entry after the marker was typed, and after the last click/Enter before the goal mark when there is one. Write: the operator marks right *after* the click, so take the last same-site non-GET/HEAD entry that started after that click and before the goal mark (fallback: the first one after the mark). Ties → LLM picks with a short summary of each candidate | ties only |
