@@ -152,7 +152,8 @@ def _section_task(tr: TaskResult, secrets: set[str]) -> list[str]:
         source = {"llm": "picked by the LLM", "fallback": "first item's scalar leaves (no LLM)"}.get(
             tr.output.source, tr.output.source
         )
-        out.append(f"From `{o['from']}` (`{tr.output.items_path}[*]`), limit {o['limit']}, fields {source}:")
+        where = f"`{tr.output.items_path}[*]`" if tr.output.items_path else "the streamed result rows"
+        out.append(f"From `{o['from']}` ({where}), limit {o['limit']}, fields {source}:")
         out.append("")
         for name, path in o["fields"].items():
             out.append(f"- `{name}` ← `{path}`")

@@ -58,7 +58,7 @@ MIME_RE = re.compile(r"^[a-z*]+/[a-z0-9.+*-]+(;.*)?$", re.I)
 # Path characters a browser leaves as-is (RFC 3986 pchar minus "%").
 PATH_SAFE = "-._~:@!$&'()*+,;="
 
-SOURCE_RANK = {"json": 0, "header": 1, "cookie": 2, "html": 3, "text": 3}
+SOURCE_RANK = {"json": 0, "header": 1, "cookie": 2, "html": 3, "text": 3, "stream": 3}
 
 
 @dataclass
@@ -371,7 +371,7 @@ def _hits(earlier: list[Entry], f: Field) -> list[Source]:
                         e, "cookie", {"from": "cookies", "type": "jsonpath", "expr": expr}, False, hint=name
                     )
                 )
-        if e.response_kind in ("html", "text") and e.response_body and text in e.response_body:
+        if e.response_kind in ("html", "text", "stream") and e.response_body and text in e.response_body:
             hits.append(Source(e, e.response_kind, {"from": "body", "type": "regex", "expr": ""}, False))
     order = {id(e): i for i, e in enumerate(reversed(earlier))}
     hits.sort(key=lambda h: (SOURCE_RANK[h.kind], order[id(h.entry)]))
@@ -409,7 +409,7 @@ def _find_source(
         if ctx.m2 is not None and m2_entry is not None:
             m2e = counterpart(ctx.m2, hit.entry, ctx.values_a, before=m2_entry.started)
         hit.m2_entry = m2e
-        if hit.kind in ("html", "text"):
+        if hit.kind in ("html", "text", "stream"):
             body2 = m2e.response_body if m2e is not None else None
             expr, unique = build_regex(hit.entry.response_body or "", text1, body2, text2)
             hit.extract = {"from": "body", "type": "regex", "expr": expr}

@@ -60,14 +60,15 @@ GOOD_NOTE = [
     act("click", "button", "Save note", performs=True),
     act("done"),
 ]
-OK = {"ok": True, "reason": "results are shown", "next_role": None, "next_name": None}
+OK = {"ok": True, "empty": False, "reason": "results are shown", "next_role": None, "next_name": None}
 
 
 class Brain:
     """Stands in for the LLM: answers each call by which schema it asks for, from per-task queues."""
 
-    def __init__(self, tasks, actions, verdicts):
+    def __init__(self, tasks, actions, verdicts, examples=None):
         self.tasks = tasks
+        self.examples = list(examples or [])  # answers to "pick a new example"
         self.actions = {k: list(v) for k, v in actions.items()}  # task description -> next actions
         self.verdicts = {k: list(v) for k, v in verdicts.items()}  # task description -> check answers
         self.prompts: list[tuple[str, str]] = []
@@ -75,7 +76,7 @@ class Brain:
 
     @staticmethod
     def _task(queues, prompt):
-        return next(d for d in queues if f"Task: {d} (" in prompt)
+        return next(d for d in queues if f"Task: {d} (" in prompt or f"Task: {d}." in prompt)
 
     def create(self, **kw):
         schema = kw["output_config"]["format"]["schema"]["properties"]
@@ -84,6 +85,8 @@ class Brain:
             kind, payload = "discover", {"tasks": self.tasks}
         elif "action" in schema:
             kind, payload = "action", self.actions[self._task(self.actions, prompt)].pop(0)
+        elif "inputs" in schema:
+            kind, payload = "example", {"inputs": self.examples.pop(0)}
         else:
             kind, payload = "check", self.verdicts[self._task(self.verdicts, prompt)].pop(0)
         self.prompts.append((kind, prompt))
@@ -154,7 +157,9 @@ def test_the_mark_comes_the_instant_the_flagged_action_is_done():
         locator=lambda sel: SimpleNamespace(aria_snapshot=lambda: '- textbox "q"\n- button "Search"'),
         get_by_role=lambda role, name=None, exact=True: FakeElement(calls, name),
     )
-    tracker = SimpleNamespace(wait_quiet=lambda page, timeout_ms=10_000: calls.append(("quiet", timeout_ms)))
+    tracker = SimpleNamespace(
+        action=lambda: None, wait_for_action=lambda page, ms: calls.append(("wait", ms))
+    )
     spec = TaskSpec("search", "Search companies by keyword", "read", "/search", {"query": "software"})
     brain = Brain([], {spec.description: GOOD_SEARCH}, {spec.description: [OK]})
     run = drive(
@@ -168,7 +173,66 @@ def test_the_mark_comes_the_instant_the_flagged_action_is_done():
     )
     assert run.marked and [a["outcome"] for a in run.actions] == ["ok", "ok, goal marked"]
     i = calls.index(("click", "Search"))
-    assert calls[i + 1 :] == [("MARK",), ("quiet", AFTER_MARK_MS)]  # no wait, no LLM call in between
+    assert calls[i + 1 :] == [("MARK",), ("wait", AFTER_MARK_MS)]  # no wait, no LLM call in between
+
+
+def test_addresses_carrying_the_input_are_refused():
+    from mapper.explore.agent import StepError, _perform
+
+    page = SimpleNamespace(url="https://example.com/feed/", goto=lambda url, wait_until: None)
+    tracker = SimpleNamespace(action=lambda: None, wait_for_action=lambda page, timeout_ms: None)
+    inputs = {"query": "Acme Robotics"}
+    for url in ["/search/results/?keywords=Acme%20Robotics", "/search?q=acme+robotics", "/s/Acme Robotics"]:
+        with pytest.raises(StepError, match="type it into the page"):
+            _perform(page, tracker, act("navigate", url=url), "https://example.com/", inputs)
+    _perform(page, tracker, act("navigate", url="/search"), "https://example.com/", inputs)  # allowed
+
+
+def test_the_same_failing_action_three_times_ends_the_try():
+    from mapper.explore.agent import AgentFailed
+
+    nothing = SimpleNamespace(count=lambda: 0)
+    page = SimpleNamespace(
+        url="https://example.com/search",
+        locator=lambda sel: SimpleNamespace(aria_snapshot=lambda: '- checkbox "Companies"'),
+        get_by_role=lambda role, name=None, exact=True: nothing,
+    )
+    tracker = SimpleNamespace(action=lambda: None, wait_for_action=lambda page, timeout_ms: None)
+    spec = TaskSpec("search", "Search companies by keyword", "read", "/search", {})
+    brain = Brain([], {spec.description: [act("click", "checkbox", "Companies")] * 5}, {})
+    with pytest.raises(AgentFailed, match="same failing action 3 times") as e:
+        drive(
+            page,
+            tracker,
+            lambda: None,
+            planner=Planner(_llm(brain)),
+            spec=spec,
+            start_url=page.url,
+            feedback=[],
+        )
+    outcomes = [a["outcome"] for a in e.value.run.actions]
+    assert len(outcomes) == 3 and "failed twice" in outcomes[1]
+
+
+@pytest.mark.browser
+def test_a_hidden_checkbox_is_clicked_through_its_label(chromium):
+    from playwright.sync_api import sync_playwright
+
+    from mapper.explore.agent import _find
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(
+                '<label class="pill" style="padding:6px;border:1px solid">'
+                '<input type="checkbox" aria-label="Filter by Companies" '
+                'style="position:absolute;width:0;height:0;opacity:0;margin:0">Companies</label>'
+            )
+            _find(page, "checkbox", "Filter by Companies", for_click=True).click()
+            assert page.is_checked("input")  # clicking the visible pill ticked the hidden box
+        finally:
+            browser.close()
 
 
 # --- the fixture site, end to end -------------------------------------------------------------
@@ -190,12 +254,7 @@ def test_explore_drives_live_retries_and_replays(chromium, site, logged_in, tmp_
         *GOOD_SEARCH,  # attempt 2: the final check says no
         *GOOD_SEARCH,  # attempt 3: works
     ]
-    wrong = {
-        "ok": False,
-        "reason": "only shows all results, not filtered",
-        "next_role": None,
-        "next_name": None,
-    }
+    wrong = {**OK, "ok": False, "reason": "only shows all results, not filtered"}
     brain = Brain(
         [SEARCH_TASK, NOTE_TASK, IMPOSSIBLE_TASK],
         {
@@ -228,7 +287,7 @@ def test_explore_drives_live_retries_and_replays(chromium, site, logged_in, tmp_
     outcomes = [a["outcome"] for a in search.plan.attempts[1].actions]
     assert "not allowed" in outcomes[0] and "no visible button" in outcomes[1]
     last_action_prompt = [p for k, p in brain.prompts if k == "action" and "Search companies" in p][-1]
-    assert "attempt 1: never typed" in last_action_prompt and "attempt 2:" in last_action_prompt
+    assert "try 1: never typed" in last_action_prompt and "try 2:" in last_action_prompt
     assert search.plan.next_selector == "#next"
     assert search.runs == ["real", "m1", "m2", "page2"]
     assert search.plan.script[0] == {"type": "input", "selector": "#q", "value": "{{params.query}}"}
@@ -288,3 +347,73 @@ def test_explore_writes_when_asked(chromium, site, logged_in, tmp_path):
     action = mapped.card["actions"][0]
     assert (action["kind"], action["requires_confirmation"]) == ("write", True)
     assert action["steps"][-1]["request"]["body"].startswith("csrf={{steps.compose.csrf | urlencode}}")
+
+
+@pytest.mark.browser
+def test_an_example_that_finds_nothing_is_swapped_not_failed(chromium, site, logged_in, tmp_path):
+    task = {**SEARCH_TASK, "inputs": [{"name": "query", "example": "qqqnothing"}], "paginates": False}
+    empty = {**OK, "ok": False, "empty": True, "reason": "No results found"}
+    brain = Brain(
+        [task],
+        {
+            "Search companies by keyword": [
+                act("type", "textbox", "Search companies", text="qqqnothing"),
+                act("click", "button", "Search", performs=True),
+                act("done"),
+                *GOOD_SEARCH,
+            ]
+        },
+        {"Search companies by keyword": [empty, OK]},
+        examples=[[{"name": "query", "example": "software"}]],
+    )
+    result = explore(
+        site.url + "/", state=logged_in, out=tmp_path / "captures", llm=_llm(brain), step_timeout_ms=1500
+    )
+    [search] = result.tasks
+    assert search.status == "recorded", search.reason
+    assert search.plan.spec.inputs == {"query": "software"}  # the example that worked is the one kept
+    assert "found nothing" in search.plan.attempts[0].error and search.plan.attempts[1].error is None
+    meta = json.loads((result.domain_dir / "search_companies" / "real" / "meta.json").read_text())
+    assert meta["real_inputs"] == {"query": "software"}
+
+
+@pytest.mark.browser
+def test_a_replay_that_breaks_on_an_empty_page_is_a_failed_try(chromium, site, logged_in, tmp_path):
+    """Seen on LinkedIn: a step that only exists when there are results can't be replayed with a
+    made-up word. The try is redone with that feedback."""
+    task = {**SEARCH_TASK, "paginates": False}
+    needs_results = [
+        act("type", "textbox", "Search companies", text="software"),
+        act("click", "button", "Search"),
+        act("click", "button", "Next page", performs=True),  # only there when something was found
+        act("done"),
+    ]
+    brain = Brain(
+        [task],
+        {"Search companies by keyword": needs_results + GOOD_SEARCH},
+        {"Search companies by keyword": [OK, OK]},
+    )
+    result = explore(
+        site.url + "/", state=logged_in, out=tmp_path / "captures", llm=_llm(brain), step_timeout_ms=1500
+    )
+    [search] = result.tasks
+    assert search.status == "recorded", search.reason
+    first, second = search.plan.attempts
+    assert "replaying it broke" in first.error and "m1: step 3 (click #next)" in first.error
+    assert second.error is None and search.runs == ["real", "m1", "m2"]
+    retry_prompt = [p for k, p in brain.prompts if k == "action"][-1]
+    assert "set categories or filters before you type" in retry_prompt
+
+
+def test_replays_start_where_claude_began():
+    from mapper.explore.explorer import replay_start
+
+    steps = [
+        {"type": "navigate", "url": "/search/results/companies/"},  # passed through, not worked on
+        {"type": "input", "selector": "#q", "value": "{{params.query}}"},
+        {"type": "key", "selector": "#q", "key": "Enter"},
+        {"type": "mark"},
+    ]
+    url, rest = replay_start(steps, "https://www.linkedin.com/feed/foryou/")
+    assert url == "https://www.linkedin.com/search/results/companies/" and rest == steps[1:]
+    assert replay_start(steps[1:], "https://example.com/feed/") == ("https://example.com/feed/", steps[1:])

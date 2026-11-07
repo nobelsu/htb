@@ -86,12 +86,12 @@ Event types: `input` (final value of a field), `click`, `key` (Enter only, so fo
 | Stage | Input → output | How | LLM |
 |---|---|---|---|
 | **M0 recon** (stretch) | domain → platform guess | Look for `__NEXT_DATA__`, JSON-LD, Shopify/WordPress markers (also Nuxt, GraphQL, Rest.li). Embedded JSON blobs get a suggested `regex` + `parse: "json"` extract. Informational: goes into the report and `python -m mapper recon`, never into the card | no |
-| **M1 load + filter** | HAR → candidate entries | Keep same-site hosts (registrable domain match), methods any, mime JSON/HTML/text/form. Drop images, fonts, css, js, media, known analytics/ads hosts, OPTIONS preflights | no |
+| **M1 load + filter** | HAR → candidate entries | Keep same-site hosts (registrable domain match), methods any, mime JSON/HTML/text/form, and streamed data rows (`<hex id>:<JSON>` per line, React Server Components; recognised by shape, kind `stream`). Drop images, fonts, css, js, media, known analytics/ads hosts, OPTIONS preflights | no |
 | **M2 normalize** | entries → fields | Address every field (see Definitions). Flatten JSON bodies to JSONPath leaves. Parse form bodies, and Rest.li `(k:v,...)` and GraphQL `variables` query values into sub-fields | no |
 | **M3 goal** | fields + markers + goal_marks → goal entry | Read: entries whose fields contain a marker (in any encoding) and whose response has a list-like structure; the earliest such entry after the marker was typed, and after the last click/Enter before the goal mark when there is one. Write: the operator marks right *after* the click, so take the last same-site non-GET/HEAD entry that started after that click and before the goal mark (fallback: the first one after the mark). Ties → LLM picks with a short summary of each candidate | ties only |
 | **M4 provenance** | goal + earlier entries → labelled fields + dependency edges | See algorithm below | no |
 | **M5 prune + order** | edges → `steps[]` | Keep only entries reachable backwards from the goal. Topological order by capture time. Step ids are short slugs (`company`, `people`) | naming only (optional) |
-| **M6 extractors + output** | steps + responses → `extract`, `expect`, `output` | Dependencies: the exact location M4 found becomes the extract (JSONPath for JSON; regex with surrounding context for HTML/text). `expect.paths`: the structural parent of each extracted path (e.g. `$.elements`, not `$.elements[0].id`). Output: find the list in the goal response that grew with results, then pick 3–8 item fields | output fields |
+| **M6 extractors + output** | steps + responses → `extract`, `expect`, `output` | Dependencies: the exact location M4 found becomes the extract (JSONPath for JSON; regex with surrounding context for HTML/text). `expect.paths`: the structural parent of each extracted path (e.g. `$.elements`, not `$.elements[0].id`). Output: find the list in the goal response that grew with results, then pick 3–8 item fields. Streamed answers: the result rows are the layout that grew from the marker run, richest in readable values once their row pointers are filled in; the `items` extract is a `regex` + `parse: "json"` + `resolve: "rows"` that matches exactly those rows, and the LLM names the fields (fallback: link + text) | output fields |
 | **M7 annotate** | draft action → full action | Heuristics: GET = read. Non-GET to anything that looks like order, pay, checkout or purchase = `spends`, `requires_confirmation`. Writes default `requires_confirmation: true` and `idempotent: false` unless clearly idempotent (follow, set, PUT). The LLM writes `description` (one or two sentences; say read-only/safe-to-retry, or state-changing/ask first) and param descriptions | descriptions |
 | **M8 assemble + validate** | actions → card | Fill site-level fields (`schema_version: "0.4"`, `tool_prefix`, `provenance`, `defaults`, `blocked_signals`). Run the save-time validation from the spec (shared `schema/` + `tools/check_card.py` when present). Live-run the examples through the executor when its interface exists | no |
 
@@ -195,26 +195,58 @@ reads network traffic; finding the goal and decoding stay in `map`.
    check confirms the final page shows the task's result and that the flagged action is the one that
    loaded it, and (for paginated reads) names the next-page control. A failed attempt is thrown away and
    redone from the start page with the reason (up to 3 attempts). Log-out/delete-style controls are refused.
+   A control the site hides behind a styled label (a checkbox inside a filter pill) is clicked through its
+   visible label, as a person would. Claude may go to a page by address, but never to one carrying the
+   task's input (replays only swap typed text). The same failing action twice gets a firm "do something
+   else"; a third ends the attempt. If everything was done right but the site found nothing for the
+   example input, that is not counted as a failure: Claude picks a new example (up to 3) and the run is
+   redone. Task discovery asks for examples that certainly return results (a well-known name, not a phrase).
+   **Filter first, search last:** the replays use made-up words that find nothing, so Claude is told to set
+   any category or filter before it types and submits the input, and the final check rejects a run whose
+   flagged action needs results on screen (a filter clicked on the results page).
 4. **Replays.** The `real` run's `actions.jsonl` becomes a driver script exactly as in healing (typed
    inputs → `{{params.NAME}}`, marks where they were), recorded again with fresh markers as m1 and m2, and
-   with the next-page click and a second mark added as page2.
+   with the next-page click and a second mark added as page2. The three replays run at the same time, and
+   start on the page where the live run began working (page loads it only passed through, like the feed
+   before it went to the companies search page, are skipped). Replays use the same per-step timeout as the
+   live run. If a replay breaks (a step that only exists when there are results), that whole try is thrown
+   away and counts as failed; Claude is told which step broke, and the live run is redone.
 5. **Check + map.** M3 must find a goal in m1 (on the saved files, after the browser is closed); then
    `map` builds the card as usual.
 
 **Driver timing** (all drivers that run scripts, so replays and heal too): the goal mark comes right
-after the triggering click/Enter, then the run keeps recording until the page is quiet (at most 10 s)
-so the answer lands in the HAR. After typing, the driver pauses until the page settles (at most 2 s),
+after the triggering click/Enter. The run then waits until the requests that action started (within
+0.5 s of it, the same grace M3 gives the goal) are answered, at most 10 s, so the answer lands in the HAR;
+background traffic is ignored. After typing it waits the same way for the lookups the typing started
+(at most 2 s), so suggestions finish before the goal window opens. After any other click, Enter or page load the driver pauses a flat 1 s
+instead of waiting for the network: busy sites keep prefetching pages, tracking and running bot-check
+sensors in the background, which never changes what is on screen (the HAR still records all of it).
+
+**Parallel:** up to `--parallel` tasks (default 4) are explored at the same time, each with its live run
+then its replays, and never more than `--max-browsers` browsers (default 8) open at once. Every browser is
+another session of the same account, so lower both on sites that are quick to flag bots. After typing, the driver pauses until the page settles (at most 2 s),
 like a person glancing before pressing Enter, so suggestion lookups happen before the goal window opens.
 Connections a page holds open for good (event streams, websockets) don't count as loading.
 
 Write tasks are skipped unless `--include-writes` is given: exploring one performs it for real, about
-three times (real + m1 + m2), more if an attempt has to be redone. The LLM is Claude Sonnet 5.5;
+three times (real + m1 + m2), more if an attempt has to be redone. The explorer's LLM calls use Claude
+Opus 5.5 at high effort (the mapper's own optional LLM steps stay on Claude Sonnet 5.5 at low effort);
 `explore` needs `ANTHROPIC_API_KEY` (set it in `.env`, which the mapper CLI reads; see `.env.example`),
 and the rest of the pipeline still runs offline. Everything the LLM did and decided (tasks, every live
 attempt's actions and why it failed, the replay script) is saved in `captures/<domain>/explore.json`
 and summarised in the mapping report.
 
 ## Open items for Nobel
+
+- **Please review: spec addition `resolve: "rows"` (made on the mapper side, 2026-11-07).** LinkedIn's web app
+  answers searches with streamed React Server Components rows (`<hex id>:<JSON>` per line, labelled
+  `application/octet-stream`), and one result is spread over ~4 rows that point to each other. The frozen
+  `regex` extract reads rows one at a time, so complete results were impossible. Added, all optional and
+  backwards compatible: `resolve: "rows"` on `regex` extracts (needs `parse: "json"`, `from: "body"`) in
+  `CARD_SPEC.md` (Extraction, Streamed rows), `schema.card.Extract` (+ validator), `runtime/extract.py`
+  (`stream_rows`, `resolve_rows`, used by `run_extract`; the mapper imports the same functions), and
+  `tools/check_card.py`; test in `tests/test_units.py`. Also new from the mapper: read actions that use
+  POST (explorer recordings set read/write themselves), and goal steps with `content_type: "any"`.
 
 - **Next (mapper): `Remapper` adapter.** Wire `mapper heal` in as the runtime's `runtime.healing.Remapper`
   (`async remap(card, actions, reason) -> card`), so a `PAGE_CHANGED` heal job re-records and re-maps the

@@ -29,3 +29,11 @@ LOGIN = [
     {"type": "input", "selector": "input[name=password]", "value": "{{params.password}}"},
     {"type": "click", "selector": "button[type=submit]"},
 ]
+
+STREAM_SEARCH = [
+    {"type": "navigate", "url": "/stream-search"},
+    {"type": "input", "selector": "#sq", "value": "{{params.query}}"},
+    {"type": "click", "selector": "#sgo"},
+    {"type": "mark"},
+    {"type": "wait_for", "selector": "#sstatus:not(:empty)"},
+]

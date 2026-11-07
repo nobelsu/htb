@@ -33,6 +33,7 @@ STATIC = {
     "/static/app.css": ("text/css", pages.APP_CSS),
     "/static/search.js": ("application/javascript", pages.SEARCH_JS),
     "/static/compose.js": ("application/javascript", pages.COMPOSE_JS),
+    "/static/stream.js": ("application/javascript", pages.STREAM_JS),
 }
 
 
@@ -124,6 +125,7 @@ class Handler(BaseHTTPRequestHandler):
             "/logout": self._logout,
             "/search": self._search_page,
             "/compose": self._compose_page,
+            "/stream-search": self._stream_search_page,
             "/api/session": self._api_session,
             self.state.search_endpoint: self._api_search,
             "/api/notes": self._api_notes_list,
@@ -147,6 +149,10 @@ class Handler(BaseHTTPRequestHandler):
             self._login_submit()
         elif url.path == "/api/notes":
             self._api_notes_create()
+        elif url.path == "/api/stream/search":
+            self._api_stream_search()
+        elif url.path == "/api/stream/log":
+            self._api_stream_log()
         else:
             self._json(404, {"error": "not found"})
 
@@ -193,6 +199,11 @@ class Handler(BaseHTTPRequestHandler):
         }
         self._html(200, pages.search(next_data, self.state.search_endpoint))
 
+    def _stream_search_page(self, _query) -> None:
+        if self._require_page_login() is None:
+            return
+        self._html(200, pages.stream_search())
+
     def _compose_page(self, _query) -> None:
         sess = self._require_page_login()
         if sess is None:
@@ -208,6 +219,47 @@ class Handler(BaseHTTPRequestHandler):
         if sess is None:
             self._json(401, {"error": "login required"})
         return sess
+
+    def _json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            return json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            return {}
+
+    def _api_stream_search(self) -> None:
+        """Streamed data rows, one result spread over a card row and the info row it points to."""
+        if self._require_api_login() is None:
+            return
+        q = str(self._json_body().get("q", ""))
+        total, hits = data.search(q, 0)
+        lines = ['0:["$","h2",null,{"children":"Companies"}]', '1:I["chunks/card.js",["card"],"Card"]']
+        cards = []
+        for i, c in enumerate(hits):
+            info_id, card_id = format(16 + 2 * i, "x"), format(17 + 2 * i, "x")
+            info = {"name": c["name"], "industry": c["industry"], "id": c["id"]}
+            card = [
+                "$",
+                "$L1",
+                None,
+                {"info": f"${info_id}", "link": c["url"], "followers": f"{c['followers']} followers"},
+            ]
+            lines += [f"{info_id}:{json.dumps(info)}", f"{card_id}:{json.dumps(card)}"]
+            cards.append(f"$L{card_id}")
+        lines.append(f'2:["$","ul",null,{{"children":{json.dumps(cards)}}}]')
+        lines.append(f'3:["$","p",null,{{"children":"{total} results"}}]')
+        self._send(200, "\n".join(lines) + "\n", "application/octet-stream")
+
+    def _api_stream_log(self) -> None:
+        """Carries the typed query too, but answers the same two rows whatever was searched."""
+        if self._require_api_login() is None:
+            return
+        self._json_body()
+        self._send(
+            200,
+            '0:["$","@1",null,{"ok":true}]\n1:["$","span",null,{"children":"logged"}]\n',
+            "application/octet-stream",
+        )
 
     def _api_session(self, _query) -> None:
         sess = self._require_api_login()

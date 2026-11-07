@@ -1,6 +1,8 @@
 """M1 load + filter: HAR → candidate entries.
 
-Keep same-site hosts (registrable-domain match), any method, JSON/HTML/text/form content.
+Keep same-site hosts (registrable-domain match), any method, JSON/HTML/text/form content, and streamed
+data rows (one ``<hex id>:<JSON>`` row per line, the React Server Components format LinkedIn's web app and
+Next.js App Router sites answer with, often labelled ``application/octet-stream``).
 Drop static assets (images, fonts, css, js, media), known analytics/ads hosts, OPTIONS preflights,
 and requests that never got a response. Every drop is recorded with a reason for the mapping report.
 """
@@ -62,8 +64,31 @@ STATIC_EXT = re.compile(
 )
 
 
+# One data row per line, ``<hex id>:<payload>``. Recognised by shape, never by a site's header names.
+STREAM_ROW = re.compile(r"^[0-9a-f]{1,8}:")
+STREAM_JSON_ROW = re.compile(r"(?m)^[0-9a-f]{1,8}:(\[.*\]|\{.*\})$")
+
+
+def is_row_stream(body: str | None) -> bool:
+    """Most (non-empty) lines are ``<hex id>:...`` rows, starting with the first, and some carry JSON."""
+    if not body:
+        return False
+    lines = [ln for ln in body[:200_000].split("\n") if ln.strip()][:400]
+    if not lines or not STREAM_ROW.match(lines[0]):
+        return False
+    rows = sum(1 for ln in lines if STREAM_ROW.match(ln))
+    return rows * 2 >= len(lines) and STREAM_JSON_ROW.search(body[:200_000]) is not None
+
+
 def content_kind(mime: str | None, body: str | None = None) -> str:
-    """Classify a MIME type: json | html | text | form | multipart | static | other | empty."""
+    """Classify a response: json | html | text | form | multipart | static | stream | other | empty."""
+    kind = _mime_kind(mime, body)
+    if kind in ("other", "text") and is_row_stream(body):
+        return "stream"
+    return kind
+
+
+def _mime_kind(mime: str | None, body: str | None) -> str:
     m = (mime or "").split(";")[0].strip().lower()
     if not m:
         return "empty" if not body else "text"
@@ -166,13 +191,28 @@ class Entry:
                         out.append((name.strip(), rest.split(";", 1)[0].strip()))
         return out
 
-    @property
+    @cached_property
     def response_kind(self) -> str:
         return content_kind(self.response_mime, self.response_body)
 
-    @property
+    @cached_property
     def request_kind(self) -> str:
         return content_kind(self.request_mime, self.request_body)
+
+    @cached_property
+    def response_rows(self) -> list | None:
+        """A streamed response's JSON rows, in order (``None`` unless ``response_kind`` is ``stream``).
+        Kept apart from ``response_json``: row positions change between answers, so nothing should
+        address a value by them; values inside streams are found by text instead."""
+        if self.response_kind != "stream":
+            return None
+        rows = []
+        for m in STREAM_JSON_ROW.finditer(self.response_body or ""):
+            try:
+                rows.append(json.loads(m.group(1)))
+            except ValueError:
+                continue
+        return rows
 
     @cached_property
     def response_json(self) -> Any:

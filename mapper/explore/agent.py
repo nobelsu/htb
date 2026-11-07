@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from urllib.parse import urljoin
+from urllib.parse import quote, quote_plus, urljoin
 
-from mapper.capture.driver import AFTER_MARK_MS, TYPING_PAUSE_MS
+from mapper.capture.driver import AFTER_MARK_MS, TYPING_PAUSE_MS, settle
 from mapper.domains import hostname, same_site
 from mapper.explore.planner import Planner, TaskSpec
 
@@ -33,12 +33,30 @@ FIELD_VALUE = re.compile(
 )
 
 
+# The visible thing a person clicks for a control the site hides (a styled checkbox inside its pill):
+# its label, else the nearest visible wrapper.
+STAND_IN_JS = """el => {
+  const shown = (n) => {
+    const r = n.getBoundingClientRect(), s = getComputedStyle(n);
+    return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+  };
+  for (const l of el.labels || []) if (shown(l)) return l;
+  for (let n = el.parentElement, i = 0; n && i < 3; n = n.parentElement, i++) if (shown(n)) return n;
+  return null;
+}"""
+MAX_SAME_FAILURE = 3  # the same failing action this many times ends the attempt
+
+
 class AgentFailed(Exception):
     """This attempt did not do the task; the message goes back to Claude on the next attempt."""
 
     def __init__(self, message: str, run: AgentRun | None = None) -> None:
         super().__init__(message)
         self.run = run
+
+
+class EmptyResult(AgentFailed):
+    """Done right, but the site found nothing for the example input: try a different example."""
 
 
 class StepError(Exception):
@@ -58,27 +76,43 @@ def accessibility_tree(page, limit: int = MAX_TREE_CHARS) -> str:
     return tree if len(tree) <= limit else tree[:limit] + "\n[... rest of the page cut ...]"
 
 
-def _find(page, role: str | None, name: str | None):
+def _find(page, role: str | None, name: str | None, for_click: bool = False):
     if not role:
         raise StepError("no role given: name the element by the role and name shown in the tree")
+    hidden = None
     for exact in (True, False):
         loc = page.get_by_role(role, name=name, exact=exact) if name else page.get_by_role(role)
         for i in range(min(loc.count(), 10)):
             if loc.nth(i).is_visible():
                 return loc.nth(i)
+            hidden = hidden or loc.nth(i)
+    if hidden is not None and for_click:
+        stand_in = hidden.evaluate_handle(STAND_IN_JS).as_element()
+        if stand_in is not None:
+            return stand_in  # a person clicks the visible label or pill, not the hidden input
+    if hidden is not None:
+        raise StepError(f"the {role} named {name!r} is hidden on the page and has no visible label to click")
     raise StepError(f"no visible {role} named {name!r} on the page")
 
 
-def _perform(page, tracker, act: dict, start_url: str) -> None:
+def _input_forms(values: dict[str, str]) -> list[str]:
+    forms = set()
+    for v in values.values():
+        if v:
+            forms |= {v.lower(), quote(v, safe="").lower(), quote_plus(v).lower()}
+    return [f for f in forms if len(f) >= 2]
+
+
+def _perform(page, tracker, act: dict, start_url: str, inputs: dict[str, str]) -> None:
     kind, role, name = act["action"], act.get("role"), act.get("name")
     if (name and UNSAFE.search(name)) or (kind == "navigate" and UNSAFE.search(act.get("url") or "")):
         target = f"{role} {name!r}" if name else repr(act.get("url"))
         raise StepError(f"{target} is not allowed (it could end the session or delete something)")
     if kind == "click":
-        _find(page, role, name).click()
+        _find(page, role, name, for_click=True).click()
     elif kind == "type":
         _find(page, role, name).fill(act.get("text") or "")
-        tracker.wait_quiet(page, timeout_ms=TYPING_PAUSE_MS)  # like a person glancing before Enter
+        tracker.wait_for_action(page, TYPING_PAUSE_MS)  # suggestion lookups finish before Enter
     elif kind == "press":
         key = act.get("key") or "Enter"
         if role:
@@ -89,6 +123,11 @@ def _perform(page, tracker, act: dict, start_url: str) -> None:
         url = urljoin(page.url, act.get("url") or "/")
         if not same_site(hostname(url), hostname(start_url)):
             raise StepError(f"{url} is not on this site")
+        if any(f in url.lower() for f in _input_forms(inputs)):
+            raise StepError(
+                "don't put the task's input in an address: type it into the page, as a person would "
+                "(the recording is replayed with other inputs, which only works for typed text)"
+            )
         page.goto(url, wait_until="load")
     elif kind == "wait":
         page.wait_for_timeout(1500)
@@ -110,6 +149,7 @@ def drive(
     """Do the task in ``page`` (already on the start page). Raises AgentFailed if it was not done."""
     run = AgentRun()
     history: list[str] = []
+    failed: dict[tuple, int] = {}  # identical failing actions, counted
     for _ in range(MAX_STEPS):
         act = planner.next_action(spec, page.url, accessibility_tree(page), history, feedback)
         if act["action"] == "give_up":
@@ -117,7 +157,8 @@ def drive(
         if act["action"] == "done":
             return _finish(page, run, planner, spec, history)
         try:
-            _perform(page, tracker, act, start_url)
+            tracker.action()
+            _perform(page, tracker, act, start_url, spec.inputs)
         except StepError as e:
             outcome = f"not done: {e}"
         except Exception as e:  # e.g. a Playwright timeout: report it and let Claude choose again
@@ -128,12 +169,24 @@ def drive(
                 mark()  # the instant the triggering action is done, like a person pressing Enter
                 run.marked = True
                 outcome = "ok, goal marked"
-                tracker.wait_quiet(page, timeout_ms=AFTER_MARK_MS)  # let the answer load into the recording
+                tracker.wait_for_action(page, AFTER_MARK_MS)  # until the task's own requests are answered
             else:
                 if act.get("performs_task"):
                     outcome = "ok, but the goal was already marked at an earlier action (not marked again)"
                 if act["action"] in ("click", "press", "navigate"):
-                    tracker.wait_quiet(page)
+                    settle(page)
+        if not outcome.startswith("ok"):
+            same = tuple(act.get(k) for k in ("action", "role", "name", "text", "key", "url"))
+            failed[same] = failed.get(same, 0) + 1
+            if failed[same] >= MAX_SAME_FAILURE:
+                run.actions.append({**act, "outcome": outcome})
+                raise AgentFailed(
+                    f"repeated the same failing action {MAX_SAME_FAILURE} times: {_describe(act)}", run
+                )
+            if failed[same] == MAX_SAME_FAILURE - 1:
+                outcome += (
+                    " (this exact action has now failed twice: it will not work, do something different)"
+                )
         run.actions.append({**act, "outcome": outcome})
         history.append(f"{len(history) + 1}. {_describe(act)} -> {outcome}")
     raise AgentFailed(f"not finished after {MAX_STEPS} actions", run)
@@ -150,6 +203,8 @@ def _finish(page, run: AgentRun, planner: Planner, spec: TaskSpec, history: list
         raise AgentFailed(f"never typed the input(s) {missing} exactly as given", run)
     verdict = planner.check_result(spec, page.url, accessibility_tree(page), history)
     run.verdict = verdict["reason"]
+    if not verdict["ok"] and verdict.get("empty"):
+        raise EmptyResult(f"the site found nothing for {spec.inputs}: {verdict['reason']}", run)
     if not verdict["ok"]:
         raise AgentFailed(f"the final page does not show the task's result: {verdict['reason']}", run)
     if spec.paginates and verdict.get("next_role"):

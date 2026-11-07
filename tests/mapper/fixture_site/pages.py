@@ -63,6 +63,15 @@ def compose(csrf: str) -> str:
     return _page("New note", body, head=head)
 
 
+def stream_search() -> str:
+    """A search whose answer is streamed data rows (React Server Components style), like LinkedIn's."""
+    return _page(
+        "Stream search",
+        '<input id="sq" placeholder="Find companies"> <button id="sgo" type="button">Find</button>'
+        '<p id="sstatus"></p><ul id="sresults"></ul><script src="/static/stream.js"></script>',
+    )
+
+
 APP_CSS = "body{color:#222}"
 
 SEARCH_JS = r"""
@@ -129,6 +138,42 @@ COMPOSE_JS = r"""
     const r = await fetch("/api/notes", { method: "POST", credentials: "same-origin", body: body });
     const data = await r.json();
     document.getElementById("status").textContent = data.ok ? "Saved " + data.note.id : "Failed";
+  });
+})();
+"""
+
+STREAM_JS = r"""
+(function () {
+  const post = (url, body) =>
+    fetch(url, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+  const rows = (text) => {
+    const out = {};
+    for (const line of text.split("\n")) {
+      const m = /^([0-9a-f]+):(\[.*\]|\{.*\})$/.exec(line);
+      if (m) out[m[1]] = JSON.parse(m[2]);
+    }
+    return out;
+  };
+  document.getElementById("sgo").addEventListener("click", async function () {
+    const q = document.getElementById("sq").value;
+    // fires first and its reply is read (as on LinkedIn), but it is the same every time: a decoy
+    post("/api/stream/log", { q: q, event: "search" }).then((r) => r.text());
+    const text = await (await post("/api/stream/search", { q: q })).text();
+    const r = rows(text);
+    const list = document.getElementById("sresults");
+    list.innerHTML = "";
+    for (const id of Object.keys(r)) {
+      const row = r[id];
+      if (Array.isArray(row) && row[1] === "$L1") {
+        const info = r[row[3].info.slice(1)] || {};
+        const li = document.createElement("li");
+        li.textContent = info.name + " (" + row[3].followers + ")";
+        list.appendChild(li);
+      }
+    }
+    document.getElementById("sstatus").textContent = list.children.length + " results";
   });
 })();
 """

@@ -25,7 +25,9 @@ import json
 import re
 import shutil
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -34,12 +36,14 @@ from mapper.bundle import iso_now
 from mapper.capture import driver
 from mapper.capture.replay import new_marker
 from mapper.domains import hostname, registrable_domain, same_site
-from mapper.explore.agent import AgentFailed, AgentRun, drive
+from mapper.explore.agent import AgentFailed, AgentRun, EmptyResult, drive
 from mapper.explore.planner import Attempt, PlanError, Planner, TaskPlan, TaskSpec
 from mapper.explore.snapshot import as_text, page_snapshot
 from mapper.llm import LLM
 
 EXPLORE_FILE = "explore.json"
+# The explorer's own Claude calls (pick tasks, each action, the final check); the mapper's steps keep theirs.
+EXPLORER_MODEL, EXPLORER_EFFORT = "claude-opus-5-5", "high"
 UNSAFE_LINK = re.compile(
     r"log\s*-?out|sign\s*-?out|log\s*off|delete|remove|deactivate|unsubscribe|close account", re.I
 )
@@ -95,7 +99,7 @@ class ExploreResult:
 
 def _goto(page, tracker, url: str) -> None:
     page.goto(url, wait_until="load")
-    tracker.wait_quiet(page)
+    driver.settle(page)
 
 
 def survey(page, tracker, start_url: str, extra_pages: int = 4) -> tuple[str, list[str]]:
@@ -138,12 +142,24 @@ class Capture:
     out: Path
     headless: bool
     step_timeout_ms: int
+    max_browsers: int = 8
+    _browsers: threading.BoundedSemaphore = field(init=False, repr=False)
 
-    def config(self, spec: TaskSpec, run: str, **driver_kw):
+    def __post_init__(self) -> None:
+        self._browsers = threading.BoundedSemaphore(max(1, self.max_browsers))
+
+    def record(self, cfg):
+        """Record one run, never with more than ``max_browsers`` browsers open at once."""
+        from mapper.capture.record import record
+
+        with self._browsers:
+            return record(cfg)
+
+    def config(self, spec: TaskSpec, run: str, start_url: str | None = None, **driver_kw):
         from mapper.capture.record import CaptureConfig
 
         return CaptureConfig(
-            start_url=urljoin(self.start_url, spec.start_path),
+            start_url=start_url or urljoin(self.start_url, spec.start_path),
             task=spec.name,
             run=run,
             kind=spec.kind,
@@ -152,23 +168,35 @@ class Capture:
             out=self.out,
             headless=self.headless,
             force=True,
+            step_timeout_ms=self.step_timeout_ms,
             **driver_kw,
         )
 
 
-def live_run(
-    planner: Planner, spec: TaskSpec, cap: Capture, max_attempts: int
-) -> tuple[AgentRun | None, list[Attempt]]:
-    """Claude does the task, recorded as the ``real`` run. Returns its run, or None after max_attempts."""
-    from mapper.capture.record import record
+MAX_EXAMPLES = 3  # different example inputs to try when the site finds nothing (not driving failures)
 
-    attempts: list[Attempt] = []
+
+def run_task(
+    planner: Planner, spec: TaskSpec, cap: Capture, task_dir: Path, max_attempts: int
+) -> tuple[TaskPlan, list[str]]:
+    """Live run (Claude, recorded as ``real``), then the replays. Returns the plan and the runs recorded
+    (none if it never worked; ``plan.attempts`` then says why).
+
+    A failed try counts toward ``max_attempts``: Claude's run failed, or it worked but replaying it with
+    made-up words broke (a step that only exists when there are results). A try done right where the
+    site found nothing for the example (EmptyResult) does not count: the example is swapped for a new
+    one, up to MAX_EXAMPLES. ``spec.inputs`` ends up holding the example that worked.
+    """
+    plan = TaskPlan(spec)
     feedback: list[str] = []
+    tried = [dict(spec.inputs)]
+    failures = 0
     url = urljoin(cap.start_url, spec.start_path)
-    for n in range(1, max_attempts + 1):
-        _say(
-            f"{spec.name}: Claude is doing the task live (attempt {n} of {max_attempts}), recorded as 'real'"
-        )
+    while failures < max_attempts:
+        n = len(plan.attempts) + 1
+        shutil.rmtree(task_dir, ignore_errors=True)  # every try starts clean
+        shown = f" with {spec.inputs}" if spec.inputs else ""
+        _say(f"{spec.name}: Claude is doing the task live{shown} (try {n}), recorded as 'real'")
         done: dict[str, AgentRun] = {}
 
         def agent(page, tracker, mark, done=done) -> None:
@@ -178,37 +206,74 @@ def live_run(
             )
 
         try:
-            record(cap.config(spec, "real", real_inputs=dict(spec.inputs), agent=agent))
+            cap.record(cap.config(spec, "real", real_inputs=dict(spec.inputs), agent=agent))
+        except EmptyResult as e:
+            plan.attempts.append(Attempt(e.run.actions if e.run else [], str(e)))
+            _say(f"{spec.name}: try {n} worked, but the site found nothing for {spec.inputs}")
+            if len(tried) >= MAX_EXAMPLES:
+                break
+            try:
+                spec.inputs.update(planner.new_example(spec, tried))
+            except PlanError:
+                break
+            tried.append(dict(spec.inputs))
+            feedback.append(
+                f"try {n}: the site found nothing for {tried[-2]}; the example is now {spec.inputs}"
+            )
+            continue
         except AgentFailed as e:
             actions, error = (e.run.actions if e.run else []), str(e)
         except Exception as e:  # the browser, the LLM call or the recording itself failed
             actions, error = [], _first_line(e)
         else:
             run = done["run"]
-            attempts.append(Attempt(run.actions, None))
             _say(f"{spec.name}: done in {len(run.actions)} actions; final check: {run.verdict}")
-            return run, attempts
-        attempts.append(Attempt(actions, error))
-        feedback.append(f"attempt {n}: {error}")
-        _say(f"{spec.name}: attempt {n} failed: {error}")
-    return None, attempts
+            try:
+                plan.script, runs = replay_runs(spec, run, cap, task_dir)
+            except ReplayFailed as e:
+                actions, error = run.actions, f"the live run worked, but {e}"
+            except Exception as e:
+                actions, error = run.actions, f"the live run worked, but the replays failed: {_first_line(e)}"
+            else:
+                plan.attempts.append(Attempt(run.actions, None))
+                plan.next_selector = run.next_selector
+                return plan, runs
+        failures += 1
+        plan.attempts.append(Attempt(actions, error))
+        feedback.append(f"try {n}: {error}")
+        _say(f"{spec.name}: try {n} failed ({failures} of {max_attempts} allowed): {error}")
+    shutil.rmtree(task_dir, ignore_errors=True)  # nothing usable to map
+    return plan, []
 
 
 # --- phase 3: the replays ----------------------------------------------------------------------------
 
 
+class ReplayFailed(RuntimeError):
+    pass
+
+
+def replay_start(steps: list[dict], start_url: str) -> tuple[str, list[dict]]:
+    """Replays start where the live run began working: the page loads before its first click, key or
+    typing were only passed through, so they are skipped and the last of them is the start page."""
+    url, i = start_url, 0
+    while i < len(steps) and steps[i]["type"] in ("navigate", "goto") and "{{" not in steps[i]["url"]:
+        url, i = urljoin(start_url, steps[i]["url"]), i + 1
+    return url, steps[i:]
+
+
 def replay_runs(spec: TaskSpec, run: AgentRun, cap: Capture, task_dir: Path) -> tuple[list[dict], list[str]]:
-    """Re-run the live run's recorded actions for m1, m2 (fresh markers) and page2. Returns its steps."""
-    from mapper.capture.record import record
+    """Re-run the live run's recorded actions for m1, m2 (fresh markers) and page2, all at once.
+    Returns the replayed steps and the runs recorded."""
     from mapper.capture.replay import plan_bundle
 
-    plan = plan_bundle(task_dir / "real")
-    steps = plan.steps
+    steps = plan_bundle(task_dir / "real").steps
     untyped = [k for k in spec.inputs if "{{params." + k + "}}" not in json.dumps(steps)]
     if untyped:
-        raise RuntimeError(
-            f"the recorded actions never type the input(s) {untyped}, so they can't be replayed"
+        raise ReplayFailed(
+            f"its recorded actions never type the input(s) {untyped}, so they can't be replayed"
         )
+    start, steps = replay_start(steps, urljoin(cap.start_url, spec.start_path))
     runs: dict[str, dict] = {
         "m1": {"markers": {k: new_marker() for k in spec.inputs}, "script": steps},
         "m2": {"markers": {k: new_marker() for k in spec.inputs}, "script": steps},
@@ -219,7 +284,26 @@ def replay_runs(spec: TaskSpec, run: AgentRun, cap: Capture, task_dir: Path) -> 
     for name, kw in runs.items():
         words = ", ".join((kw.get("markers") or kw.get("real_inputs") or {}).values())
         _say(f"{spec.name}: recording '{name}', {RUN_LABELS[name]}" + (f" ({words})" if words else ""))
-        record(cap.config(spec, name, **kw))
+    with ThreadPoolExecutor(max_workers=len(runs)) as pool:
+        jobs = {
+            name: pool.submit(cap.record, cap.config(spec, name, start_url=start, **kw))
+            for name, kw in runs.items()
+        }
+    broken = {}
+    for name, job in jobs.items():
+        try:
+            job.result()
+        except Exception as e:
+            broken[name] = str(e) if str(e) else type(e).__name__
+    if broken:
+        detail = "; ".join(f"{name}: {why.splitlines()[0][:200]}" for name, why in broken.items())
+        hint = ""
+        if set(broken) & {"m1", "m2"}:
+            hint = (
+                " That step only works when there are results (the made-up words find nothing): set "
+                "categories or filters before you type and submit the input."
+            )
+        raise ReplayFailed(f"replaying it broke ({detail}).{hint}")
     return steps, ["real", *runs]
 
 
@@ -247,16 +331,18 @@ def explore(
     max_attempts: int = 3,
     step_timeout_ms: int = 8000,
     extra_pages: int = 4,
+    parallel: int = 4,
+    max_browsers: int = 8,
 ) -> ExploreResult:
     from playwright.sync_api import sync_playwright
 
     from mapper.capture.record import _logger_js
 
-    planner = Planner(llm or LLM())
+    planner = Planner(llm or LLM(model=EXPLORER_MODEL, effort=EXPLORER_EFFORT))
     out = Path(out)
     state = Path(state) if state else None
     domain_dir = out / registrable_domain(hostname(start_url))
-    cap = Capture(start_url, state, out, headless, step_timeout_ms)
+    cap = Capture(start_url, state, out, headless, step_timeout_ms, max_browsers)
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless)
@@ -273,30 +359,23 @@ def explore(
 
     specs = planner.discover(site, max_tasks, wanted)
     _say(f"the AI picked {len(specs)} task(s): {', '.join(s.name for s in specs)}")
-    outcomes = []
-    for spec in specs:
-        plan = TaskPlan(spec)
+
+    def one(spec: TaskSpec) -> TaskOutcome:
         if spec.kind == "write" and not include_writes:
             reason = "write task: exploring it really performs it; pass --include-writes"
             _say(f"{spec.name}: skipped ({reason})")
-            outcomes.append(TaskOutcome(plan, "skipped", reason))
-            continue
-        task_dir = domain_dir / spec.name
-        shutil.rmtree(task_dir, ignore_errors=True)  # no leftover runs from an earlier exploration
-        run, plan.attempts = live_run(planner, spec, cap, max_attempts)
-        if run is None:
-            shutil.rmtree(task_dir, ignore_errors=True)  # a failed live run leaves nothing to map
-            outcomes.append(TaskOutcome(plan, "failed", plan.attempts[-1].error or "not done"))
-            continue
-        plan.next_selector = run.next_selector
+            return TaskOutcome(TaskPlan(spec), "skipped", reason)
         try:
-            plan.script, runs = replay_runs(spec, run, cap, task_dir)
-        except Exception as e:
-            shutil.rmtree(task_dir, ignore_errors=True)
-            outcomes.append(TaskOutcome(plan, "failed", f"replay failed: {_first_line(e)}"))
-            continue
-        problem = check_task(task_dir, spec.kind)
-        outcomes.append(TaskOutcome(plan, "failed" if problem else "recorded", problem or "", runs))
+            plan, runs = run_task(planner, spec, cap, domain_dir / spec.name, max_attempts)
+        except Exception as e:  # one task's crash must not stop the others
+            return TaskOutcome(TaskPlan(spec), "failed", f"explorer error: {_first_line(e)}")
+        if not runs:
+            return TaskOutcome(plan, "failed", plan.attempts[-1].error or "not done")
+        problem = check_task(domain_dir / spec.name, spec.kind)
+        return TaskOutcome(plan, "failed" if problem else "recorded", problem or "", runs)
+
+    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+        outcomes = list(pool.map(one, specs))  # tasks run side by side; results stay in task order
 
     result = ExploreResult(start_url, domain_dir, pages, outcomes)
     domain_dir.mkdir(parents=True, exist_ok=True)
@@ -331,6 +410,8 @@ def main(args: argparse.Namespace) -> int:
             max_tasks=args.max_tasks,
             include_writes=args.include_writes,
             headless=not args.headed,
+            parallel=args.parallel,
+            max_browsers=args.max_browsers,
         )
     except PlanError as e:
         print(f"mapper explore: {e}", file=sys.stderr)

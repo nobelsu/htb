@@ -72,9 +72,15 @@ def _matching_goal(bundle: Bundle | None, like: Goal, like_bundle: Bundle, kind:
 
 
 def _summary(e) -> str:
-    keys = sorted(e.response_json) if isinstance(e.response_json, dict) else type(e.response_json).__name__
+    """One candidate for the LLM tie-break: what it is and what came back (shape and size)."""
+    if e.response_kind == "stream":
+        answer = f"streamed answer, {len(e.response_rows or [])} data rows"
+    elif isinstance(e.response_json, dict):
+        answer = str(sorted(e.response_json))
+    else:
+        answer = type(e.response_json).__name__
     query = "&".join(sorted(k.split("=")[0] for k in e.raw_query.split("&") if k))
-    return f"{e.method} {e.path}?{query} → {keys}"
+    return f"{e.method} {e.path}?{query} → {answer}, {len(e.response_body or '') // 1000} kB"
 
 
 def _pagination(page2: Bundle, goal: Goal, m1: Bundle, real_goal: Goal | None):
@@ -124,7 +130,10 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     real_goal = _matching_goal(real, goal, m1, kind)
 
     prov = trace(m1, goal.entry, m2, m2_goal.entry if m2_goal else None)
-    is_read = goal.entry.method in ("GET", "HEAD")
+    # Explorer recordings say read/write themselves (the LLM driver was told what the task does); a
+    # person's recording falls back to the method, so a forgotten --kind write can't make a write a read.
+    explorer = any(b.meta.get("driver") == "agent" for b in runs.values())
+    is_read = kind == "read" if explorer else goal.entry.method in ("GET", "HEAD")
     pag = None
     if is_read and runs.get("page2") is not None:
         pag, pag_warnings = _pagination(runs["page2"], goal, m1, real_goal)
@@ -167,6 +176,7 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
         output_fields=list(output.output["fields"]),
         has_unknowns=bool(prov.unknowns),
         llm=llm,
+        trusted_kind=explorer,
     )
     warnings += ann.warnings
     fields = dict(ann.fields)

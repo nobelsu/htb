@@ -117,8 +117,13 @@ def find_read_goal(bundle: Bundle, values: dict[str, str] | None = None, mark_in
         if any(entry_mentions(bundle, e, v) for v in values.values() if v)
         and (typed is None or e.started >= typed)
     ]
-    json_lists = [e for e in mentioned if e.response_kind == "json" and has_list(e.response_json)]
-    candidates = json_lists or [e for e in mentioned if e.response_kind in ("html", "text", "json")]
+    json_lists = [
+        e
+        for e in mentioned
+        if (e.response_kind == "json" and has_list(e.response_json))
+        or (e.response_kind == "stream" and e.response_rows)  # streamed data rows are a list
+    ]
+    candidates = json_lists or [e for e in mentioned if e.response_kind in ("html", "text", "json", "stream")]
     if not candidates:
         raise GoalNotFound(f"{bundle.run}: no request carries the input values {sorted(values)}")
 

@@ -33,14 +33,28 @@ from urllib.parse import quote, urljoin
 
 PARAM_RE = re.compile(r"\{\{\s*params\.([A-Za-z0-9_]+)\s*\}\}")
 
-TYPING_PAUSE_MS = 2000
-AFTER_MARK_MS = 10_000
+SETTLE_MS = 1000  # after a click, Enter or page load: a flat pause (busy sites never go quiet)
+TYPING_PAUSE_MS = 2000  # at most, after typing: until the lookups the typing started are answered
+AFTER_MARK_MS = 10_000  # at most, after the mark: until the task's own requests are answered
+# Requests that start this soon after an action are that action's (M3 gives the goal the same grace
+# after the mark). Waits after typing and after the mark wait for those, not for background traffic.
+ACTION_WINDOW_MS = 500
 
 STEP_TYPES = {"navigate", "goto", "input", "click", "key", "wait", "wait_for", "mark", "done"}
 
 
 class ScriptError(ValueError):
     pass
+
+
+class StepFailed(RuntimeError):
+    """A step could not be carried out; the message says which step, so it can be reported back."""
+
+
+def settle(page) -> None:
+    """The pause after a click, Enter or page load. Fixed, not 'until the network is quiet': busy sites
+    keep prefetching and tracking in the background, which never changes what is on screen."""
+    page.wait_for_timeout(SETTLE_MS)
 
 
 def load_script(source: str | Path | Iterable[dict]) -> list[dict]:
@@ -76,6 +90,8 @@ class NetworkTracker:
     def __init__(self, context) -> None:
         self.inflight = 0
         self.last_change = time.monotonic()
+        self.started: dict[int, tuple[float, object]] = {}  # in-flight: id -> (when it started, request)
+        self.action_at = time.monotonic()
         context.on("request", self._start)
         context.on("requestfinished", self._end)
         context.on("requestfailed", self._end)
@@ -85,18 +101,32 @@ class NetworkTracker:
             return
         self.inflight += 1
         self.last_change = time.monotonic()
+        self.started[id(req)] = (self.last_change, req)  # holding req keeps its id from being reused
 
     def _end(self, req) -> None:
         if req.resource_type in NEVER_ENDING:
             return
         self.inflight = max(0, self.inflight - 1)
+        self.started.pop(id(req), None)
         self.last_change = time.monotonic()
 
-    def wait_quiet(self, page, quiet_ms: int = 300, timeout_ms: int = 10_000) -> None:
-        deadline = time.monotonic() + timeout_ms / 1000
+    def action(self) -> None:
+        """Call right before the driver acts: what starts in the next moment belongs to that action."""
+        self.action_at = time.monotonic()
+
+    def wait_for_action(self, page, timeout_ms: int, window_ms: int = ACTION_WINDOW_MS) -> None:
+        """Wait until the requests the last action started (within ``window_ms`` of it) are answered.
+
+        Background traffic that was already running, or starts later (prefetching, tracking, bot-check
+        sensors), is ignored: on busy sites it never stops. At most ``timeout_ms``."""
+        since, deadline = self.action_at, time.monotonic() + timeout_ms / 1000
         while time.monotonic() < deadline:
             page.wait_for_timeout(50)  # also pumps Playwright events
-            if self.inflight == 0 and (time.monotonic() - self.last_change) * 1000 >= quiet_ms:
+            now = time.monotonic()
+            if (now - since) * 1000 < window_ms:
+                continue  # the action's requests may not all have started yet
+            end = since + window_ms / 1000
+            if not any(since <= t <= end for t, _ in self.started.values()):
                 return
 
 
@@ -110,29 +140,46 @@ def run_script(
     on_mark: Callable[[], None],
 ) -> None:
     for i, step in enumerate(steps):
-        kind = step["type"]
-        marks_next = i + 1 < len(steps) and steps[i + 1]["type"] == "mark"
-        if kind == "done":
+        if step["type"] == "done":
             return
-        if kind == "mark":
-            on_mark()  # right after the triggering action, like a person pressing Enter in the terminal
-            tracker.wait_quiet(page, timeout_ms=AFTER_MARK_MS)  # let the answer finish loading
-        elif kind in ("navigate", "goto"):
-            url = substitute(str(step["url"]), {k: quote(v, safe="") for k, v in params.items()})
-            page.goto(urljoin(start_url, url), wait_until="load")
-            tracker.wait_quiet(page)
-        elif kind == "input":
-            page.fill(step["selector"], substitute(str(step["value"]), params))
-            tracker.wait_quiet(page, timeout_ms=TYPING_PAUSE_MS)
-        elif kind == "click":
-            page.click(step["selector"])
-            if not marks_next:
-                tracker.wait_quiet(page)
-        elif kind == "key":
-            page.press(step.get("selector") or "body", step.get("key", "Enter"))
-            if not marks_next:
-                tracker.wait_quiet(page)
-        elif kind == "wait":
-            page.wait_for_timeout(int(step.get("ms", 250)))
-        elif kind == "wait_for":
-            page.wait_for_selector(step["selector"], timeout=int(step.get("timeout_ms", 10_000)))
+        try:
+            _run_step(page, step, i, steps, start_url, params, tracker, on_mark)
+        except ScriptError:
+            raise
+        except Exception as e:
+            target = step.get("selector") or step.get("url") or ""
+            first = (str(e).strip().splitlines() or [type(e).__name__])[0][:200]
+            raise StepFailed(f"step {i + 1} ({step['type']} {target}): {type(e).__name__}: {first}") from e
+
+
+def _run_step(
+    page, step: dict, i: int, steps: list[dict], start_url: str, params: dict[str, str], tracker, on_mark
+) -> None:
+    kind = step["type"]
+    marks_next = i + 1 < len(steps) and steps[i + 1]["type"] == "mark"
+    if kind == "mark":
+        on_mark()  # right after the triggering action, like a person pressing Enter in the terminal
+        tracker.wait_for_action(page, AFTER_MARK_MS)  # until the task's own requests are answered
+    elif kind in ("navigate", "goto"):
+        url = substitute(str(step["url"]), {k: quote(v, safe="") for k, v in params.items()})
+        tracker.action()
+        page.goto(urljoin(start_url, url), wait_until="load")
+        settle(page)
+    elif kind == "input":
+        tracker.action()
+        page.fill(step["selector"], substitute(str(step["value"]), params))
+        tracker.wait_for_action(page, TYPING_PAUSE_MS)  # suggestion lookups finish before Enter
+    elif kind == "click":
+        tracker.action()
+        page.click(step["selector"])
+        if not marks_next:
+            settle(page)
+    elif kind == "key":
+        tracker.action()
+        page.press(step.get("selector") or "body", step.get("key", "Enter"))
+        if not marks_next:
+            settle(page)
+    elif kind == "wait":
+        page.wait_for_timeout(int(step.get("ms", 250)))
+    elif kind == "wait_for":
+        page.wait_for_selector(step["selector"], timeout=int(step.get("timeout_ms", 10_000)))

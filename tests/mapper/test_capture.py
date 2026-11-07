@@ -73,8 +73,8 @@ def test_script_substitution_and_validation(tmp_path):
 def test_navigate_fills_in_params_url_encoded():
     """The explorer's LLM puts inputs into URLs; they used to reach the site as `{{params.query}}`."""
     visited = []
-    page = SimpleNamespace(goto=lambda url, wait_until: visited.append(url))
-    tracker = SimpleNamespace(wait_quiet=lambda page: None)
+    page = SimpleNamespace(goto=lambda url, wait_until: visited.append(url), wait_for_timeout=lambda ms: None)
+    tracker = SimpleNamespace(action=lambda: None, wait_for_action=lambda page, timeout_ms: None)
     steps = [{"type": "navigate", "url": "/search/results/companies/?keywords={{params.query}}&o=1"}]
     driver.run_script(
         page,
@@ -307,8 +307,11 @@ def test_mark_comes_right_after_the_action_and_typing_pauses():
         fill=lambda sel, value: calls.append(("fill", value)),
         press=lambda sel, key: calls.append(("press", key)),
         click=lambda sel: calls.append(("click", sel)),
+        wait_for_timeout=lambda ms: calls.append(("pause", ms)),
     )
-    tracker = SimpleNamespace(wait_quiet=lambda page, timeout_ms=10_000: calls.append(("quiet", timeout_ms)))
+    tracker = SimpleNamespace(
+        action=lambda: calls.append(("act",)), wait_for_action=lambda page, ms: calls.append(("wait", ms))
+    )
     steps = [
         {"type": "input", "selector": "#q", "value": "{{params.query}}"},
         {"type": "key", "selector": "#q", "key": "Enter"},
@@ -324,13 +327,16 @@ def test_mark_comes_right_after_the_action_and_typing_pauses():
         on_mark=lambda: calls.append(("MARK",)),
     )
     assert calls == [
+        ("act",),
         ("fill", "zqxv8841"),
-        ("quiet", driver.TYPING_PAUSE_MS),  # pause after typing
+        ("wait", driver.TYPING_PAUSE_MS),  # until the lookups the typing started are answered
+        ("act",),
         ("press", "Enter"),  # no wait between the triggering action and the mark
         ("MARK",),
-        ("quiet", driver.AFTER_MARK_MS),  # keep recording until the answer has loaded
+        ("wait", driver.AFTER_MARK_MS),  # until the task's own requests are answered
+        ("act",),
         ("click", "#more"),
-        ("quiet", 10_000),
+        ("pause", driver.SETTLE_MS),  # ordinary waits: a flat pause, background traffic ignored
     ]
 
 
@@ -344,3 +350,43 @@ def test_never_ending_connections_do_not_count_as_loading():
     assert tracker.inflight == 1  # the live-update stream is ignored
     handlers["requestfinished"](api)
     assert tracker.inflight == 0  # so the page can go quiet while the stream stays open
+
+
+def test_a_failing_step_is_named_in_the_error():
+    def missing(sel):
+        raise TimeoutError("Page.click: Timeout 8000ms exceeded.\nwaiting for locator('#filter')")
+
+    page = SimpleNamespace(fill=lambda sel, value: None, click=missing, wait_for_timeout=lambda ms: None)
+    tracker = SimpleNamespace(action=lambda: None, wait_for_action=lambda page, timeout_ms: None)
+    steps = [{"type": "input", "selector": "#q", "value": "x"}, {"type": "click", "selector": "#filter"}]
+    with pytest.raises(
+        driver.StepFailed, match=r"step 2 \(click #filter\): TimeoutError: Page.click: Timeout"
+    ):
+        driver.run_script(
+            page, steps, start_url="https://example.com/", params={}, tracker=tracker, on_mark=lambda: None
+        )
+
+
+def test_waits_for_the_actions_own_requests_not_background_traffic():
+    """Seen on LinkedIn: the search was answered in 0.27 s, but tracking and bot-check traffic kept
+    every 'wait until quiet' running to its 10 s cap."""
+    import time
+
+    handlers = {}
+    context = SimpleNamespace(on=lambda event, fn: handlers.setdefault(event, fn))
+    tracker = driver.NetworkTracker(context)
+    background, search, later = (SimpleNamespace(resource_type="fetch") for _ in range(3))
+    handlers["request"](background)  # already running before the action, never finishes
+    tracker.action()
+    t0 = time.monotonic()
+    timeline = [(0.10, "request", search), (0.30, "requestfinished", search), (0.70, "request", later)]
+
+    def pump(ms):
+        time.sleep(ms / 1000)
+        while timeline and time.monotonic() - t0 >= timeline[0][0]:
+            _, event, req = timeline.pop(0)
+            handlers[event](req)
+
+    tracker.wait_for_action(SimpleNamespace(wait_for_timeout=pump), timeout_ms=5000)
+    took = time.monotonic() - t0
+    assert 0.5 <= took < 1.0  # the action window, then done: not the 5 s cap

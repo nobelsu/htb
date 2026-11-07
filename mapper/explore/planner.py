@@ -90,11 +90,29 @@ CHECK_SCHEMA = {
     "type": "object",
     "properties": {
         "ok": {"type": "boolean"},
+        "empty": {"type": "boolean"},
         "reason": {"type": "string"},
         "next_role": _NULLABLE_STR,
         "next_name": _NULLABLE_STR,
     },
-    "required": ["ok", "reason", "next_role", "next_name"],
+    "required": ["ok", "empty", "reason", "next_role", "next_name"],
+    "additionalProperties": False,
+}
+
+EXAMPLE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "inputs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "example": {"type": "string"}},
+                "required": ["name", "example"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["inputs"],
     "additionalProperties": False,
 }
 
@@ -102,7 +120,7 @@ ACTION_HELP = """Actions (one per reply; unused fields are null):
 - click: role + name of the element, exactly as in the tree (e.g. role "button", name "Search")
 - type: role + name of the field, and text to put in it (replaces what is there)
 - press: key (e.g. "Enter"), optionally with role + name of the element to press it in
-- navigate: url, a path on this site
+- navigate: url, a path on this site; never with the task's input in it (type inputs into the page)
 - wait: the page is still loading
 - done: the page now shows the result of the task
 - give_up: the task cannot be done here, or you flagged the wrong action (the run then restarts)
@@ -118,7 +136,8 @@ class Planner:
     def _ask(self, purpose: str, prompt: str, schema: dict) -> dict:
         if not self.llm.enabled:
             raise PlanError("the explorer needs an LLM: set ANTHROPIC_API_KEY and install the [llm] extra")
-        data = self.llm.ask_json(purpose, prompt, schema, max_tokens=8000)
+        # Opus 5.5 always thinks, and thinking counts toward max_tokens: leave room for it
+        data = self.llm.ask_json(purpose, prompt, schema, max_tokens=16000)
         if data is None:
             detail = self.llm.calls[-1].detail if self.llm.calls else "no reply"
             raise PlanError(f"{purpose}: LLM call failed ({detail})")
@@ -139,7 +158,9 @@ class Planner:
             "view a profile, follow a company; a shop: search products, view a product, add to cart). "
             "Each task must be doable by typing and clicking, starting from start_path (a path on this "
             "site). inputs are what "
-            "the user would type, each with a realistic example value (none if the task needs no input). "
+            "the user would type, each with an example value that will certainly return results on this "
+            "site (for a search, a well-known name such as a big company or a famous person, not a "
+            "descriptive phrase: many sites only match names). None if the task needs no input. "
             "kind is 'write' if the task changes anything for the user (follow, post, send, add to "
             "cart, save), "
             "else 'read'. paginates is true if the results come in pages. name is short snake_case.\n\n"
@@ -180,6 +201,11 @@ class Planner:
             f"Task: {task.description} (kind {task.kind}).\n"
             f"Type these values exactly where the task needs them: {values or 'no input needed'}.\n"
             "If the task names a category or filter (e.g. only companies), make sure it is applied.\n"
+            "This run is recorded, then replayed with made-up input words that the site will find nothing "
+            "for. So every action must work the same when there are no results: set any category or "
+            "filter BEFORE you type and submit the input (e.g. open that category's own search page first, "
+            "or pick it in the search form), so that submitting the input is the action that performs the "
+            "task. Never rely on anything that only appears once results are shown.\n"
             f"{rules}\n{ACTION_HELP}\n{earlier}\n"
             f"Done so far:\n{done}\n\n"
             f"Current page: {url}\nAccessibility tree (typed field contents are hidden):\n{tree}"
@@ -199,10 +225,29 @@ class Planner:
             "Below is what was done in the browser and the page it ended on. Answer ok=true only if this "
             "page shows the result of the task, including any category or filter the task names, AND the "
             "action flagged as performing the task is the one that loaded this result (not an earlier "
-            "or different one). Explain in reason.\n"
+            "or different one), AND that flagged action does not depend on results being shown (the run is "
+            "replayed with words that find nothing: e.g. a filter clicked on the results page after "
+            "searching does not qualify; filters must be set before the input is submitted). "
+            "Set empty=true (with ok=false) only when everything was done right but the "
+            "site found nothing for this input (e.g. 'No results found'). Explain in reason.\n"
             f"{nxt}\n\nActions:\n" + "\n".join(history) + f"\n\nPage: {url}\n{tree}"
         )
         return self._ask("check result", prompt, CHECK_SCHEMA)
+
+    # --- 4. a better example when the site found nothing -------------------------------------------
+    def new_example(self, task: TaskSpec, tried: list[dict[str, str]]) -> dict[str, str]:
+        prompt = (
+            f"Task: {task.description}. It was done correctly with these example inputs, but the site "
+            f"found nothing: {tried}.\nGive a different example for each input that will certainly "
+            "return results on this site: for a search, a well-known name (a big company, a famous "
+            "person), not a descriptive phrase. Do not repeat one that was tried.\n"
+            f"Inputs: {list(task.inputs)}"
+        )
+        data = self._ask("new example", prompt, EXAMPLE_SCHEMA)
+        new = {i["name"]: i["example"] for i in data["inputs"] if i["name"] in task.inputs and i["example"]}
+        if set(new) != set(task.inputs) or new in tried:
+            raise PlanError(f"no usable new example for {list(task.inputs)}")
+        return new
 
 
 @dataclass

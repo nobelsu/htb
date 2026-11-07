@@ -101,6 +101,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="also explore tasks that change things (really performs them)",
     )
     ex.add_argument("--headed", action="store_true", help="show the browser")
+    ex.add_argument("--parallel", type=int, default=4, help="tasks explored at the same time (default 4)")
+    ex.add_argument(
+        "--max-browsers", type=int, default=8, help="most browsers open at once, in total (default 8)"
+    )
     ex.add_argument("--out", default="captures", help="captures root (default: captures)")
     ex.add_argument(
         "--live", action="store_true", help="run read examples through the executor after mapping"

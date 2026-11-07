@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,6 +40,8 @@ class LLM:
     client: Any = None
     enabled: bool | None = None
     calls: list[LLMCall] = field(default_factory=list)
+    model: str = MODEL  # the mapper's own steps use these defaults; the explorer asks for more
+    effort: str = "low"
 
     def __post_init__(self) -> None:
         if self.enabled is None:
@@ -54,11 +57,11 @@ class LLM:
 
             client = self.client or anthropic.Anthropic()
             response = client.beta.messages.create(
-                model=MODEL,
+                model=self.model,
                 max_tokens=max_tokens,
                 betas=[FALLBACK_BETA],
                 fallbacks="default",
-                output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}},
+                output_config={"effort": self.effort, "format": {"type": "json_schema", "schema": schema}},
                 messages=[{"role": "user", "content": prompt}],
             )
         except Exception as e:  # any SDK/network failure → deterministic fallback
@@ -67,13 +70,16 @@ class LLM:
         if response.stop_reason == "refusal":
             self.calls.append(LLMCall(purpose, False, "refused"))
             return None
+        if response.stop_reason == "max_tokens":
+            self.calls.append(LLMCall(purpose, False, f"ran out of tokens ({max_tokens})"))
+            return None
         text = next((b.text for b in response.content if b.type == "text"), None)
         try:
             data = json.loads(text or "")
         except ValueError:
             self.calls.append(LLMCall(purpose, False, "response was not JSON"))
             return None
-        self.calls.append(LLMCall(purpose, True, f"{MODEL}"))
+        self.calls.append(LLMCall(purpose, True, f"{self.model} ({self.effort})"))
         return data
 
     # --- the three optional steps ------------------------------------------------------------
@@ -115,6 +121,43 @@ class LLM:
             return None
         picked = [p for p in data.get("paths", []) if p in candidates]
         return picked[:8] if len(picked) >= 1 else None
+
+    def name_output_fields(self, task: str, candidates: list[tuple[str, list[Any]]]) -> dict[str, str] | None:
+        """For streamed answers: pick 3–8 of ``candidates`` (path, example values from a few results) and
+        name them. Returns ``{name: path}``."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"index": {"type": "integer"}, "name": {"type": "string"}},
+                        "required": ["index", "name"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["fields"],
+            "additionalProperties": False,
+        }
+        listing = "\n".join(f"{i}. {[str(v)[:80] for v in vals]}" for i, (_, vals) in enumerate(candidates))
+        prompt = (
+            f"Task: {task!r}. Each line holds one value from each of a few results the site returned "
+            "(the same spot in every result). Pick the 3 to 8 an AI agent would want back (a name or "
+            "title, a link, short facts like location, category or counts) and give each a short "
+            "snake_case name. Skip button labels, repeated boilerplate and anything that is not about "
+            f"the result itself.\n{listing}"
+        )
+        data = self.ask_json("output field names", prompt, schema, max_tokens=1500)
+        if data is None:
+            return None
+        out: dict[str, str] = {}
+        for f in data.get("fields", []):
+            name, i = str(f.get("name", "")), f.get("index", -1)
+            if re.fullmatch(r"[a-z][a-z0-9_]{0,40}", name) and name not in out and 0 <= i < len(candidates):
+                out[name] = candidates[i][0]
+        return out if out else None
 
     def describe(self, summary: dict) -> dict | None:
         """``{"description": str, "params": {name: str}}`` for an action's MCP tool."""

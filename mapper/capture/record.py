@@ -84,6 +84,7 @@ class CaptureConfig:
     # A live driver, e.g. the explorer's LLM: called as agent(page, tracker, mark) once the start page has
     # loaded, it moves the browser and calls mark() right after the action that performs the task.
     agent: Callable[[Any, driver.NetworkTracker, Callable[[], None]], None] | None = None
+    step_timeout_ms: int | None = None  # Playwright's per-action timeout; None keeps its default (30 s)
     force: bool = False
 
     @property
@@ -224,8 +225,10 @@ def record(cfg: CaptureConfig) -> Path:
             context.on("page", lambda p: _attach_navigation_log(p, log))
             tracker = driver.NetworkTracker(context)
             page = context.new_page()
+            if cfg.step_timeout_ms:
+                page.set_default_timeout(cfg.step_timeout_ms)
             page.goto(cfg.start_url, wait_until="load")
-            tracker.wait_quiet(page)
+            driver.settle(page)
 
             if steps is not None:
                 driver.run_script(
