@@ -40,3 +40,20 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   other processes (the mapper) via `PRAGMA data_version`. The gateway polls `refresh()`.
 - Cards are stored as canonical JSON (sorted keys) of only the fields the mapper set, so inheritance
   (explicit `auth_provider: null` vs absent) survives the round trip.
+
+## Template resolver
+- `urlencode` = `quote(v, safe="")` (encodes `/` too). Ordinary query values are encoded the same way, so a space
+  is `%20`, never `+`. Query keys are encoded too.
+- `escape_restli` values in the query keep `( ) , : ' %` raw; everything else (`&`, `=`, `#`, `/`...) is still
+  percent-encoded by the query builder. `escape_restli` itself escapes `%` first, then `( ) , : '` and space;
+  other characters (including non-ASCII) are left for the query builder.
+- `strip_quotes` removes one surrounding pair of `"` only if both ends have one.
+- `int` accepts ints, integral floats and numeric strings (whitespace trimmed); booleans and others fail.
+  `offset:N` uses the same conversion.
+- Text rendering of non-strings: booleans → `true`/`false`, `null` → empty, lists/dicts → compact JSON.
+- Optional param with no value: a query key, header or body key (or body list item) whose template uses it is
+  dropped. In the URL path it becomes an empty string.
+- A missing `session.cookies.X` raises `MissingCookie` (executor maps it to `AUTH_EXPIRED`, see Executor).
+- Header names are merged case-insensitively and sent lowercased.
+- A string body (not an object/array) is sent as text with its placeholders substituted.
+- Filter failures (e.g. `int` on `"abc"`) are `TemplateError` → `ERROR` with the message.
