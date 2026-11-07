@@ -239,7 +239,7 @@ async def _heal(args: argparse.Namespace) -> int:
     )
     for event in state.events(job.id):
         data = event["data"]
-        line = f"{event['event']}: {data.get('ms', '')} ms"
+        line = event["event"] + (f": {data['ms']} ms" if "ms" in data else "")
         print(line)
         for action, detail in (data.get("details") or {}).items():
             print(
