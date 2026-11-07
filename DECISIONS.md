@@ -57,3 +57,11 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - Header names are merged case-insensitively and sent lowercased.
 - A string body (not an object/array) is sent as text with its placeholders substituted.
 - Filter failures (e.g. `int` on `"abc"`) are `TemplateError` → `ERROR` with the message.
+
+## Fixture site (`tests/fixture_site/`)
+- `fixture_site.json` hard-codes `base_url: http://127.0.0.1:8900` for manual runs
+  (`uv run uvicorn tests.fixture_site.app:app --port 8900`); tests start the site on a free port and patch `base_url`.
+- The break switch (`POST /_admin/break`) moves `/api/items/{id}` to `/api/v2/items/{id}`, so `shop_get_item`
+  goes from `ERROR` (unknown id, probe passes) to `PAGE_CHANGED` (probe gets the same 404).
+- `add_to_cart` SKU prefixes drive write outcomes: `SLOW-` stores then stalls past the timeout, `FAIL-` 500s without
+  storing, `GHOST-` answers 201 without storing.
