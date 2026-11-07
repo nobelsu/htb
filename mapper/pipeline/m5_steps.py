@@ -13,11 +13,11 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from mapper import jsonpaths, placeholders, restli
 from mapper.pipeline.m2_normalize import Field
-from mapper.pipeline.m4_provenance import Label, Provenance, StepDraft, filter_for
+from mapper.pipeline.m4_provenance import Label, Provenance, StepDraft, as_text, filter_for
 from mapper.pipeline.runs import Bundle
 
 GENERIC_SEGMENTS = frozenset(
@@ -115,6 +115,8 @@ class _Renderer:
         value = lab.template
         if context == "restli" and not (isinstance(value, str) and placeholders.is_only_placeholder(value)):
             return restli.dumps(value)
+        if context == "form":
+            return quote(as_text(value), safe="")
         return value
 
 
@@ -137,6 +139,23 @@ def _structured_template(parent: Field, labels: dict[str, Label], render: _Rende
         )
     tree = json.loads(parent.value)
     return json.dumps(jsonpaths.map_leaves(tree, leaf), separators=(",", ":"))
+
+
+def _form_body(fields: list[Field], labels: dict[str, Label], render: _Renderer, warnings: list[str]) -> str:
+    """``name=value&...`` as one string: the executor sends a string body as-is, so every value is
+    percent-encoded here (literals now, placeholders with ``| urlencode``)."""
+    parts = []
+    for f in fields:
+        if f.parent is not None:
+            continue
+        name = _base(f.address.removeprefix("body."))[0]
+        if f.structure:
+            warnings.append(f"form field {name!r} holds a structured value: sent as captured")
+            value = f.raw
+        else:
+            value = str(render.leaf(labels[f.address]))
+        parts.append(f"{quote(name, safe='')}={value}")
+    return "&".join(parts)
 
 
 def build_request(
@@ -184,18 +203,7 @@ def build_request(
                 lambda p, v: render.leaf(labels[f"body.{p}"]) if f"body.{p}" in labels else v,
             )
         elif context == "form":
-            body = {}
-            for f in body_fields:
-                if f.parent is not None:
-                    continue
-                name, idx = _base(f.address.removeprefix("body."))
-                if idx == 0:
-                    body[name] = (
-                        _structured_template(f, labels, render)
-                        if f.structure
-                        else render.leaf(labels[f.address])
-                    )
-            warnings.append("form-encoded body: card representation not confirmed yet (see step 8)")
+            body = _form_body(body_fields, labels, render, warnings)
         else:
             body = render.leaf(labels["body"])
 

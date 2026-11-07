@@ -177,7 +177,9 @@ def marker_encoding(f: Field, marker: str) -> str:
 
 
 def filter_for(context: str) -> str | None:
-    return {"path": "urlencode", "restli": "escape_restli"}.get(context)
+    # form bodies are sent as one text string, so each filled-in value is percent-encoded there too
+    # (spec rule 5 names only URL paths; see docs/mapper-design.md "Form bodies")
+    return {"path": "urlencode", "restli": "escape_restli", "form": "urlencode"}.get(context)
 
 
 def literal_for(context: str, text: str) -> str:
@@ -185,6 +187,8 @@ def literal_for(context: str, text: str) -> str:
         return quote(text, safe=PATH_SAFE)
     if context == "restli":
         return restli.escape(text)
+    if context == "form":
+        return quote(text, safe="")
     return text
 
 
@@ -307,8 +311,9 @@ def build_regex(
         pre = _common_suffix(pre, body2[max(0, j - 80) : j])
         suf = _common_prefix(suf, body2[j + len(value2) : j + len(value2) + 80])
     expr = ""
-    for n in (20, 30, 45, 80):
-        p, s = _snap_left(pre, n), _snap_right(suf, n)
+    # ~20 chars of prefix; the suffix as short as uniqueness allows (one char usually ends the value)
+    for n_pre, n_suf in ((20, 1), (20, 20), (30, 30), (45, 45), (80, 80)):
+        p, s = _snap_left(pre, n_pre), _snap_right(suf, n_suf)
         stop = s[:1]
         if stop and stop not in value1 and stop not in (value2 or "") and stop != "\n":
             group = f"([^{re.escape(stop)}]+)"

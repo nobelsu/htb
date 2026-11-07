@@ -140,6 +140,15 @@ pages and be at least the page's item count.
 
 **Examples:** from the `real` run → `{"params": real_inputs, "min_items": 1}`.
 
+**Form bodies** (decided 2026-11-07). The spec only shows JSON bodies. A form-encoded body
+(`a=1&b=2`) is written as a **string** body, which the executor sends as-is, with the captured
+`content-type: application/x-www-form-urlencoded` header. Every value is percent-encoded: literals at map
+time, placeholders with `| urlencode` (so `Tom & Jerry` can't break the body). This stretches spec rule 5
+("use `urlencode` only inside `url` paths") to form bodies; the validators accept it.
+```json
+"body": "csrf={{steps.compose.csrf | urlencode}}&text={{params.text | urlencode}}"
+```
+
 **`blocked_signals`:** default `["status:403"]`, plus a `body_contains:` marker for any challenge page
 seen during capture (e.g. a captcha page returned with 200).
 
