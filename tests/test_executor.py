@@ -250,8 +250,9 @@ async def test_blocked_by_challenge_page(executor: Executor, stored: StoredCard)
 
 async def test_blocked_by_status(executor: Executor, stored: StoredCard, site_url: str) -> None:
     env = await call(executor, stored, "forbidden")
-    assert env.status == R.BLOCKED
-    assert hits(site_url) == {"GET /api/forbidden": 1}  # not probed, not retried
+    assert env.status == R.BLOCKED and env.meta.tier == "impersonate"
+    assert env.error is not None and "tiers tried: http, impersonate" in env.error.message
+    assert hits(site_url) == {"GET /api/forbidden": 2}  # one per tier; not probed, not 5xx-retried
 
 
 # ---- ERROR: 5xx / timeout --------------------------------------------------
@@ -317,17 +318,24 @@ async def test_unknown_route_after_break_is_page_changed(
     assert hits(site_url) == {"GET /api/items/p2": 1, "GET /api/items/p1": 1}  # exactly one probe
 
 
-async def test_heal_queue_is_called_for_page_changed(sessions: InMemorySessionStore, stored: StoredCard) -> None:
+async def test_healing_hooks_for_page_changed(sessions: InMemorySessionStore, stored: StoredCard) -> None:
     calls: list[tuple[str, str]] = []
 
-    class Queue:
-        def enqueue(self, domain: str, action: str, reason: str) -> Heal | None:
+    class Hooks:
+        def page_changed(self, domain: str, action: str, reason: str, user: str) -> Heal | None:
             calls.append((domain, action))
             return Heal(job_id="h_1", retry_after_s=30)
 
-    ex = Executor(sessions, Confirmer(SECRET), heal_queue=Queue())
+        def record_result(self, domain: str, action: str, code: ResultCode, user: str) -> None:
+            return None
+
+        def is_degraded(self, domain: str, action: str) -> bool:
+            return True
+
+    ex = Executor(sessions, Confirmer(SECRET), healing=Hooks())
     env = await ex.run(stored, "legacy_search", {})
     assert env.heal == Heal(job_id="h_1", retry_after_s=30)
+    assert env.meta.degraded is True
     assert calls == [("fixture.test", "legacy_search")]
 
 

@@ -46,3 +46,20 @@ uv run python -m mapper heal captures/<domain>/ --save   # site changed: replay 
 ```
 
 Captures, HAR files, `state.json` and `.env` hold live login sessions: never commit them.
+
+## Healing
+
+When an action returns `PAGE_CHANGED`, the runtime queues a heal job, pre-checks it (a block or an expired login
+cancels it), then asks the mapper to re-map just that action:
+
+```python
+class Remapper(Protocol):  # runtime/healing.py
+    async def remap(self, card: Card, actions: list[str], reason: str) -> Card | dict: ...
+```
+
+Return the whole proposed card. The runtime validates the changed actions against their `examples` and saves a
+new version; writes are never auto-activated. Set `REMAPPER=module:Class` in `.env`. For the fixture shop,
+`REMAPPER=tests.fixture_site.remapper:FixtureRemapper` demos the full loop: break the site, call `shop_get_item`,
+watch `heal_status`, call again.
+
+The mapper's `heal` re-records and re-maps the whole site (see `docs/mapper-design.md`, "Healing"); wiring it in as the runtime's `Remapper` is the next step.

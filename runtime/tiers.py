@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import httpx
@@ -103,6 +103,76 @@ class HttpTier:
         return HttpSession(base_url, seed_cookies)
 
 
-# TODO(impersonate): curl_cffi-based TierClient with a Chrome TLS/HTTP2 fingerprint.
-# TODO(browser): TierClient backed by the browser worker; cookies come from the user's browser profile.
-# TODO(ladder): on BLOCKED, escalate http -> impersonate -> browser per CARD_SPEC.md "Escalating on BLOCKED".
+IMPERSONATE_TARGET = "chrome"  # curl_cffi's current Chrome fingerprint (TLS, HTTP/2 and default headers)
+
+
+class ImpersonateSession:
+    """Looks like real Chrome at the network level (TLS/HTTP2 fingerprint and browser headers) via curl_cffi."""
+
+    def __init__(self, base_url: str, seed_cookies: dict[str, str]) -> None:
+        from curl_cffi.requests import AsyncSession
+
+        self._host = urlsplit(base_url).hostname or ""
+        self._client: AsyncSession[Any] = AsyncSession(impersonate=IMPERSONATE_TARGET)
+        for name, value in seed_cookies.items():
+            self._client.cookies.set(name, value, domain=self._host)
+
+    @property
+    def cookies(self) -> dict[str, str]:
+        return {c.name: c.value or "" for c in self._client.cookies.jar}
+
+    async def send(self, req: BuiltRequest, timeout_s: float) -> HttpResponse:
+        from curl_cffi.requests import exceptions as cx
+
+        kwargs: dict[str, Any] = {
+            "headers": req.headers,
+            "allow_redirects": True,
+            "quote": False,  # the URL is already encoded by our own rules
+        }
+        if req.url.startswith("http://"):
+            kwargs["http_version"] = "v1"  # Chrome never sends an h2c upgrade over plain http
+        if req.has_body:
+            if req.content is not None:
+                kwargs["data"] = req.content
+            else:
+                kwargs["json"] = req.json_body
+        try:
+            async with asyncio.timeout(max(timeout_s, 0.001)):
+                resp = await self._client.request(req.method, req.url, **kwargs)  # type: ignore[arg-type]
+        except TimeoutError:
+            raise TransportTimeout(f"no response within {timeout_s:.1f}s") from None
+        except cx.ConnectionError as e:  # includes DNS, TLS and connect timeouts: nothing was sent
+            raise TransportError(f"could not connect: {e}", sent=False) from None
+        except cx.Timeout:
+            raise TransportTimeout(f"no response within {timeout_s:.1f}s") from None
+        except cx.RequestException as e:
+            raise TransportError(f"transport error: {type(e).__name__}: {e}", sent=True) from None
+        headers: dict[str, str] = {}
+        for k, v in resp.headers.multi_items():
+            k = k.lower()
+            headers[k] = f"{headers[k]}, {v}" if k in headers else v
+        return HttpResponse(
+            status=resp.status_code,
+            headers=headers,
+            text=resp.text,
+            final_url=str(resp.url),
+            hops=[(h.status_code, h.headers.get("location")) for h in resp.history],
+        )
+
+    async def aclose(self) -> None:
+        await self._client.close()
+
+
+class ImpersonateTier:
+    name: Tier = "impersonate"
+
+    def open(self, base_url: str, seed_cookies: dict[str, str]) -> Session:
+        return ImpersonateSession(base_url, seed_cookies)
+
+
+LADDER: tuple[Tier, ...] = ("http", "impersonate", "browser")
+
+
+def default_tiers() -> dict[str, TierClient]:
+    # TODO(browser): add the browser-worker tier; cookies then come from the user's browser profile.
+    return {"http": HttpTier(), "impersonate": ImpersonateTier()}

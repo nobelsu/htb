@@ -175,8 +175,12 @@ included, with no human approval step**. The per-call `requires_confirmation` pr
 ## Open items for Nobel
 
 - **Healing differs from the spec (decided by WeiWei).** The mapper's `heal` re-maps the whole site and
-  saves the result as the active version, write actions included; there is no `heal_candidates` hold-back.
-  A heal job only needs to call it (see "Healing" above).
+  saves the result as the active version, write actions included, with no approval step. Nobel's
+  `runtime/healing.py` still holds healed write actions back (`heal_candidates`, "writes are never
+  auto-activated", around line 239); per this decision that hold-back should go.
+- **Next (mapper): `Remapper` adapter.** Wire `mapper heal` in as the runtime's `runtime.healing.Remapper`
+  (`async remap(card, actions, reason) -> card`), so a `PAGE_CHANGED` heal job re-records and re-maps the
+  site automatically. Until then, run `python -m mapper heal captures/<domain>/ --save` by hand.
 
 - **HIGH PRIORITY: real `connect_providers` values.** Login works through our hosted server: it generates a
   link, the user opens it from the chat and logs in to the site in a browser running on our server, and
