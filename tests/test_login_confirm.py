@@ -300,6 +300,7 @@ async def test_declining_the_link(strong_gateway: tuple[str, FakeNeko]) -> None:
     async with http, client:
         out = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
         assert out["status"] == "pending" and out["user_message"] == "Signing in to fixture.test was cancelled."
+        assert "url" not in out
 
 
 async def test_clients_without_url_elicitation_get_the_link(strong_gateway: tuple[str, FakeNeko]) -> None:
@@ -307,3 +308,19 @@ async def test_clients_without_url_elicitation_get_the_link(strong_gateway: tupl
     async with connect(f"{base}/mcp", "auto") as client:  # no elicitation callback
         out = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
         assert out["status"] == "pending" and out["user_message"].startswith("Sign in to fixture.test here: ")
+
+
+async def test_app_that_cancels_url_prompts_gets_the_link_back(strong_gateway: tuple[str, FakeNeko]) -> None:
+    """Claude Code's desktop app and `claude -p` declare URL elicitation but cancel it straight away."""
+    import mcp_types as types
+
+    base, _ = strong_gateway
+
+    async def on_url(context: Any, params: Any) -> Any:
+        return types.ElicitResult(action="cancel")
+
+    http, client = await _client_with_elicitation(base, on_url)
+    async with http, client:
+        out = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
+        assert out["status"] == "pending" and out["user_message"].startswith("Sign in to fixture.test here: ")
+        assert "couldn't show the sign-in link" in out["hint"] and "don't end your turn" in out["hint"]

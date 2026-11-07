@@ -134,10 +134,10 @@ class ConnectionManager:
         out = conn.public(self.public_base_url)
         out["user_message"] = _poll_message(conn, out.get("url"))
         out["instructions"] = (
-            "The user can't see this result. First write the user_message (it contains the link) in your reply to "
-            "them. They sign in to the site themselves on that page; their password is never shared with you. Then "
-            "call poll_connection: it waits until they've signed in. If it returns 'pending', call it again. Once "
-            "'connected', retry the original tool."
+            "The user can't see this result. In this same reply: first write the user_message (it contains the "
+            "link), then immediately call poll_connection (don't end your turn): it waits until they've signed in. "
+            "Their password is never shared with you. If it returns 'pending', call it again. Once 'connected', "
+            "retry the original tool."
         )
         return out
 

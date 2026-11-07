@@ -334,6 +334,7 @@ class Gateway:
                         elicitation_id=token,
                     )
                 )
+                log.info("start_connection: asking the client to show the sign-in link (URL elicitation)")
                 return types.InputRequiredResult(input_requests={SIGN_IN_REQUEST: request}, request_state=token)
         elif name == "poll_connection":
             wait = args.get("wait_seconds", 25)
@@ -353,14 +354,28 @@ class Gateway:
     async def _finish_url_sign_in(self, params: types.CallToolRequestParams) -> types.CallToolResult:
         """The client's retry after showing the sign-in link: wait for the sign-in, then report."""
         assert self.connections is not None
+        log.info("start_connection: client retried after the sign-in prompt: %s",
+                 {k: getattr(v, "action", type(v).__name__) for k, v in (params.input_responses or {}).items()})
         conn = self.connections.by_token(params.request_state or "")
         if conn is None:
             return _error_result("unknown or expired sign-in; call start_connection again")
         response = (params.input_responses or {}).get(SIGN_IN_REQUEST)
-        if getattr(response, "action", None) != "accept":
+        action = getattr(response, "action", None)
+        if action == "decline":  # the user said no
             out = await self.connections.poll(conn.user, conn.domain)
+            out.pop("url", None)
             out["user_message"] = f"Signing in to {conn.domain} was cancelled."
             out["hint"] = "the user declined to open the sign-in page; ask whether they want to sign in"
+            return _json_result(out)
+        if action != "accept":
+            # "cancel" (or anything else): the app couldn't show the prompt (some clients cancel URL requests
+            # automatically). Fall back to the agent showing the link and waiting in the same turn.
+            out = await self.connections.poll(conn.user, conn.domain)
+            out["hint"] = (
+                "Your app couldn't show the sign-in link to the user. In this same reply, write the user_message "
+                "(it contains the link), then immediately call poll_connection; don't end your turn, it waits for "
+                "them to sign in."
+            )
             return _json_result(out)
         out = await self.connections.poll(conn.user, conn.domain, wait_s=40, opened=True)
         return _json_result(out)

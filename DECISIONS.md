@@ -210,7 +210,9 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   clients that declare it, `start_connection` returns an input-required result with a URL elicitation: the *client*
   shows the user the sign-in link with an open button; on accept it retries the call, which then waits (up to 40 s)
   for the sign-in and returns `connected`. Declining returns a plain "cancelled" message. Other clients keep the
-  link-in-the-result flow above. The gateway logs each client's name and elicitation support once.
+  link-in-the-result flow above. Caveat found in testing: Claude Code declares URL elicitation but its desktop app
+  and `claude -p` answer "cancel" instantly without showing anything, so "cancel" is treated as "the app couldn't
+  show it": the result carries the link and tells the agent to write it and call poll_connection in the same turn. The gateway logs each client's name and elicitation support once.
 - **Neko details.** One container per login link (`ghcr.io/m1k1o/neko/chromium`, Neko 3.2), started when the user
   clicks "Log in", removed once connected or expired; leftovers are removed at startup (label `htb.neko`).
   Chromium runs in kiosk mode on the provider's `login_url`, at 1920x1200 with device scale 1.5 (sites lay out at
