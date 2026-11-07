@@ -21,7 +21,7 @@ from runtime.neko.manager import LABEL, NekoConfig, NekoManager
 from runtime.registry import Registry
 from runtime.session_store import EncryptedSessionStore, new_session_key
 from tests.conftest import LiveServer
-from tests.fixture_site.app import LOGIN_PASSWORD, LOGIN_USER
+from tests.fixture_site.app import LOGIN_PASSWORD, LOGIN_USER, state
 from tests.test_gateway import API_KEY, act, connect, envelope
 
 DOMAIN = "fixture.test"
@@ -39,7 +39,9 @@ def neko_image() -> None:
 
 
 @pytest.fixture
-def neko_gateway(tmp_path: Path, fixture_card: dict[str, Any], neko_image: None) -> Iterator[tuple[str, Path]]:
+def neko_gateway(
+    tmp_path: Path, fixture_card: dict[str, Any], neko_image: None
+) -> Iterator[tuple[str, Path, EncryptedSessionStore]]:
     db = tmp_path / "gw.db"
     registry = Registry(db)
     registry.save(fixture_card)
@@ -50,7 +52,7 @@ def neko_gateway(tmp_path: Path, fixture_card: dict[str, Any], neko_image: None)
     gateway = Gateway(registry, executor, poll_interval_s=0.05, connections=manager)
     with LiveServer(gateway.asgi_app(API_KEY)) as server:
         manager.public_base_url = server.url
-        yield server.url, db
+        yield server.url, db, store
     registry.close()
 
 
@@ -94,8 +96,10 @@ async def _launch_user_browser(pw: Any, engine: str) -> Any:
 
 
 @pytest.mark.parametrize("engine", ["chromium", "firefox"])
-async def test_log_in_here_with_neko(neko_gateway: tuple[str, Path], site_url: str, engine: str) -> None:
-    base, _ = neko_gateway
+async def test_log_in_here_with_neko(
+    neko_gateway: tuple[str, Path, EncryptedSessionStore], site_url: str, engine: str
+) -> None:
+    base, _, store = neko_gateway
     spots = await field_fractions(site_url)
     async with connect(f"{base}/mcp", "auto") as client:
         link = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))["url"]
@@ -139,8 +143,17 @@ async def test_log_in_here_with_neko(neko_gateway: tuple[str, Path], site_url: s
         print(f"{engine}: stream {stream_size[0]}x{stream_size[1]}, playback {fps}x")
 
         assert envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "connected"
+        # Device identity: what we saved is exactly what the login browser sent the site when the user signed in
+        # (the site is on 127.0.0.1 inside the container, a secure context, so client hints are sent too).
+        identity = store.identity("default", DOMAIN, "shop")
+        assert identity is not None and identity.platform == "Linux" and identity.brand is None
+        sent_at_login = state.last_headers["POST /login"]
+        for name, value in identity.headers().items():
+            assert sent_at_login.get(name) == value, (name, sent_at_login.get(name), value)
         env = envelope(await client.call_tool(*act("list_orders", {})))
         assert env["status"] == "SUCCESS", env
+        later = state.last_headers["GET /api/account/orders"]  # and our server's request presents the same browser
+        assert {k: later.get(k) for k in identity.headers()} == identity.headers()
 
     for _ in range(40):  # the login browser is removed once connected
         if not login_containers():

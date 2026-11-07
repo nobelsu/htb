@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from runtime.identity import BrowserIdentity
 
 Cookies = dict[str, str]
 
@@ -17,9 +20,19 @@ class SessionStore(Protocol):
 class InMemorySessionStore:
     def __init__(self) -> None:
         self._data: dict[tuple[str, str, str], Cookies] = {}
+        self._identities: dict[tuple[str, str, str], BrowserIdentity] = {}
 
-    def put(self, user: str, domain: str, provider_id: str, cookies: Cookies) -> None:
+    def put(
+        self, user: str, domain: str, provider_id: str, cookies: Cookies, identity: BrowserIdentity | None = None
+    ) -> None:
         self._data[(user, domain, provider_id)] = dict(cookies)
+        if identity is not None:
+            self._identities[(user, domain, provider_id)] = identity
+        else:
+            self._identities.pop((user, domain, provider_id), None)
+
+    def identity(self, user: str, domain: str, provider_id: str) -> BrowserIdentity | None:
+        return self._identities.get((user, domain, provider_id))
 
     def get(self, user: str, domain: str, provider_id: str) -> Cookies | None:
         found = self._data.get((user, domain, provider_id))

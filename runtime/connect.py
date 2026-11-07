@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 from runtime.browser.pool import BrowserPool
 from runtime.executor import Executor
+from runtime.identity import BrowserIdentity
 from runtime.neko.manager import NekoManager, NekoUnavailable
 from runtime.registry import Registry
 from runtime.session_store import EncryptedSessionStore
@@ -48,6 +49,7 @@ class Connection:
     # signed-out, so we wait for the user to confirm instead of auto-connecting (None = not checked yet).
     check_is_weak: bool | None = None
     first_cookies: dict[str, str] | None = None  # the login browser's cookies when first read
+    identity: BrowserIdentity | None = None  # the login browser's device identity, saved with the sign-in
     page_opened: bool = False  # someone loaded the connect page (so the user has the link)
 
     def refresh(self) -> None:
@@ -227,16 +229,31 @@ class ConnectionManager:
             conn.refresh()
         return conn
 
-    async def _verify(self, conn: Connection, jar: dict[str, str]) -> ResultCode | None:
+    async def _verify(
+        self, conn: Connection, jar: dict[str, str], identity: BrowserIdentity | None = None
+    ) -> ResultCode | None:
         card = self._card(conn.domain)
         if card is None:
             return R.ERROR
-        return await self.executor.check_session(card, conn.provider, conn.user, cookies=jar)
+        return await self.executor.check_session(card, conn.provider, conn.user, cookies=jar, identity=identity)
 
-    def _connected(self, conn: Connection, jar: dict[str, str], via: str) -> None:
-        self.store.put(conn.user, conn.domain, conn.provider, jar)
+    async def _login_identity(self, conn: Connection) -> BrowserIdentity | None:
+        """The login browser's device identity, so later requests present the same browser (DECISIONS.md L8)."""
+        if self.neko is None:
+            return None
+        try:
+            return await self.neko.identity(conn.token)
+        except Exception as e:  # DevTools briefly unavailable: the sign-in still works, with the default identity
+            log.warning("could not read the login browser's identity: %s", e)
+            return None
+
+    def _connected(
+        self, conn: Connection, jar: dict[str, str], via: str, identity: BrowserIdentity | None = None
+    ) -> None:
+        self.store.put(conn.user, conn.domain, conn.provider, jar, identity)
         conn.status, conn.message = "connected", f"connected to {conn.domain}"
-        log.info("%s connected to %s via %s (%d cookies)", conn.user, conn.domain, via, len(jar))
+        shown = f"Chrome {identity.major} on {identity.platform}" if identity is not None else "default identity"
+        log.info("%s connected to %s via %s (%d cookies, %s)", conn.user, conn.domain, via, len(jar), shown)
 
     # ---- "log in here": a Neko login browser ------------------------------
 
@@ -286,9 +303,10 @@ class ConnectionManager:
             # The check can't verify the login, so at least require that signing in changed the cookies.
             if conn.first_cookies is not None and jar == conn.first_cookies:
                 raise ConnectError(not_yet)
-        elif await self._verify(conn, jar) is not None:
+        identity = await self._login_identity(conn)
+        if not conn.check_is_weak and await self._verify(conn, jar, identity) is not None:
             raise ConnectError(not_yet)
-        self._connected(conn, jar, "the login browser (confirmed)")
+        self._connected(conn, jar, "the login browser (confirmed)", identity)
         await self._stop_browser(conn)
         return conn
 
@@ -309,8 +327,12 @@ class ConnectionManager:
                     conn.first_cookies = dict(jar)
                 if conn.check_is_weak:
                     continue  # can't tell signed-in from signed-out: wait for "I've signed in"
-                if jar and await self._verify(conn, jar) is None:
-                    self._connected(conn, jar, "the login browser")
+                if not jar:
+                    continue
+                if conn.identity is None:
+                    conn.identity = await self._login_identity(conn)
+                if await self._verify(conn, jar, conn.identity) is None:
+                    self._connected(conn, jar, "the login browser", conn.identity)
                     return
         finally:
             await self.neko.stop(conn.token)

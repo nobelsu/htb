@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from runtime.identity import DEFAULT_IDENTITY, BrowserIdentity
 from runtime.template import BuiltRequest
 from schema.card import Tier
 
@@ -77,17 +78,27 @@ class Session(Protocol):
 class TierClient(Protocol):
     name: Tier
 
-    def open(self, base_url: str, seed_cookies: dict[str, str], profile: ProfileKey | None = None) -> Session: ...
+    def open(
+        self,
+        base_url: str,
+        seed_cookies: dict[str, str],
+        profile: ProfileKey | None = None,
+        identity: BrowserIdentity | None = None,
+    ) -> Session: ...
 
 
 class HttpSession:
-    def __init__(self, base_url: str, seed_cookies: dict[str, str]) -> None:
+    def __init__(
+        self, base_url: str, seed_cookies: dict[str, str], identity: BrowserIdentity | None = None
+    ) -> None:
         host = urlsplit(base_url).hostname or ""
         jar = httpx.Cookies()
         for name, value in seed_cookies.items():
             jar.set(name, value, domain=host)
+        # The device identity's headers go on every request; a card's own headers still win per request.
+        headers = (identity or DEFAULT_IDENTITY).headers()
         # httpx follows redirects and keeps every hop in response.history; the jar spans all steps.
-        self._client = httpx.AsyncClient(cookies=jar, follow_redirects=True, timeout=None)
+        self._client = httpx.AsyncClient(cookies=jar, headers=headers, follow_redirects=True, timeout=None)
         self._host = host
 
     @property
@@ -138,21 +149,31 @@ class HttpSession:
 class HttpTier:
     name: Tier = "http"
 
-    def open(self, base_url: str, seed_cookies: dict[str, str], profile: ProfileKey | None = None) -> Session:
-        return HttpSession(base_url, seed_cookies)
+    def open(
+        self,
+        base_url: str,
+        seed_cookies: dict[str, str],
+        profile: ProfileKey | None = None,
+        identity: BrowserIdentity | None = None,
+    ) -> Session:
+        return HttpSession(base_url, seed_cookies, identity)
 
 
-IMPERSONATE_TARGET = "chrome"  # curl_cffi's current Chrome fingerprint (TLS, HTTP/2 and default headers)
 
 
 class ImpersonateSession:
     """Looks like real Chrome at the network level (TLS/HTTP2 fingerprint and browser headers) via curl_cffi."""
 
-    def __init__(self, base_url: str, seed_cookies: dict[str, str]) -> None:
+    def __init__(
+        self, base_url: str, seed_cookies: dict[str, str], identity: BrowserIdentity | None = None
+    ) -> None:
         from curl_cffi.requests import AsyncSession
 
+        identity = identity or DEFAULT_IDENTITY
         self._host = urlsplit(base_url).hostname or ""
-        self._client: AsyncSession[Any] = AsyncSession(impersonate=IMPERSONATE_TARGET)
+        # The closest real Chrome fingerprint (TLS, HTTP/2, header order), with the identity's own header values.
+        self.target = identity.impersonate_target()
+        self._client: AsyncSession[Any] = AsyncSession(impersonate=self.target, headers=identity.headers())
         for name, value in seed_cookies.items():
             self._client.cookies.set(name, value, domain=self._host)
 
@@ -212,8 +233,14 @@ class ImpersonateSession:
 class ImpersonateTier:
     name: Tier = "impersonate"
 
-    def open(self, base_url: str, seed_cookies: dict[str, str], profile: ProfileKey | None = None) -> Session:
-        return ImpersonateSession(base_url, seed_cookies)
+    def open(
+        self,
+        base_url: str,
+        seed_cookies: dict[str, str],
+        profile: ProfileKey | None = None,
+        identity: BrowserIdentity | None = None,
+    ) -> Session:
+        return ImpersonateSession(base_url, seed_cookies, identity)
 
 
 LADDER: tuple[Tier, ...] = ("http", "impersonate", "browser")

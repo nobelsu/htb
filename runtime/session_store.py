@@ -15,6 +15,7 @@ from typing import Literal
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from runtime.identity import BrowserIdentity
 from runtime.sessions import Cookies, SessionStore
 
 SessionStatus = Literal["connected", "expired"]
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     status        TEXT NOT NULL,      -- connected | expired
     connected_at  TEXT NOT NULL,
     checked_at    TEXT,
+    identity      TEXT,               -- JSON BrowserIdentity of the browser the user signed in with (not secret)
     PRIMARY KEY (user, domain, provider)
 );
 """
@@ -59,21 +61,42 @@ class EncryptedSessionStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA_SQL)
+        columns = {r[1] for r in self._conn.execute("PRAGMA table_info(sessions)")}
+        if "identity" not in columns:  # databases made before device identity
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN identity TEXT")
 
     def close(self) -> None:
         self._conn.close()
 
-    def put(self, user: str, domain: str, provider_id: str, cookies: Cookies) -> None:
+    def put(
+        self, user: str, domain: str, provider_id: str, cookies: Cookies, identity: BrowserIdentity | None = None
+    ) -> None:
+        """A new sign-in: its cookies and the identity of the browser it was made with."""
         blob = self._fernet.encrypt(json.dumps(cookies).encode())
+        ident = json.dumps(identity.to_json()) if identity is not None else None
         now = _now()
         with self._lock:
             self._conn.execute(
-                "INSERT INTO sessions (user, domain, provider, cookies_enc, status, connected_at, checked_at) "
-                "VALUES (?, ?, ?, ?, 'connected', ?, ?) "
+                "INSERT INTO sessions (user, domain, provider, cookies_enc, status, connected_at, checked_at, "
+                "identity) VALUES (?, ?, ?, ?, 'connected', ?, ?, ?) "
                 "ON CONFLICT (user, domain, provider) DO UPDATE SET cookies_enc = excluded.cookies_enc, "
-                "status = 'connected', connected_at = excluded.connected_at, checked_at = excluded.checked_at",
-                (user, domain, provider_id, blob, now, now),
+                "status = 'connected', connected_at = excluded.connected_at, checked_at = excluded.checked_at, "
+                "identity = excluded.identity",
+                (user, domain, provider_id, blob, now, now, ident),
             )
+
+    def identity(self, user: str, domain: str, provider_id: str) -> BrowserIdentity | None:
+        """The browser this sign-in was made with (None for sign-ins made before device identity)."""
+        row = self._conn.execute(
+            "SELECT identity FROM sessions WHERE user = ? AND domain = ? AND provider = ?",
+            (user, domain, provider_id),
+        ).fetchone()
+        if row is None or not row[0]:
+            return None
+        try:
+            return BrowserIdentity.from_json(json.loads(row[0]))
+        except (ValueError, TypeError, KeyError):
+            return None
 
     def get(self, user: str, domain: str, provider_id: str) -> Cookies | None:
         row = self._conn.execute(
@@ -153,6 +176,14 @@ class ChainedSessionStore:
             found = store.get(user, domain, provider_id)
             if found is not None:
                 return found
+        return None
+
+    def identity(self, user: str, domain: str, provider_id: str) -> BrowserIdentity | None:
+        """The identity saved with the session the executor would use."""
+        for store in self.stores:
+            if store.get(user, domain, provider_id) is not None:
+                ident = getattr(store, "identity", None)
+                return ident(user, domain, provider_id) if ident is not None else None
         return None
 
     def refresh(self, user: str, domain: str, provider_id: str, before: Cookies, after: Cookies) -> bool:

@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 from runtime.confirm import Confirmer, canonical_params
 from runtime.extract import ExtractError, ResponseView, jsonpath_all, project, run_extract
+from runtime.identity import BrowserIdentity
 from runtime.redact import redact_headers, scrub
 from runtime.registry import StoredCard
 from runtime.sessions import Cookies, SessionStore
@@ -101,6 +102,7 @@ class _Run:
     primary: bool  # an agent-facing run (False for probes, health checks and heal validation)
     auth: str | None
     tier: list[Tier]  # one-element holder for the current tier, shared with the envelope builder
+    identity: BrowserIdentity | None = None  # the sign-in's device identity; every tier presents it
     steps: dict[tuple[str, str], list[Any]] = field(default_factory=dict)
 
     def context(self) -> Context:
@@ -162,6 +164,7 @@ class Executor:
         *,
         tier: Tier | None = None,
         cookies: dict[str, str] | None = None,
+        identity: BrowserIdentity | None = None,
     ) -> ResultCode | None:
         """Run a provider's `session_check`. Returns None if it passes, else the result code.
 
@@ -178,7 +181,11 @@ class Executor:
                 return R.AUTH_REQUIRED
         check = provider.session_check
         tier = self.start_tier(tier or card.defaults.tier)
-        session = self.tiers[tier].open(card.base_url, cookies, ProfileKey(user, card.domain, provider_id))
+        if from_store and identity is None:
+            identity = self.identity_for(user, card.domain, provider_id)
+        session = self.tiers[tier].open(
+            card.base_url, cookies, ProfileKey(user, card.domain, provider_id), identity
+        )
         try:
             try:
                 await session.prepare()
@@ -203,6 +210,12 @@ class Executor:
         if verdict is None and from_store:
             self._save_refreshed(user, card.domain, provider_id, cookies, refreshed)
         return verdict
+
+    def identity_for(self, user: str, domain: str, provider_id: str) -> BrowserIdentity | None:
+        """The device identity saved with this sign-in (None: tiers use DEFAULT_IDENTITY)."""
+        lookup = getattr(self.sessions, "identity", None)
+        found = lookup(user, domain, provider_id) if lookup is not None else None
+        return found if isinstance(found, BrowserIdentity) else None
 
     def _save_refreshed(self, user: str, domain: str, provider_id: str, before: Cookies, after: Cookies) -> None:
         """Cookie rotation (DECISIONS.md): save the cookies as the site left them after a successful run."""
@@ -305,7 +318,8 @@ class Executor:
             conf = self.confirmer.issue(user, card.domain, action.name, params, summary)
             return envelope(R.NEEDS_CONFIRMATION, confirmation=conf), None
 
-        session = self.tiers[tier_used[0]].open(card.base_url, cookies, ProfileKey(user, card.domain, auth))
+        identity = self.identity_for(user, card.domain, auth) if auth is not None else None
+        session = self.tiers[tier_used[0]].open(card.base_url, cookies, ProfileKey(user, card.domain, auth), identity)
         run = _Run(
             card=card,
             action=action,
@@ -317,6 +331,7 @@ class Executor:
             primary=primary,
             auth=auth,
             tier=tier_used,
+            identity=identity,
         )
         async def attempt() -> tuple[Envelope, int | None]:
             try:
@@ -376,7 +391,9 @@ class Executor:
         """Switch tiers, carrying the execution's cookie jar. Later steps stay on the higher tier."""
         cookies = run.session.cookies
         await run.session.aclose()
-        run.session = self.tiers[to].open(run.card.base_url, cookies, ProfileKey(run.user, run.card.domain, run.auth))
+        run.session = self.tiers[to].open(
+            run.card.base_url, cookies, ProfileKey(run.user, run.card.domain, run.auth), run.identity
+        )
         await self._prepare(run)
         log.info("%s.%s escalating %s -> %s", run.card.domain, run.action.name, run.tier[0], to)
         run.tier[0] = to

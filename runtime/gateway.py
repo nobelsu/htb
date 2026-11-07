@@ -573,6 +573,7 @@ def main() -> None:
                 public_ip=os.environ.get("NEKO_PUBLIC_IP", "auto"),
                 udp_ports=(int(low), int(high or low)),
                 ice_servers=os.environ.get("NEKO_ICE_SERVERS", ""),
+                accept_languages=os.environ.get("NEKO_ACCEPT_LANGUAGES", "en-US,en"),
             )
         )
     connections = ConnectionManager(

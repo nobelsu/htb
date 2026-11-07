@@ -23,6 +23,8 @@ from urllib.parse import urlsplit
 import httpx
 import websockets
 
+from runtime.identity import BrowserIdentity, accept_language_header
+
 log = logging.getLogger("runtime.neko")
 
 ASSETS = Path(__file__).resolve().parent
@@ -33,7 +35,8 @@ CHROMIUM_CONF = """[program:chromium]
 environment=HOME="/home/%(ENV_USER)s",USER="%(ENV_USER)s",DISPLAY="%(ENV_DISPLAY)s"
 command=/usr/bin/chromium --no-sandbox --test-type --kiosk --window-position=0,0 --window-size={width},{height} --force-device-scale-factor={scale}
   --display=%(ENV_DISPLAY)s --user-data-dir=/home/neko/.config/chromium --no-first-run --disable-gpu
-  --disable-software-rasterizer --disable-dev-shm-usage --remote-debugging-port=9222 {start_url}
+  --disable-software-rasterizer --disable-dev-shm-usage --remote-debugging-port=9222 --accept-lang={accept_lang}
+  {start_url}
 stopsignal=INT
 autorestart=true
 priority=800
@@ -70,6 +73,7 @@ class NekoConfig:
     fps: int = 30
     start_timeout_s: float = 60.0
     ice_servers: str = ""  # optional JSON list of STUN/TURN servers for users behind strict NATs
+    accept_languages: str = "en-US,en"  # the login browser's languages; saved with the sign-in (device identity)
     docker: str = "docker"
 
 
@@ -197,7 +201,12 @@ class NekoManager:
                     forwards.append(spec)
         (workdir / "chromium.conf").write_text(
             CHROMIUM_CONF.format(
-                width=cfg.width, height=cfg.height, scale=cfg.scale, start_url=_shell_quote(start_url), forwards=" ".join(forwards)
+                width=cfg.width,
+                height=cfg.height,
+                scale=cfg.scale,
+                start_url=_shell_quote(start_url),
+                forwards=" ".join(forwards),
+                accept_lang=_shell_quote(cfg.accept_languages),
             )
         )
         http_port, cdp_port = _free_port(), _free_port()
@@ -278,6 +287,18 @@ class NekoManager:
                     break
         found: list[dict[str, Any]] = reply.get("result", {}).get("cookies", [])
         return {c["name"]: c["value"] for c in found if _applies(c, base_url)}
+
+    async def identity(self, token: str) -> BrowserIdentity | None:
+        """The login browser's device identity (version, user-agent, platform, languages), saved with the sign-in."""
+        session = self._sessions.get(token)
+        if session is None:
+            return None
+        async with httpx.AsyncClient(timeout=5) as client:
+            info = (await client.get(f"http://127.0.0.1:{session.cdp_port}/json/version")).json()
+        brand = "Google Chrome" if "google-chrome" in self.config.image else None  # Neko's chromium image: none
+        return BrowserIdentity.from_devtools(
+            info, brand=brand, accept_language=accept_language_header(self.config.accept_languages)
+        )
 
     async def stop(self, token: str) -> None:
         session = self._sessions.pop(token, None)

@@ -299,8 +299,28 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   - The login flow's own checks (with the login browser's cookies) save nothing here; it saves on connect.
   - Sign-ins pasted into `DEV_SESSION_COOKIES` are not rotated; they stay as written in `.env`.
   - The log says how many cookies changed, with no cookie names or values.
+- **L8 Device identity (asked).** Later requests present the browser the user signed in with, so sites that tie a
+  login to a device don't see a new one. Saved with each sign-in (`sessions.identity`, plain JSON: not secret):
+  the login browser's user-agent and full version (DevTools `/json/version`), its platform, brand (none for Neko's
+  Chromium) and Accept-Language (pinned with `--accept-lang`, `NEKO_ACCEPT_LANGUAGES`). Every tier presents it:
+  `http` and `impersonate` send its user-agent, client hints (`sec-ch-ua`, `-mobile`, `-platform`) and language;
+  `impersonate` uses curl_cffi's newest Chrome fingerprint not newer than it (Chromium 155 -> `chrome152`); `browser`
+  overrides the tab via DevTools `Network.setUserAgentOverride` (headers and `navigator.userAgentData`), plus a
+  per-tab Accept-Language (Playwright's own wins over DevTools'). Checked against the real Neko login: the saved
+  identity equals what its Chromium sent the site, header for header.
+  - **Requests with no saved identity (asked: real Chrome).** Public actions, `.env` sign-ins and sign-ins made
+    before this present `DEFAULT_IDENTITY`: Google Chrome 152 on Windows, identical to curl_cffi's `chrome152`
+    profile, instead of `python-httpx`.
+  - The client-hint brand list is computed from the version with Chromium's own GREASE rule; checked against real
+    Chrome 120/122/124/131 headers, curl_cffi's recorded Chrome 152 and the live Neko Chromium 155.
+  - A card's own header still wins over the identity's (the mapper strips `user-agent`/`accept-language` anyway).
+  - The fixture site's bot guard now keys on `sec-fetch-mode` (only a browser's network stack sends it) as its
+    stand-in for a TLS fingerprint, since the `http` tier now sends a Chrome user-agent and client hints.
+  - Not covered: the IP address (residential proxies, still to do), time zone, screen size and other JS-visible
+    traits (only the `browser` tier runs JS); the `browser` tier's real Chrome engine version may differ from the
+    version it claims.
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
-- **Not handled yet:** sites that bind sessions to a device or IP may notice the switch from the login browser to
-  server requests (planned: reuse the login browser's identity, and residential proxies); per-user API keys
-  (everything is user `default`).
+- **Not handled yet:** sites that bind sessions to an IP may notice the switch from the login browser to server
+  requests (planned: residential proxies; the device identity is handled, L8); per-user API keys (everything is
+  user `default`).

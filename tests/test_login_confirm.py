@@ -15,6 +15,7 @@ from runtime.confirm import Confirmer
 from runtime.connect import ConnectError, ConnectionManager
 from runtime.executor import Executor
 from runtime.gateway import Gateway
+from runtime.identity import BrowserIdentity
 from runtime.neko.manager import NekoConfig
 from runtime.registry import Registry
 from runtime.session_store import EncryptedSessionStore, new_session_key
@@ -58,6 +59,11 @@ class FakeNeko:
 
     async def cookies(self, token: str, base_url: str) -> dict[str, str]:
         return dict(self.cookies_now)
+
+    IDENTITY = BrowserIdentity("Mozilla/5.0 (X11; Linux x86_64) Chrome/155.0.0.0", "155.0.1.2", "Linux", None, "en-US")
+
+    async def identity(self, token: str) -> BrowserIdentity | None:
+        return self.IDENTITY if token in self.sessions else None
 
     async def stop(self, token: str) -> None:
         self.sessions.pop(token, None)
