@@ -238,3 +238,30 @@ def test_command_line(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
     assert main(["--db", db, "revoke", "erin"]) == 0
     assert KeyStore(db).user_for(key.group(0)) is None
     assert main(["--db", db, "add", "erin", "--email", "erin@example.com"]) == 1  # name taken
+
+
+# ---- shared through a tunnel: the public address must pass MCP's host check ---------------------------------
+
+
+async def test_the_public_address_passes_the_host_check(tmp_path: Path, fixture_card: dict[str, Any]) -> None:
+    """The MCP SDK rejects Host headers other than localhost (DNS-rebinding protection). Behind a tunnel or proxy,
+    requests arrive with PUBLIC_BASE_URL's host, which must be allowed; any other host is still refused."""
+    registry = Registry(tmp_path / "gw.db")
+    registry.save(fixture_card)
+    gateway = Gateway(registry, Executor(EncryptedSessionStore(tmp_path / "gw.db", new_session_key()), Confirmer("s")))
+    app = gateway.asgi_app(API_KEY, public_base_url="https://demo-site.ngrok-free.dev")
+    init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}}
+    headers = {"Authorization": f"Bearer {API_KEY}", "accept": "application/json, text/event-stream",
+               "mcp-protocol-version": "2025-06-18"}
+    with LiveServer(app) as server:
+        async with httpx.AsyncClient() as http:
+            async def status(host: str, origin: str | None = None) -> int:
+                extra = {"host": host} | ({"origin": origin} if origin else {})
+                return (await http.post(f"{server.url}/mcp", json=init, headers=headers | extra)).status_code
+
+            assert await status("demo-site.ngrok-free.dev", "https://demo-site.ngrok-free.dev") == 200
+            assert await status(server.url.split("//")[1]) == 200  # localhost still works
+            assert await status("evil.example") == 421
+            assert await status("demo-site.ngrok-free.dev", "https://evil.example") in (400, 403)
+    registry.close()
