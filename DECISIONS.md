@@ -219,6 +219,12 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **Local development.** If the site is on the Docker host's loopback (the fixture shop), the forwarder maps the
   container's `127.0.0.1:<port>` to `host.docker.internal:<port>`.
 - **Typing.** Click into a field before typing: Neko's client keeps the Tab key for its own page.
+- **Connected-too-early guard.** When "Log in" starts the login browser, the provider's `session_check` is run once
+  with no cookies. If it passes, it can't tell signed-in from signed-out (e.g. the mapper's placeholder picked a
+  public endpoint), so that login never auto-connects: the page asks the user to click **I've signed in**, and we
+  accept only if the browser's cookies changed since the login page first loaded. Otherwise auto-detection is
+  unchanged, and the button just runs the real `session_check` immediately. The extension path is unchanged
+  (the user already confirms explicitly there).
 - **Disconnect.** `disconnect(domain, provider?)` (all of the site's providers by default) deletes the encrypted
   session, closes and deletes the user's server-side browser profile for that site, and cancels a pending login
   link (stopping its Neko browser). It is idempotent and marked destructive in MCP (`destructiveHint`); its

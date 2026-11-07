@@ -48,6 +48,10 @@ class Connection:
     status: ConnStatus = "pending"
     message: str = "waiting for the user to connect"
     browser_task: asyncio.Task[None] | None = None  # the "log in here" watcher, if started
+    # True when the provider's session_check also passes with no cookies at all: it can't tell signed-in from
+    # signed-out, so we wait for the user to confirm instead of auto-connecting (None = not checked yet).
+    check_is_weak: bool | None = None
+    first_cookies: dict[str, str] | None = None  # the login browser's cookies when first read
 
     def refresh(self) -> None:
         if self.status == "pending" and time.time() > self.expires_at:
@@ -240,8 +244,12 @@ class ConnectionManager:
 
     # ---- "log in here": a Neko login browser ------------------------------
 
-    async def start_browser_login(self, token: str) -> str:
-        """Start (or reuse) the login browser for this link. Returns the viewer path. Raises CookieImportError."""
+    async def start_browser_login(self, token: str) -> dict[str, Any]:
+        """Start (or reuse) the login browser for this link. Raises CookieImportError.
+
+        Returns {"viewer": path, "confirm": bool}: confirm=True means the user must click "I've signed in"
+        because the site's session_check can't tell signed-in from signed-out.
+        """
         conn = self.by_token(token)
         if conn is None:
             raise CookieImportError("unknown login link")
@@ -254,9 +262,39 @@ class ConnectionManager:
         except NekoUnavailable as e:
             log.warning("login browser unavailable: %s", e)
             raise CookieImportError(f"the login browser could not start ({e})") from None
+        if conn.check_is_weak is None:
+            conn.check_is_weak = await self._verify(conn, {}) is None
+            if conn.check_is_weak:
+                log.info("session_check for %s passes without cookies; asking the user to confirm", conn.domain)
         if conn.browser_task is None:
             conn.browser_task = asyncio.get_running_loop().create_task(self._watch_browser(conn))
-        return session.viewer_path()
+        return {"viewer": session.viewer_path(), "confirm": conn.check_is_weak}
+
+    async def confirm_browser_login(self, token: str) -> Connection:
+        """The user clicked "I've signed in". Raises CookieImportError with a user-facing reason."""
+        conn = self.by_token(token)
+        if conn is None:
+            raise CookieImportError("unknown login link")
+        if conn.status != "pending":
+            raise CookieImportError(f"this link is {conn.status}")
+        if self.neko is None or self.neko.get(conn.token) is None:
+            raise CookieImportError("start the sign-in first")
+        try:
+            jar = await self.neko.cookies(conn.token, conn.base_url)
+        except Exception:
+            raise CookieImportError("the sign-in browser isn't responding; try again in a moment") from None
+        not_yet = f"It doesn't look like you've signed in to {conn.domain} yet. Finish signing in, then try again."
+        if not jar:
+            raise CookieImportError(not_yet)
+        if conn.check_is_weak:
+            # The check can't verify the login, so at least require that signing in changed the cookies.
+            if conn.first_cookies is not None and jar == conn.first_cookies:
+                raise CookieImportError(not_yet)
+        elif await self._verify(conn, jar) is not None:
+            raise CookieImportError(not_yet)
+        self._connected(conn, jar, "the login browser (confirmed)")
+        await self._stop_browser(conn)
+        return conn
 
     async def _watch_browser(self, conn: Connection) -> None:
         assert self.neko is not None
@@ -271,6 +309,10 @@ class ConnectionManager:
                 except Exception as e:  # container restarting, DevTools briefly unavailable...
                     log.debug("reading login browser cookies failed: %s", e)
                     continue
+                if conn.first_cookies is None:
+                    conn.first_cookies = dict(jar)
+                if conn.check_is_weak:
+                    continue  # can't tell signed-in from signed-out: wait for "I've signed in"
                 if jar and await self._verify(conn, jar) is None:
                     self._connected(conn, jar, "the login browser")
                     return

@@ -4,6 +4,7 @@ gateway's Bearer check skips /connect/ and /neko/.
 GET  /connect/{token}          the page the user opens
 GET  /connect/{token}/status   JSON status, polled by the page
 POST /connect/{token}/browser  start the "log in here" browser; returns the viewer URL
+POST /connect/{token}/done     the user clicked "I've signed in"
 POST /connect/{token}/cookies  called by the extension with the captured cookies
 *    /neko/{token}/...         reverse proxy to that login's Neko container (HTTP + its signalling WebSocket)
 """
@@ -73,8 +74,10 @@ PAGE_HTML = """<!doctype html>
 </div>
 <div id="viewer"><iframe id="frame" title="Secure browser for logging in to __DOMAIN__"
   allow="autoplay; fullscreen; clipboard-read; clipboard-write"></iframe>
-  <p class="hint">This is a private browser running on our server, just for this login. It closes by itself once
-  you're signed in.</p></div>
+  <div class="actions"><button id="done" type="button">I've signed in</button>
+  <span id="done-hint" class="hint"></span></div>
+  <p class="hint">This is a private browser running on our server, just for this login. It closes once you're
+  signed in.</p></div>
 </main>
 <script>
 const CFG = __CONFIG__;
@@ -104,12 +107,27 @@ $("browser").addEventListener("click", async () => {
     if (!resp.ok) throw new Error(body.error || ("HTTP " + resp.status));
     $("frame").src = body.viewer;
     $("viewer").style.display = "block";
+    $("done-hint").textContent = body.confirm
+      ? "Click this once you've finished signing in."
+      : "We'll notice when you're signed in, or click this to check now.";
     setStatus("pending", "Sign in to " + CFG.domain + " below. Click inside the browser to start.");
     $("viewer").scrollIntoView({behavior: "smooth", block: "start"});
   } catch (e) {
     setStatus("bad", "Couldn't start the browser: " + e.message);
     $("browser").disabled = false;
   }
+});
+$("done").addEventListener("click", async () => {
+  $("done").disabled = true;
+  try {
+    const resp = await fetch(location.pathname + "/done", {method: "POST"});
+    const body = await resp.json();
+    if (resp.ok) setStatus("connected");
+    else setStatus("bad", body.error || ("HTTP " + resp.status));
+  } catch (e) {
+    setStatus("bad", "Couldn't check: " + e.message);
+  }
+  $("done").disabled = false;
 });
 async function poll() {
   try {
@@ -161,10 +179,17 @@ def routes(manager: ConnectionManager, extension_id: str) -> list[BaseRoute]:
 
     async def browser(request: Request) -> Response:
         try:
-            viewer = await manager.start_browser_login(request.path_params["token"])
+            started = await manager.start_browser_login(request.path_params["token"])
         except CookieImportError as e:
             return JSONResponse({"error": str(e)}, status_code=400, headers=NO_STORE)
-        return JSONResponse({"viewer": viewer}, headers=NO_STORE)
+        return JSONResponse(started, headers=NO_STORE)
+
+    async def done(request: Request) -> Response:
+        try:
+            conn = await manager.confirm_browser_login(request.path_params["token"])
+        except CookieImportError as e:
+            return JSONResponse({"error": str(e)}, status_code=400, headers=NO_STORE)
+        return JSONResponse({"status": conn.status, "message": conn.message}, headers=NO_STORE)
 
     async def cookies(request: Request) -> Response:
         body = await request.body()
@@ -259,6 +284,7 @@ def routes(manager: ConnectionManager, extension_id: str) -> list[BaseRoute]:
         Route("/connect/{token}", page),
         Route("/connect/{token}/status", status),
         Route("/connect/{token}/browser", browser, methods=["POST"]),
+        Route("/connect/{token}/done", done, methods=["POST"]),
         Route("/connect/{token}/cookies", cookies, methods=["POST"]),
         Route("/neko/{token}", neko_root),
         WebSocketRoute("/neko/{token}/api/ws", neko_ws),
