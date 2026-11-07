@@ -145,13 +145,13 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **H3 EMPTY spikes (asked).** Built now. Only fresh agent-facing `EMPTY` results count; `SUCCESS` resets the
   count; other codes leave it alone. At 5 the count resets and one example with `min_items >= 1` runs in the
   background; if it is `EMPTY` too, a heal is queued (`trigger: empty_spike`).
-- **Cooldown (my addition, not in the spec).** After a heal for an action ends `failed`, `cancelled` or
+- **Cooldown (not in the spec; approved by Nobel).** After a heal for an action ends `failed`, `cancelled` or
   `needs_review`, PAGE_CHANGED for that action returns the finished job's id with the remaining cooldown as
   `retry_after_s` (default 300 s), instead of queueing a heal on every call.
 - **Pre-check.** Runs `session_check` for each provider the broken actions use, then one example of the first
   broken read. `BLOCKED`, `AUTH_EXPIRED`, `RATE_LIMITED` and `AUTH_REQUIRED` cancel the job (nothing degraded).
   If the example now *passes*, the job is also cancelled (the break was input-specific, e.g. an ambiguous SKU);
-  this case is not in the spec.
+  this case is not in the spec (approved by Nobel).
 - **"Pass".** For validation and health checks: every example returns `SUCCESS`/`EMPTY` with at least `min_items`.
 - **Activation.** Changed actions = those whose definition differs from the active card. Actions the remapper
   adds are ignored; actions it drops are kept. Changed reads that pass go in; changed reads that fail keep the old
