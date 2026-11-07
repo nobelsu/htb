@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import secrets
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -24,6 +26,7 @@ import httpx
 import websockets
 
 from runtime.identity import BrowserIdentity, accept_language_header
+from runtime.proxy import ProxySpec, is_local
 
 log = logging.getLogger("runtime.neko")
 
@@ -35,7 +38,7 @@ CHROMIUM_CONF = """[program:chromium]
 environment=HOME="/home/%(ENV_USER)s",USER="%(ENV_USER)s",DISPLAY="%(ENV_DISPLAY)s"
 command=/usr/bin/chromium --no-sandbox --test-type --kiosk --window-position=0,0 --window-size={width},{height} --force-device-scale-factor={scale}
   --display=%(ENV_DISPLAY)s --user-data-dir=/home/neko/.config/chromium --no-first-run --disable-gpu
-  --disable-software-rasterizer --disable-dev-shm-usage --remote-debugging-port=9222 --accept-lang={accept_lang}
+  --disable-software-rasterizer --disable-dev-shm-usage --remote-debugging-port=9222 --accept-lang={accept_lang}{proxy_flags}
   {start_url}
 stopsignal=INT
 autorestart=true
@@ -57,6 +60,53 @@ autorestart=true
 priority=900
 user=%(ENV_USER)s
 """
+
+
+PROXY_PORT = 3128  # the in-container helper Chromium uses as its proxy (adds the residential proxy's credentials)
+PROXY_CONF = """
+[program:proxy_auth]
+command=/usr/bin/python3 /etc/neko/proxy_auth.py {port} /etc/neko/upstream.json
+autorestart=true
+priority=700
+stdout_logfile=/var/log/neko/proxy_auth.log
+redirect_stderr=true
+"""
+
+
+def chromium_conf(
+    cfg: NekoConfig, start_url: str, forwards: list[str], proxy: ProxySpec | None, workdir: Path
+) -> str:
+    """Supervisor config for the login browser. With a residential proxy, Chromium goes through the in-container
+    helper (Chromium can't send proxy credentials); the credentials go only into a private file for the helper,
+    which runs as root, never onto a command line Chromium (or the user) could see."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    flags, extra = "", ""
+    if proxy is not None and proxy.scheme == "http":
+        upstream = {
+            # A proxy on this machine (tests) is reached through Docker's host alias.
+            "host": "host.docker.internal" if is_local(proxy.host) else proxy.host,
+            "port": proxy.port,
+            "username": proxy.username,
+            "password": proxy.password,
+        }
+        fd = os.open(workdir / "upstream.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(upstream, f)
+        flags = f" --proxy-server=http://127.0.0.1:{PROXY_PORT}"
+        if proxy.local:
+            flags += " " + _shell_quote("--proxy-bypass-list=<-loopback>")
+        extra = PROXY_CONF.format(port=PROXY_PORT)
+    elif proxy is not None:
+        log.warning("the login browser supports http:// proxies only; signing in goes direct (%s)", proxy.redacted)
+    return CHROMIUM_CONF.format(
+        width=cfg.width,
+        height=cfg.height,
+        scale=cfg.scale,
+        start_url=_shell_quote(start_url),
+        forwards=" ".join(forwards),
+        accept_lang=_shell_quote(cfg.accept_languages),
+        proxy_flags=flags,
+    ) + extra
 
 
 @dataclass
@@ -170,7 +220,9 @@ class NekoManager:
     def get(self, token: str) -> NekoSession | None:
         return self._sessions.get(token)
 
-    async def launch(self, token: str, start_url: str, site_urls: list[str]) -> NekoSession:
+    async def launch(
+        self, token: str, start_url: str, site_urls: list[str], proxy: ProxySpec | None = None
+    ) -> NekoSession:
         async with self._lock:
             existing = self._sessions.get(token)
             if existing is not None:
@@ -183,12 +235,14 @@ class NekoManager:
                 raise NekoUnavailable("too many logins in progress; try again shortly")
             self._udp_in_use.add(udp)
         try:
-            return await self._launch(token, start_url, site_urls, udp)
+            return await self._launch(token, start_url, site_urls, udp, proxy)
         except BaseException:
             self._udp_in_use.discard(udp)
             raise
 
-    async def _launch(self, token: str, start_url: str, site_urls: list[str], udp: int) -> NekoSession:
+    async def _launch(
+        self, token: str, start_url: str, site_urls: list[str], udp: int, proxy: ProxySpec | None = None
+    ) -> NekoSession:
         cfg = self.config
         workdir = Path(tempfile.mkdtemp(prefix="htb-neko-"))
         # In local development the site may be on the Docker host's loopback; forward it into the container.
@@ -199,16 +253,7 @@ class NekoManager:
                 spec = f"127.0.0.1:{parts.port}=host.docker.internal:{parts.port}"
                 if spec not in forwards:
                     forwards.append(spec)
-        (workdir / "chromium.conf").write_text(
-            CHROMIUM_CONF.format(
-                width=cfg.width,
-                height=cfg.height,
-                scale=cfg.scale,
-                start_url=_shell_quote(start_url),
-                forwards=" ".join(forwards),
-                accept_lang=_shell_quote(cfg.accept_languages),
-            )
-        )
+        (workdir / "chromium.conf").write_text(chromium_conf(cfg, start_url, forwards, proxy, workdir))
         http_port, cdp_port = _free_port(), _free_port()
         password = secrets.token_urlsafe(18)
         env = {
@@ -239,8 +284,13 @@ class NekoManager:
             "-v", f"{workdir}/chromium.conf:/etc/neko/supervisord/chromium.conf:ro",
             "-v", f"{ASSETS}/policies.json:/etc/chromium/policies/managed/policies.json:ro",
             "-v", f"{ASSETS}/forward.py:/etc/neko/forward.py:ro",
-            cfg.image,
         ]
+        if (workdir / "upstream.json").exists():
+            args += [
+                "-v", f"{workdir}/upstream.json:/etc/neko/upstream.json:ro",
+                "-v", f"{ASSETS}/proxy_auth.py:/etc/neko/proxy_auth.py:ro",
+            ]
+        args.append(cfg.image)
         container = await self._docker(*args)
         session = NekoSession(token, container, http_port, cdp_port, udp, password, workdir)
         self._sessions[token] = session
@@ -309,6 +359,7 @@ class NekoManager:
             await self._docker("rm", "-f", session.container, timeout=30)
         except NekoUnavailable as e:
             log.warning("could not remove login browser %s: %s", session.container[:12], e)
+        shutil.rmtree(session.workdir, ignore_errors=True)  # its config, and the proxy credentials if any
         log.info("login browser %s stopped", session.container[:12])
 
     async def close(self) -> None:

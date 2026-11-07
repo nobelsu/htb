@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from runtime.identity import DEFAULT_IDENTITY, BrowserIdentity
+from runtime.proxy import ProxySpec
 from runtime.template import BuiltRequest
 from schema.card import Tier
 
@@ -84,12 +85,17 @@ class TierClient(Protocol):
         seed_cookies: dict[str, str],
         profile: ProfileKey | None = None,
         identity: BrowserIdentity | None = None,
+        proxy: ProxySpec | None = None,
     ) -> Session: ...
 
 
 class HttpSession:
     def __init__(
-        self, base_url: str, seed_cookies: dict[str, str], identity: BrowserIdentity | None = None
+        self,
+        base_url: str,
+        seed_cookies: dict[str, str],
+        identity: BrowserIdentity | None = None,
+        proxy: ProxySpec | None = None,
     ) -> None:
         host = urlsplit(base_url).hostname or ""
         jar = httpx.Cookies()
@@ -98,7 +104,9 @@ class HttpSession:
         # The device identity's headers go on every request; a card's own headers still win per request.
         headers = (identity or DEFAULT_IDENTITY).headers()
         # httpx follows redirects and keeps every hop in response.history; the jar spans all steps.
-        self._client = httpx.AsyncClient(cookies=jar, headers=headers, follow_redirects=True, timeout=None)
+        self._client = httpx.AsyncClient(
+            cookies=jar, headers=headers, follow_redirects=True, timeout=None, proxy=proxy.url if proxy else None
+        )
         self._host = host
 
     @property
@@ -155,8 +163,9 @@ class HttpTier:
         seed_cookies: dict[str, str],
         profile: ProfileKey | None = None,
         identity: BrowserIdentity | None = None,
+        proxy: ProxySpec | None = None,
     ) -> Session:
-        return HttpSession(base_url, seed_cookies, identity)
+        return HttpSession(base_url, seed_cookies, identity, proxy)
 
 
 
@@ -165,7 +174,11 @@ class ImpersonateSession:
     """Looks like real Chrome at the network level (TLS/HTTP2 fingerprint and browser headers) via curl_cffi."""
 
     def __init__(
-        self, base_url: str, seed_cookies: dict[str, str], identity: BrowserIdentity | None = None
+        self,
+        base_url: str,
+        seed_cookies: dict[str, str],
+        identity: BrowserIdentity | None = None,
+        proxy: ProxySpec | None = None,
     ) -> None:
         from curl_cffi.requests import AsyncSession
 
@@ -173,7 +186,9 @@ class ImpersonateSession:
         self._host = urlsplit(base_url).hostname or ""
         # The closest real Chrome fingerprint (TLS, HTTP/2, header order), with the identity's own header values.
         self.target = identity.impersonate_target()
-        self._client: AsyncSession[Any] = AsyncSession(impersonate=self.target, headers=identity.headers())
+        self._client: AsyncSession[Any] = AsyncSession(
+            impersonate=self.target, headers=identity.headers(), proxy=proxy.url if proxy else None
+        )
         for name, value in seed_cookies.items():
             self._client.cookies.set(name, value, domain=self._host)
 
@@ -239,8 +254,9 @@ class ImpersonateTier:
         seed_cookies: dict[str, str],
         profile: ProfileKey | None = None,
         identity: BrowserIdentity | None = None,
+        proxy: ProxySpec | None = None,
     ) -> Session:
-        return ImpersonateSession(base_url, seed_cookies, identity)
+        return ImpersonateSession(base_url, seed_cookies, identity, proxy)
 
 
 LADDER: tuple[Tier, ...] = ("http", "impersonate", "browser")

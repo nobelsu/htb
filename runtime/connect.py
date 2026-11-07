@@ -271,7 +271,8 @@ class ConnectionManager:
         if self.neko is None:
             raise ConnectError("signing in is not available on this server right now")
         try:
-            session = await self.neko.launch(conn.token, conn.login_url, [conn.base_url])
+            proxy = self.executor.proxy_for(conn.user, conn.domain, conn.provider, conn.base_url)
+            session = await self.neko.launch(conn.token, conn.login_url, [conn.base_url], proxy)
         except NekoUnavailable as e:
             log.warning("login browser unavailable: %s", e)
             raise ConnectError(f"the login browser could not start ({e})") from None

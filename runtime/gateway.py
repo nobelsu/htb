@@ -31,6 +31,7 @@ from runtime.connect import ConnectionManager
 from runtime.connect_page import routes as connect_routes
 from runtime.signup_page import routes as signup_routes
 from runtime.neko.manager import NekoConfig, NekoManager
+from runtime.proxy import ProxyConfig
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
 from runtime.keys import ENV_KEY_USER, KeyStore
@@ -615,10 +616,15 @@ def main() -> None:
     tiers = default_tiers()
     tiers["browser"] = BrowserTier(pool)
     sessions = ChainedSessionStore(session_store, DevEnvSessionStore(os.environ.get("DEV_SESSION_COOKIES")))
+    proxies = ProxyConfig(os.environ["PROXY_URL"]) if os.environ.get("PROXY_URL") else None
+    log.info("residential proxy: %s", proxies.redacted if proxies else "off (set PROXY_URL to turn it on)")
+    if proxies is not None and not proxies.sticky:
+        log.warning("PROXY_URL has no {session}: each request may get a different IP")
     executor = Executor(
         sessions,
         Confirmer(os.environ.get("CONFIRMATION_SECRET", "")),
         tiers=tiers,
+        proxies=proxies,
     )
     public_url = os.environ.get("PUBLIC_BASE_URL", f"http://{args.host}:{args.port}")
     neko = None
