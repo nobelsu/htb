@@ -27,11 +27,12 @@ from mcp.server.models import InitializationOptions
 from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, ToolsListChanged
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
-from runtime.browser.connect import ConnectionManager
 from runtime.browser.pool import BrowserConfig, BrowserPool
-from runtime.browser.stream import routes as stream_routes
 from runtime.browser.tier import BrowserTier
 from runtime.confirm import Confirmer
+from runtime.connect import ConnectionManager
+from runtime.connect_page import routes as connect_routes
+from runtime.extension import manifest_extension_id
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
 from runtime.registry import Registry
@@ -88,8 +89,9 @@ CONNECTION_TOOLS = {
     for t in (
         _domain_tool(
             "start_connection",
-            "Start logging the user in to a site (after an AUTH_REQUIRED or AUTH_EXPIRED result). Returns a link: "
-            "give it to the user, who logs in there themselves. Then call poll_connection.",
+            "Connect the user's account on a site (after an AUTH_REQUIRED or AUTH_EXPIRED result). Returns a link: "
+            "give it to the user, who logs in to the site in their own browser and clicks Connect on that page. "
+            "Then call poll_connection.",
             {"provider": {"type": "string", "description": "optional connect provider id, if the site has several"}},
         ),
         _domain_tool(
@@ -128,6 +130,7 @@ class Gateway:
         connections: ConnectionManager | None = None,
         pool: BrowserPool | None = None,
         keepalive_s: float = 0.0,
+        extension_id: str | None = None,
     ) -> None:
         self.registry = registry
         self.executor = executor
@@ -135,6 +138,7 @@ class Gateway:
         self.connections = connections
         self.pool = pool
         self.keepalive_s = keepalive_s
+        self.extension_id = extension_id or manifest_extension_id()
         self.poll_interval_s = poll_interval_s
         self.bus = InMemorySubscriptionBus()  # 2026-07-28 clients: subscriptions/listen
         self._legacy_connections: weakref.WeakSet[Connection] = weakref.WeakSet()  # handshake-era clients
@@ -259,7 +263,7 @@ class Gateway:
             return _error_result("domain (string) is required")
         if name == "start_connection":
             provider = args.get("provider")
-            out = await self.connections.start(DEFAULT_USER, domain, provider if isinstance(provider, str) else None)
+            out = self.connections.start(DEFAULT_USER, domain, provider if isinstance(provider, str) else None)
         elif name == "poll_connection":
             out = self.connections.poll(DEFAULT_USER, domain)
         else:
@@ -283,8 +287,6 @@ class Gateway:
                 yield {}
             finally:
                 tg.cancel_scope.cancel()
-                if self.connections is not None:
-                    await self.connections.close()
                 if self.pool is not None:
                     await self.pool.close()
 
@@ -299,7 +301,7 @@ class Gateway:
     # ---- HTTP --------------------------------------------------------------
 
     def asgi_app(self, api_key: str, host: str = "127.0.0.1") -> ASGIApp:
-        extra = stream_routes(self.connections) if self.connections is not None else []
+        extra = connect_routes(self.connections, self.extension_id) if self.connections is not None else []
         inner = self.server.streamable_http_app(host=host, custom_starlette_routes=extra)  # type: ignore[arg-type]
         return BearerAuth(inner, api_key, exempt_prefixes=("/connect/",))
 
@@ -403,7 +405,7 @@ def main() -> None:
     )
     public_url = os.environ.get("PUBLIC_BASE_URL", f"http://{args.host}:{args.port}")
     connections = ConnectionManager(
-        registry, pool, session_store, executor, public_url,
+        registry, session_store, executor, public_url, pool=pool,
         timeout_s=float(os.environ.get("CONNECT_TIMEOUT_S", "600")),
     )
     config = HealConfig(

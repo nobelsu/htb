@@ -38,12 +38,17 @@ watch `heal_status`, call again.
 
 ## Login (connect a site) and the browser tier
 
-Sites with `connect_providers` need the user to log in once. The agent calls `start_connection(domain)` and
-gets a link; the user opens it and sees the site's real login page, streamed from a browser on the server, and
-logs in themselves. The password never reaches us or the agent. When the provider's `session_check` passes, the
-profile's cookies are stored encrypted (`SESSION_KEY`) for the http/impersonate tiers, and the browser profile
-(under `PROFILES_DIR`) stays warm for the browser tier. `poll_connection` / `connection_status` report progress.
+Sites with `connect_providers` need the user's login once. The agent calls `start_connection(domain)` and gets a
+link. The user logs in to the site in their own browser as usual, opens the link and clicks **Connect**. The
+**HTB Connect** extension (`extension/`) asks Chrome for access to that one site and sends its login cookies to the
+gateway, which checks them with the provider's `session_check` and stores them encrypted (`SESSION_KEY`). The
+password never reaches us or the agent. `poll_connection` / `connection_status` report progress; a keep-alive
+marks sessions that have expired.
 
-Hosting notes: install Chrome on the server (`uv run playwright install --with-deps chrome`), keep
-`PROFILES_DIR` and the SQLite file on persistent storage, serve over HTTPS and set `PUBLIC_BASE_URL` to that
-https URL. Fixture shop login for testing: `demo` / `demo-password`.
+Install the extension (until it's on the Chrome Web Store): `chrome://extensions` → Developer mode → Load unpacked →
+the `extension` folder. For a hosted gateway, first run `uv run python -m runtime.extension --origin https://your.gateway`.
+
+Hosting notes: install Chrome on the server for the browser tier (`uv run playwright install --with-deps chrome`),
+keep `PROFILES_DIR` and the SQLite file on persistent storage, serve over HTTPS and set `PUBLIC_BASE_URL`.
+Fixture shop login for testing: `demo` / `demo-password`. The end-to-end login tests need Playwright's Chromium
+(`uv run playwright install chromium`), since branded Chrome no longer loads unpacked extensions under automation.

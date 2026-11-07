@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Connect a site</title>
+  <link rel="stylesheet" href="approve.css">
+</head>
+<body>
+  <main>
+    <h1>Connect <span id="domain">this site</span>?</h1>
+    <p>Your agent wants to use your <strong id="domain2"></strong> login.</p>
+    <ul>
+      <li>We send your <strong>login cookies for <span id="hosts"></span></strong> to <strong id="gateway"></strong>, where they are stored encrypted.</li>
+      <li>Your password is never read or shared.</li>
+      <li>Make sure you're logged in to the site in this browser first.</li>
+    </ul>
+    <div class="buttons">
+      <button id="allow" type="button">Allow and connect</button>
+      <button id="cancel" type="button" class="secondary">Cancel</button>
+    </div>
+    <p id="result" role="status"></p>
+  </main>
+  <script src="approve.js"></script>
+</body>
+</html>

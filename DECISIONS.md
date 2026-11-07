@@ -190,31 +190,36 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   starts from the card's tier.
 
 ## Login flow and browser tier
-- **L1 Login view (asked).** A streamed page, because the gateway is hosted: `start_connection` returns
-  `{PUBLIC_BASE_URL}/connect/{token}`. The page shows Chrome DevTools screencast frames and sends clicks,
-  scrolling, typing, special keys and paste back. The user types their own password into the real site.
-- **L2 Browser (asked).** Real Google Chrome (`BROWSER_CHANNEL=chrome`), headless. Headless Chrome's
-  "HeadlessChrome" User-Agent is replaced with the plain "Chrome" one (read once per process).
-- **L3 Warm (asked).** One persistent Chrome profile per (user, site, provider) under `PROFILES_DIR`, kept
-  running while used and closed after `BROWSER_IDLE_S` idle (the profile stays on disk). Keep-alive runs every
-  connected session's `session_check` every `KEEPALIVE_INTERVAL_S` and marks `401`/logged-out ones `expired`;
-  blocks, rate limits and errors are not treated as a verdict on the login.
-- **L4 Cookie copy (asked).** After login, the profile's cookies for the site's `base_url` are stored
-  Fernet-encrypted with `SESSION_KEY` in the `sessions` table; a wrong key reads as "not connected". The encrypted
-  store is consulted first, then `DEV_SESSION_COOKIES`.
-- **L5 Browser tier (asked).** Each step runs as `fetch()` in a tab on the request's origin (credentials included),
-  so it goes out as real Chrome. Headers the browser owns (cookie, user-agent, origin, referer, host...) are
-  dropped from card headers. Only the final URL of a redirect is visible, so `redirect:` signals see the final
-  path only. Cross-origin APIs are fetched from a tab on their own origin.
-- **Login detection.** The watcher runs `session_check` on the browser tier in the user's profile every 2 s
-  until it passes or the link expires (`CONNECT_TIMEOUT_S`, default 10 min). One pending login per
-  (user, site); calling `start_connection` again returns the same link.
-- **Link security.** The `/connect/` routes skip the Bearer check: the unguessable, expiring token in the link is
-  their only credential, so whoever holds the link can drive that login browser until it connects or expires.
-  Every other HTTP and websocket path still needs the Bearer key.
-- **Browser tier profiles for no-login actions** use the site's anonymous profile per user (`_anon`).
-- **Escalation into the browser tier** adds the lower tier's cookies to the profile, if not already there
-  (the spec: cookies in the browser tier persist in the profile).
-- **Not handled yet:** login pages that open a pop-up window (e.g. some OAuth flows) — only the first tab is
-  streamed; mobile soft keyboards (the page listens for desktop key events); per-user API keys (everything is
-  user `default`).
+- **L1 How the user logs in (asked; changed).** Extension capture, replacing the first version's streamed
+  browser (blurry, laggy, no password managers). The user logs in to the site in their own browser, opens the
+  `start_connection` link and clicks Connect; the **HTB Connect** extension (`/extension`, Manifest V3) asks
+  Chrome for access to that one site, reads its cookies (`chrome.cookies.getAll({url: base_url})`, which
+  includes httpOnly ones) and posts them to `/connect/{token}/cookies`. Password managers, 2FA and passkeys work.
+- **Verification before storing.** The gateway runs the provider's `session_check` with the posted cookies (card's
+  default tier). Only if it passes are they stored; otherwise the link stays pending and the user can log in and
+  retry. Links are single-use and expire (`CONNECT_TIMEOUT_S`, default 10 min). One pending link per (user, site).
+- **Extension security.** Only gateway origins listed in the manifest (`externally_connectable`) can message the
+  extension; it trusts the browser-reported sender origin, never the message body, for where cookies go. It
+  shows the destination host on its approval page. Site access is an *optional* permission requested at connect
+  time for just that site (`scheme://host/*`, plus `scheme://*.domain/*` when the site's host is a subdomain of the
+  card's domain), via a user click, so the install prompt asks for no site access.
+- **Pinned extension ID.** The manifest has a public `key`, so the ID is fixed and the connect page knows whom to
+  message (`runtime/extension.py`). No private key is in the repo (not needed to load unpacked). Hosted gateway
+  origins are added with `uv run python -m runtime.extension --origin https://...`.
+- **Only name/value are stored.** Cookie domain/path are dropped (as before); the browser tier seeds the user's
+  server-side profile with them for the site's `base_url`.
+- **L2 Browser (asked).** The server-side browser tier uses real Google Chrome (`BROWSER_CHANNEL=chrome`),
+  headless, with the plain "Chrome" User-Agent (headless Chrome otherwise says "HeadlessChrome").
+- **L3 Warm (asked).** One persistent Chrome profile per (user, site, provider) under `PROFILES_DIR`, kept running
+  while used and closed after `BROWSER_IDLE_S` idle. Keep-alive runs every connected session's `session_check`
+  every `KEEPALIVE_INTERVAL_S` and marks logged-out ones `expired`; blocks, rate limits and errors are not a verdict.
+- **L4 Cookie storage (asked).** Fernet-encrypted with `SESSION_KEY` in the `sessions` table; a wrong key reads as
+  "not connected". The encrypted store is consulted first, then `DEV_SESSION_COOKIES`.
+- **L5 Browser tier (asked).** Each step runs as `fetch()` in a tab on the request's origin, so it goes out as real
+  Chrome. Browser-owned headers (cookie, user-agent, origin, referer, host...) are dropped. Only a redirect's final
+  URL is visible, so `redirect:` signals see the final path only.
+- **Link security.** `/connect/` routes skip the Bearer check; the unguessable, expiring, single-use token is their
+  credential. Every other HTTP and websocket path needs the Bearer key.
+- **Not handled yet:** sites that bind sessions to the device/IP may reject the imported cookies (they fail the
+  session check, so the user sees a clear error); Chrome Web Store publishing (load unpacked for now); browsers
+  other than Chromium-based ones; per-user API keys (everything is user `default`).
