@@ -24,6 +24,9 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["mapper*"]
 
+[tool.setuptools.package-data]
+"mapper.capture" = ["*.js"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests/mapper"]

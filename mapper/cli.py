@@ -11,8 +11,8 @@ import sys
 from collections.abc import Sequence
 
 from mapper import __version__
+from mapper.bundle import RUNS
 
-RUNS = ("m1", "m2", "real", "page2")
 KINDS = ("read", "write")
 
 
@@ -61,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     cap.add_argument("--out", default="captures", help="captures root directory (default: captures)")
     cap.add_argument("--headless", action="store_true", help="run headless with a scripted driver")
     cap.add_argument("--script", help="driver script (JSONL of UI steps) for --headless runs")
+    cap.add_argument("--force", action="store_true", help="overwrite an existing bundle for this run")
     cap.set_defaults(handler=_cmd_capture)
 
     mp = sub.add_parser("map", help="turn a domain's capture bundles into a card + mapping report")

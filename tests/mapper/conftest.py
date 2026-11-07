@@ -63,3 +63,17 @@ class Client:
 @pytest.fixture
 def client(site):
     return Client(site.url)
+
+
+@pytest.fixture(scope="session")
+def chromium():
+    """Skip browser tests when Playwright's Chromium isn't installed (`playwright install chromium`)."""
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            browser.close()
+    except Exception as e:  # pragma: no cover - depends on the machine
+        pytest.skip(f"Playwright Chromium unavailable: {e}")
+    return True

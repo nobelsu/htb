@@ -77,6 +77,9 @@ captures/<domain>/<task>/<run>/
 {"t": "2026-11-07T15:01:53.400Z", "type": "navigate", "url": "..."}
 ```
 `actions.jsonl` doubles as a replayable script for healing: re-run the same UI steps with new markers.
+Event types: `input` (final value of a field), `click`, `key` (Enter only, so form submits replay), and
+`navigate` (main frame). Password and other secret-looking fields are always logged as `"[redacted]"`.
+`traffic.har` and `state.json` are written with mode `0600`.
 
 ## Pipeline
 
@@ -139,7 +142,8 @@ demo material ("here is what we found hidden in the site").
 
 ```
 python -m mapper capture <start_url> --task NAME --run m1|m2|real|page2 \
-    [--marker query=zqxv8841] [--input query=palantir] [--kind read|write] [--state path/to/state.json]
+    [--marker query=zqxv8841] [--input query=palantir] [--kind read|write] [--state path/to/state.json] \
+    [--headless --script steps.jsonl] [--out captures] [--force]
 python -m mapper map captures/<domain>/            # all tasks → card + report
 python -m mapper map captures/<domain>/ --task NAME # one action (used by healing)
 python -m mapper validate path/to/card.json
