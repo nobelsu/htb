@@ -402,3 +402,24 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
 - **Not handled yet:** per-user quotas (L9); the mapper's own browser doesn't use the residential proxy (L10).
+
+## Mapper v2 (`flowmap/`)
+A second mapper with no explorer: a person records each action once as a flow, the mapper replays it with planted
+markers and infers the card deterministically, and the LLM only names things. Wei Wei's `mapper/` is untouched.
+- **M1 Where (default).** A new package `flowmap/` (tests in `tests/flowmap/`, CLI `python -m flowmap
+  record|map|heal|show`) on branch `mapper-v2`. The brief's `mapper/flows.py`, `mapper/capture.py` and
+  `mapper/cli.py` would clash with Wei Wei's package (`mapper/capture/` is a package, his CLI already has `map` and
+  `heal`, and `runtime/mapper_remapper.py` imports his code).
+- **M2 Healed writes (asked: follow the spec).** The brief said healed writes go to `heal_candidates`; CARD_SPEC
+  Healing (H4) says they go live as a new version, with `requires_confirmation` still true so every run asks.
+  The spec wins: no `heal_candidates`.
+- **M3 Wei Wei's helpers (asked: copy them in).** The few pure helpers worth reusing (marker encodings, request
+  filters, dependency tracing, pagination, secret checks) are copied into `flowmap/` with a comment naming the
+  original, so flowmap doesn't break when his code changes.
+- **M4 Heal events (asked: a new table).** `heal_events` in the runtime database: `remap_start` / `remap_done` (and
+  failures) per heal job, with timings, for the benchmark.
+- **M5 Test sites (asked).** Mapping is aimed at real websites (as Wei Wei does), asking before any run of a write
+  flow on a real site. Healing is tested on a website we build ourselves, with switchable breaks (endpoint, field,
+  structure and param renamed).
+- **M6 Heal plugs into the runtime (default).** `flowmap/heal.py` implements the existing `Remapper` protocol
+  (`REMAPPER=flowmap`); HealManager keeps the pre-check, validation, activation and `degraded` marking.
