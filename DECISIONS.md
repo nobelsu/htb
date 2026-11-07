@@ -211,6 +211,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **Local development.** If the site is on the Docker host's loopback (the fixture shop), the forwarder maps the
   container's `127.0.0.1:<port>` to `host.docker.internal:<port>`.
 - **Typing.** Click into a field before typing: Neko's client keeps the Tab key for its own page.
+- **No URL-level request logs.** The gateway runs uvicorn without its access log and keeps httpx at WARNING: those
+  lines would record login tokens, the login browser's per-container password and users' query parameters.
 - **Verification before storing.** The gateway runs the provider's `session_check` with the posted cookies (card's
   default tier). Only if it passes are they stored; otherwise the link stays pending and the user can log in and
   retry. Links are single-use and expire (`CONNECT_TIMEOUT_S`, default 10 min). One pending link per (user, site).

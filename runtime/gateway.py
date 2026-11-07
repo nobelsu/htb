@@ -393,6 +393,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(os.environ.get("GATEWAY_PORT", "8765")))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # URL-level request logs would record login tokens (/connect/<token>), the login browser's password and users'
+    # query parameters, so they stay off; the runtime logs its own redacted events.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     db_path = os.environ.get("REGISTRY_DB", "./runtime.db")
     registry = Registry(db_path)
@@ -444,7 +447,7 @@ def main() -> None:
         keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")),
     )
     app = gateway.asgi_app(os.environ.get("GATEWAY_API_KEY", ""), host=args.host)
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(app, host=args.host, port=args.port, access_log=False)
 
 
 if __name__ == "__main__":
