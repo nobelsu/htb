@@ -15,8 +15,9 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   4xx probe) don't fire for it. Signal rules (`logged_out_signals`, `blocked_signals`) still apply.
 - **D6 Probe outcome (asked).** Probe fails with the same 4xx → `PAGE_CHANGED`. Anything else (success, EMPTY,
   5xx, a different 4xx, BLOCKED...) → `ERROR`, with the probe's result in the message. No heal on unclear evidence.
-- **D7 Tiers (asked).** Only `http` exists. Cards whose effective tier is `impersonate`/`browser` run on `http`;
-  `meta.tier` reports `"http"`. Ladder escalation is a TODO, so `BLOCKED` is returned directly.
+- **D7 Tiers (asked; updated with the impersonate tier).** `http` and `impersonate` exist. A tier that isn't built
+  yet falls back to the nearest lower one, so `browser` cards start on `impersonate` until the browser worker
+  exists. `meta.tier` reports the tier that produced the result.
 - **D8 Sessions (asked).** A `SessionStore` interface keyed by (user, domain, provider id). Tests use an in-memory
   store; for local dev, cookies can be loaded from `.env` (`DEV_SESSION_COOKIES`,
   `{"<domain>": {"<provider_id>": {"<cookie>": "<value>"}}}`). The remote-login flow will fill the store later.
@@ -171,3 +172,19 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   the job is open.
 - `Executor.run_internal` runs examples for the runtime (no probe, no heal, no EMPTY counting, confirmation
   bypassed), so it must only be used for read actions.
+
+## Impersonate tier and ladder
+- **Impersonate** uses `curl_cffi` with its current `chrome` target (Chrome TLS/HTTP2 fingerprint and default
+  headers). URLs are sent exactly as our encoder built them (`quote=False`). Plain `http://` URLs use HTTP/1.1,
+  because Chrome never sends an h2c upgrade. Card headers are sent on top of Chrome's defaults.
+- **Escalation** happens per step, on `BLOCKED` only: the blocked step is retried on the next available tier, with the
+  same cookie jar (copied by name/value onto the new tier's session for the base host), and later steps stay on
+  the higher tier. Extracted values from earlier steps are kept.
+- **Writes.** Reads and idempotent actions always escalate. Non-idempotent actions escalate when blocked on a step
+  before the write step, or when the blocked response was not a 2xx. A 2xx challenge on or after the write step
+  returns `BLOCKED` with "not re-sent" in the message.
+- At the top available tier, `BLOCKED` is returned with the tiers tried. Each tier counts as a request (for
+  rate limiting, once built). Heal pre-checks, health checks and probes use the same ladder.
+- `session_check` (heal pre-check) starts on the card's default tier but does not escalate.
+- Not recorded yet: which tier worked, in `action_state` (the spec puts that learning there). The executor always
+  starts from the card's tier.

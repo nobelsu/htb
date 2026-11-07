@@ -27,8 +27,16 @@ from runtime.template import (
     build_request,
     merge_headers,
 )
-from runtime.tiers import HttpResponse, HttpTier, Session, TierClient, TransportError, TransportTimeout
-from schema.card import Action, Card, Expect, Request, Step
+from runtime.tiers import (
+    LADDER,
+    HttpResponse,
+    Session,
+    TierClient,
+    TransportError,
+    TransportTimeout,
+    default_tiers,
+)
+from schema.card import Action, Card, Expect, Request, Step, Tier
 from schema.envelope import Envelope, ErrorInfo, Heal, Meta, ResultCode
 from schema.params import CONFIRMATION_ARG, coerce_params, confirmation_summary, format_field_errors
 from schema.placeholders import parse_step_ref
@@ -91,6 +99,7 @@ class _Run:
     deadline: float
     primary: bool  # an agent-facing run (False for probes, health checks and heal validation)
     auth: str | None
+    tier: list[Tier]  # one-element holder for the current tier, shared with the envelope builder
     steps: dict[tuple[str, str], list[Any]] = field(default_factory=dict)
 
     def context(self) -> Context:
@@ -117,7 +126,7 @@ class Executor:
     ) -> None:
         self.sessions = sessions
         self.confirmer = confirmer
-        self.tiers: dict[str, TierClient] = tiers or {"http": HttpTier()}
+        self.tiers: dict[str, TierClient] = tiers or default_tiers()
         self.healing: HealingHooks = healing or NoHealing()
         self.action_cap_s = action_cap_s
 
@@ -153,7 +162,7 @@ class Executor:
         if cookies is None:
             return R.AUTH_REQUIRED
         check = provider.session_check
-        session = self.tiers["http"].open(card.base_url, cookies)
+        session = self.tiers[self.start_tier(card.defaults.tier)].open(card.base_url, cookies)
         try:
             ctx = Context(card.base_url, {}, session.cookies, {})
             try:
@@ -195,14 +204,14 @@ class Executor:
     ) -> tuple[Envelope, int | None]:
         started = time.monotonic()
         run_id = "r_" + secrets.token_hex(6)
-        # D7: only the http tier exists; impersonate/browser cards run on http for now.
-        tier = self.tiers["http"]
+        # The ladder step to try first; a tier that isn't built yet falls back to the nearest lower one.
+        tier_used: list[Tier] = [self.start_tier(action.effective_tier(card.defaults))]
         secrets_seen: list[str] = []
 
         def envelope(code: ResultCode, data: list[Any] | None = None, **kw: Any) -> Envelope:
             ms = int((time.monotonic() - started) * 1000)
             degraded = self.healing.is_degraded(card.domain, action.name)
-            meta = Meta(ms=ms, tier=tier.name, degraded=degraded, map_version=version, run_id=run_id)
+            meta = Meta(ms=ms, tier=tier_used[0], degraded=degraded, map_version=version, run_id=run_id)
             env = Envelope(status=code, data=data, meta=meta, **kw)
             if primary:
                 self.healing.record_result(card.domain, action.name, code, user)
@@ -256,7 +265,7 @@ class Executor:
             conf = self.confirmer.issue(user, card.domain, action.name, params, summary)
             return envelope(R.NEEDS_CONFIRMATION, confirmation=conf), None
 
-        session = tier.open(card.base_url, cookies)
+        session = self.tiers[tier_used[0]].open(card.base_url, cookies)
         run = _Run(
             card=card,
             action=action,
@@ -267,6 +276,7 @@ class Executor:
             deadline=deadline if deadline is not None else started + self.action_cap_s,
             primary=primary,
             auth=auth,
+            tier=tier_used,
         )
         try:
             try:
@@ -288,7 +298,40 @@ class Executor:
                     return failed(Stop(R.VERIFY_FAILED, verdict, step="verify"), data), None
             return envelope(code, data, next_params=next_params), None
         finally:
-            await session.aclose()
+            await run.session.aclose()
+
+    # ---- tiers -------------------------------------------------------------
+
+    def start_tier(self, requested: Tier) -> Tier:
+        """`requested` if available, else the nearest lower available tier."""
+        for tier in reversed(LADDER[: LADDER.index(requested) + 1]):
+            if tier in self.tiers:
+                return tier
+        raise RuntimeError("no transport tiers configured")
+
+    def _next_tier(self, current: Tier) -> Tier | None:
+        for tier in LADDER[LADDER.index(current) + 1 :]:
+            if tier in self.tiers:
+                return tier
+        return None
+
+    @staticmethod
+    def _may_escalate(action: Action, step_index: int, write_idx: int | None, stop: Stop) -> bool:
+        """CARD_SPEC.md "Escalating on BLOCKED"."""
+        if action.kind == "read" or action.idempotent:
+            return True
+        if write_idx is None or step_index < write_idx:
+            return True  # blocked before the write step: nothing was written yet
+        # Blocked without a 2xx: the write never reached the site, so re-sending is safe.
+        return stop.http_status is None or not 200 <= stop.http_status < 300
+
+    async def _escalate(self, run: _Run, to: Tier) -> None:
+        """Switch tiers, carrying the execution's cookie jar. Later steps stay on the higher tier."""
+        cookies = run.session.cookies
+        await run.session.aclose()
+        run.session = self.tiers[to].open(run.card.base_url, cookies)
+        log.info("%s.%s escalating %s -> %s", run.card.domain, run.action.name, run.tier[0], to)
+        run.tier[0] = to
 
     # ---- steps -------------------------------------------------------------
 
@@ -302,8 +345,23 @@ class Executor:
                 and i >= write_idx
                 and step.request.method.upper() not in ("GET", "HEAD")
             )
-            built = self._build(run, step.request, step.id)
-            resp = await self._send(run, step, built, is_write)
+            tried: list[Tier] = [run.tier[0]]
+            while True:
+                built = self._build(run, step.request, step.id)
+                try:
+                    resp = await self._send(run, step, built, is_write)
+                    break
+                except Stop as stop:
+                    if stop.code != R.BLOCKED:
+                        raise
+                    nxt = self._next_tier(run.tier[0])
+                    if nxt is None or not self._may_escalate(action, i, write_idx, stop):
+                        stop.message += f" (tiers tried: {', '.join(tried)})"
+                        if nxt is not None:
+                            stop.message += "; not re-sent because the write may have reached the site"
+                        raise
+                    await self._escalate(run, nxt)
+                    tried.append(nxt)
             view = ResponseView(resp.text, resp.headers, run.session.cookies)
             for key, ex in step.extract.items():
                 try:
@@ -379,8 +437,7 @@ class Executor:
             raise Stop(R.AUTH_EXPIRED, why, step=step_id, hint=self._reconnect(run))
         blocked = match_signal(card.blocked_signals, resp)
         if blocked:
-            # TODO(ladder): escalate tiers instead of returning BLOCKED straight away.
-            raise Stop(R.BLOCKED, f"{where} looks bot-blocked (matched {blocked})", step=step_id)
+            raise Stop(R.BLOCKED, f"{where} looks bot-blocked (matched {blocked})", step=step_id, http_status=status)
         if not listed and status >= 500:
             return True
         if not listed and 400 <= status < 500:

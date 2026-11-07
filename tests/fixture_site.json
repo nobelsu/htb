@@ -963,6 +963,388 @@
         }
       },
       "examples": []
+    },
+    {
+      "name": "guarded_search",
+      "description": "Search on a bot-guarded endpoint (plain HTTP gets a 403 challenge).",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "search text",
+          "example": "lamp"
+        }
+      },
+      "steps": [
+        {
+          "id": "search",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/guarded/products",
+            "query": {
+              "q": "{{params.query}}"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.results"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.results[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.search.items",
+        "fields": {
+          "name": "$.name",
+          "sku": "$.sku"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "query": "lamp"
+          },
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "guarded_flow",
+      "description": "Two-step flow whose second step is bot-guarded (200 challenge page); the cookie from step 1 must survive the tier switch.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {},
+      "steps": [
+        {
+          "id": "start",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/flow/start",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.step"
+            ]
+          },
+          "extract": {
+            "token": {
+              "from": "cookies",
+              "type": "jsonpath",
+              "expr": "$.flow"
+            }
+          }
+        },
+        {
+          "id": "finish",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/guarded/flow-finish",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.result"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.result[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.finish.items",
+        "fields": {
+          "order_id": "$.order_id",
+          "status": "$.status"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "browser_tier_search",
+      "description": "search_products, but the card asks for the browser tier first.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "search text",
+          "example": "lamp"
+        }
+      },
+      "steps": [
+        {
+          "id": "search",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/products",
+            "query": {
+              "q": "{{params.query}}"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.results"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.results[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.search.items",
+        "fields": {
+          "name": "$.name",
+          "sku": "$.sku"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "query": "lamp"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "browser"
+    },
+    {
+      "name": "guarded_add",
+      "description": "Add to cart on a bot-guarded endpoint that answers plain HTTP with a 403 (nothing written).",
+      "kind": "write",
+      "spends": false,
+      "idempotent": false,
+      "requires_confirmation": true,
+      "params": {
+        "sku": {
+          "type": "string",
+          "required": true,
+          "description": "product SKU",
+          "example": "SKU-001"
+        }
+      },
+      "steps": [
+        {
+          "id": "add",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/guarded/cart",
+            "query": {},
+            "headers": {
+              "content-type": "application/json"
+            },
+            "body": {
+              "sku": "{{params.sku}}"
+            }
+          },
+          "expect": {
+            "status": [
+              200,
+              201
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {}
+        }
+      ],
+      "output": {
+        "from": null,
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": []
+    },
+    {
+      "name": "guarded_add_soft",
+      "description": "Add to cart on an endpoint that applies the write, then shows plain HTTP a 200 challenge page.",
+      "kind": "write",
+      "spends": false,
+      "idempotent": false,
+      "requires_confirmation": true,
+      "params": {
+        "sku": {
+          "type": "string",
+          "required": true,
+          "description": "product SKU",
+          "example": "SKU-001"
+        }
+      },
+      "steps": [
+        {
+          "id": "add",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/guarded/cart-soft",
+            "query": {},
+            "headers": {
+              "content-type": "application/json"
+            },
+            "body": {
+              "sku": "{{params.sku}}"
+            }
+          },
+          "expect": {
+            "status": [
+              200,
+              201
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {}
+        }
+      ],
+      "output": {
+        "from": null,
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": []
+    },
+    {
+      "name": "guarded_token_add",
+      "description": "Fetch a bot-guarded token (blocked on plain HTTP), then add to cart.",
+      "kind": "write",
+      "spends": false,
+      "idempotent": false,
+      "requires_confirmation": true,
+      "params": {
+        "sku": {
+          "type": "string",
+          "required": true,
+          "description": "product SKU",
+          "example": "SKU-001"
+        }
+      },
+      "steps": [
+        {
+          "id": "token",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/guarded/token",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.token"
+            ]
+          },
+          "extract": {
+            "token": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.token"
+            }
+          }
+        },
+        {
+          "id": "add",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/cart",
+            "query": {},
+            "headers": {
+              "content-type": "application/json"
+            },
+            "body": {
+              "sku": "{{params.sku}}",
+              "qty": 1
+            }
+          },
+          "expect": {
+            "status": [
+              200,
+              201
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {}
+        }
+      ],
+      "output": {
+        "from": null,
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": []
     }
   ]
 }
