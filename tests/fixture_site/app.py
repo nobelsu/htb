@@ -10,6 +10,7 @@ import asyncio
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import parse_qs
 
 from fastapi import Cookie, FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -146,9 +147,50 @@ def orders(request: Request, sid: str | None = Cookie(default=None)) -> Response
     return JSONResponse({"orders": [{"id": "o1", "total": 30}, {"id": "o2", "total": 12}]})
 
 
+LOGIN_USER, LOGIN_PASSWORD = "demo", "demo-password"
+
+LOGIN_FORM = """<!doctype html><html><head><title>Shop login</title>
+<style>body{font:16px system-ui;margin:40px} input{display:block;margin:8px 0 16px;padding:8px;width:260px;font-size:16px}
+button{padding:8px 16px;font-size:16px}</style></head><body>
+<h1>Log in to the shop</h1>__ERROR__
+<form method="post" action="/login">
+<label>Username<input id="username" name="username" autocomplete="username"></label>
+<label>Password<input id="password" name="password" type="password" autocomplete="current-password"></label>
+<button id="submit" type="submit">Log in</button></form></body></html>"""
+
+
 @app.get("/login")
 def login_page() -> HTMLResponse:
-    return HTMLResponse("<html><body><form>login</form></body></html>")
+    return HTMLResponse(LOGIN_FORM.replace("__ERROR__", ""))
+
+
+@app.post("/login")
+async def login_submit(request: Request) -> Response:
+    form = parse_qs((await request.body()).decode())
+    user, password = form.get("username", [""])[0], form.get("password", [""])[0]
+    if (user, password) != (LOGIN_USER, LOGIN_PASSWORD):
+        return HTMLResponse(LOGIN_FORM.replace("__ERROR__", "<p id='error'>Wrong username or password.</p>"), 401)
+    resp = RedirectResponse("/account", status_code=303)
+    resp.set_cookie("sid", VALID_SID, httponly=True)
+    resp.set_cookie("csrftoken", CSRF)
+    return resp
+
+
+@app.get("/account")
+def account_page(sid: str | None = Cookie(default=None)) -> HTMLResponse:
+    if sid != VALID_SID:
+        return HTMLResponse("<p>Not logged in.</p>", status_code=401)
+    return HTMLResponse("<h1>Your account</h1><p>Logged in as demo.</p>")
+
+
+@app.get("/api/browser-only/orders")
+def browser_only_orders(request: Request, sid: str | None = Cookie(default=None)) -> Response:
+    """Only answers fetch() from a real browser page (sec-fetch-mode: cors); everything else gets a challenge."""
+    if request.headers.get("sec-fetch-mode") != "cors":
+        return HTMLResponse(CHALLENGE_HTML, status_code=403)
+    if sid != VALID_SID:
+        return JSONResponse({"error": "unauthenticated"}, status_code=401)
+    return JSONResponse({"orders": [{"id": "o1", "total": 30}, {"id": "o2", "total": 12}]})
 
 
 @app.get("/api/private")

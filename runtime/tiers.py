@@ -32,11 +32,24 @@ class HttpResponse:
     hops: list[tuple[int, str | None]] = field(default_factory=list)  # (status, Location) per redirect
 
 
+@dataclass(frozen=True)
+class ProfileKey:
+    """Whose browser profile a browser-tier session uses. `provider` None = the site's anonymous profile."""
+
+    user: str
+    domain: str
+    provider: str | None
+
+
 class Session(Protocol):
     """One execution's connection + cookie jar. Closed when the execution ends."""
 
     @property
     def cookies(self) -> dict[str, str]: ...
+
+    async def prepare(self) -> None:
+        """Called once after `open`, before `cookies` is read or anything is sent."""
+        ...
 
     async def send(self, req: BuiltRequest, timeout_s: float) -> HttpResponse: ...
 
@@ -46,7 +59,7 @@ class Session(Protocol):
 class TierClient(Protocol):
     name: Tier
 
-    def open(self, base_url: str, seed_cookies: dict[str, str]) -> Session: ...
+    def open(self, base_url: str, seed_cookies: dict[str, str], profile: ProfileKey | None = None) -> Session: ...
 
 
 class HttpSession:
@@ -92,6 +105,9 @@ class HttpSession:
             hops=[(h.status_code, h.headers.get("location")) for h in resp.history],
         )
 
+    async def prepare(self) -> None:
+        return None
+
     async def aclose(self) -> None:
         await self._client.aclose()
 
@@ -99,7 +115,7 @@ class HttpSession:
 class HttpTier:
     name: Tier = "http"
 
-    def open(self, base_url: str, seed_cookies: dict[str, str]) -> Session:
+    def open(self, base_url: str, seed_cookies: dict[str, str], profile: ProfileKey | None = None) -> Session:
         return HttpSession(base_url, seed_cookies)
 
 
@@ -159,6 +175,9 @@ class ImpersonateSession:
             hops=[(h.status_code, h.headers.get("location")) for h in resp.history],
         )
 
+    async def prepare(self) -> None:
+        return None
+
     async def aclose(self) -> None:
         await self._client.close()
 
@@ -166,7 +185,7 @@ class ImpersonateSession:
 class ImpersonateTier:
     name: Tier = "impersonate"
 
-    def open(self, base_url: str, seed_cookies: dict[str, str]) -> Session:
+    def open(self, base_url: str, seed_cookies: dict[str, str], profile: ProfileKey | None = None) -> Session:
         return ImpersonateSession(base_url, seed_cookies)
 
 
@@ -174,5 +193,5 @@ LADDER: tuple[Tier, ...] = ("http", "impersonate", "browser")
 
 
 def default_tiers() -> dict[str, TierClient]:
-    # TODO(browser): add the browser-worker tier; cookies then come from the user's browser profile.
+    """http + impersonate. The browser tier needs a running BrowserPool; the gateway adds it."""
     return {"http": HttpTier(), "impersonate": ImpersonateTier()}
