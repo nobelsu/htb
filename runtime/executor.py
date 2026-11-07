@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from runtime.confirm import Confirmer, canonical_params
 from runtime.extract import ExtractError, ResponseView, jsonpath_all, project, run_extract
 from runtime.identity import BrowserIdentity
+from runtime.proxy import ProxyConfig, ProxySpec
 from runtime.redact import redact_headers, scrub
 from runtime.registry import StoredCard
 from runtime.sessions import Cookies, SessionStore
@@ -103,6 +104,7 @@ class _Run:
     auth: str | None
     tier: list[Tier]  # one-element holder for the current tier, shared with the envelope builder
     identity: BrowserIdentity | None = None  # the sign-in's device identity; every tier presents it
+    proxy: ProxySpec | None = None  # the sign-in's residential proxy session; every tier uses it
     steps: dict[tuple[str, str], list[Any]] = field(default_factory=dict)
 
     def context(self) -> Context:
@@ -126,8 +128,10 @@ class Executor:
         tiers: dict[str, TierClient] | None = None,
         healing: HealingHooks | None = None,
         action_cap_s: float = ACTION_CAP_S,
+        proxies: ProxyConfig | None = None,
     ) -> None:
         self.sessions = sessions
+        self.proxies = proxies  # residential proxy for signed-in requests (None: everything goes direct)
         self.confirmer = confirmer
         self.tiers: dict[str, TierClient] = tiers or default_tiers()
         self.healing: HealingHooks = healing or NoHealing()
@@ -184,7 +188,11 @@ class Executor:
         if from_store and identity is None:
             identity = self.identity_for(user, card.domain, provider_id)
         session = self.tiers[tier].open(
-            card.base_url, cookies, ProfileKey(user, card.domain, provider_id), identity
+            card.base_url,
+            cookies,
+            ProfileKey(user, card.domain, provider_id),
+            identity,
+            self.proxy_for(user, card.domain, provider_id, card.base_url),
         )
         try:
             try:
@@ -210,6 +218,10 @@ class Executor:
         if verdict is None and from_store:
             self._save_refreshed(user, card.domain, provider_id, cookies, refreshed)
         return verdict
+
+    def proxy_for(self, user: str, domain: str, provider_id: str, base_url: str) -> ProxySpec | None:
+        """The sign-in's residential proxy session (None: go direct)."""
+        return self.proxies.for_sign_in(user, domain, provider_id, base_url) if self.proxies is not None else None
 
     def identity_for(self, user: str, domain: str, provider_id: str) -> BrowserIdentity | None:
         """The device identity saved with this sign-in (None: tiers use DEFAULT_IDENTITY)."""
@@ -319,7 +331,10 @@ class Executor:
             return envelope(R.NEEDS_CONFIRMATION, confirmation=conf), None
 
         identity = self.identity_for(user, card.domain, auth) if auth is not None else None
-        session = self.tiers[tier_used[0]].open(card.base_url, cookies, ProfileKey(user, card.domain, auth), identity)
+        proxy = self.proxy_for(user, card.domain, auth, card.base_url) if auth is not None else None
+        session = self.tiers[tier_used[0]].open(
+            card.base_url, cookies, ProfileKey(user, card.domain, auth), identity, proxy
+        )
         run = _Run(
             card=card,
             action=action,
@@ -332,6 +347,7 @@ class Executor:
             auth=auth,
             tier=tier_used,
             identity=identity,
+            proxy=proxy,
         )
         async def attempt() -> tuple[Envelope, int | None]:
             try:
@@ -392,7 +408,7 @@ class Executor:
         cookies = run.session.cookies
         await run.session.aclose()
         run.session = self.tiers[to].open(
-            run.card.base_url, cookies, ProfileKey(run.user, run.card.domain, run.auth), run.identity
+            run.card.base_url, cookies, ProfileKey(run.user, run.card.domain, run.auth), run.identity, run.proxy
         )
         await self._prepare(run)
         log.info("%s.%s escalating %s -> %s", run.card.domain, run.action.name, run.tier[0], to)

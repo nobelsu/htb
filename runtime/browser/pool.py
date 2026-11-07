@@ -16,6 +16,7 @@ from typing import Any
 
 from playwright.async_api import BrowserContext, Playwright, async_playwright
 
+from runtime.proxy import ProxySpec
 from runtime.tiers import ProfileKey
 
 log = logging.getLogger("runtime.browser")
@@ -75,7 +76,7 @@ class BrowserPool:
             await browser.close()
         return ua.replace("HeadlessChrome/", "Chrome/")
 
-    async def _context(self, key: ProfileKey) -> _Entry:
+    async def _context(self, key: ProfileKey, proxy: ProxySpec | None = None) -> _Entry:
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
             entry = self._entries.get(key)
@@ -94,6 +95,10 @@ class BrowserPool:
             }
             if self._user_agent:
                 kwargs["user_agent"] = self._user_agent
+            if proxy is not None:  # the sign-in's residential proxy: fixed for this profile's warm browser
+                kwargs["proxy"] = {"server": proxy.server, "username": proxy.username, "password": proxy.password}
+                if proxy.local:
+                    kwargs["args"] = ["--proxy-bypass-list=<-loopback>"]
             context = await pw.chromium.launch_persistent_context(str(path), **kwargs)
             log.info("browser for %s/%s/%s up in %.1fs", key.user, key.domain, key.provider or ANON,
                      time.monotonic() - started)
@@ -107,9 +112,9 @@ class BrowserPool:
             return entry
 
     @asynccontextmanager
-    async def lease(self, key: ProfileKey) -> AsyncIterator[BrowserContext]:
-        """Use a profile's context; it stays warm afterwards until idle."""
-        entry = await self._context(key)
+    async def lease(self, key: ProfileKey, proxy: ProxySpec | None = None) -> AsyncIterator[BrowserContext]:
+        """Use a profile's context; it stays warm afterwards until idle. `proxy` applies when it starts."""
+        entry = await self._context(key, proxy)
         entry.leases += 1
         try:
             yield entry.context

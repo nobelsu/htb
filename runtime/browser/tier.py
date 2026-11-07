@@ -13,6 +13,7 @@ from playwright.async_api import Error as PlaywrightError
 
 from runtime.browser.pool import BrowserPool
 from runtime.identity import DEFAULT_IDENTITY, BrowserIdentity
+from runtime.proxy import ProxySpec
 from runtime.template import BuiltRequest
 from runtime.tiers import HttpResponse, ProfileKey, Session, TransportError, TransportTimeout
 from schema.card import Tier
@@ -47,8 +48,10 @@ class BrowserSession:
         base_url: str,
         seed_cookies: dict[str, str],
         identity: BrowserIdentity | None = None,
+        proxy: ProxySpec | None = None,
     ) -> None:
         self._identity = identity or DEFAULT_IDENTITY
+        self._proxy = proxy
         self._pool = pool
         self._key = key
         self._base_url = base_url
@@ -67,7 +70,7 @@ class BrowserSession:
         return dict(self._cookies)  # already only what the browser sends to base_url
 
     async def prepare(self) -> None:
-        self._lease = self._pool.lease(self._key)
+        self._lease = self._pool.lease(self._key, self._proxy)
         self._context = await self._lease.__aenter__()
         present = await self._read_cookies()
         # Cookies carried over from a lower tier (e.g. set by an earlier step) join the profile.
@@ -150,6 +153,7 @@ class BrowserTier:
         seed_cookies: dict[str, str],
         profile: ProfileKey | None = None,
         identity: BrowserIdentity | None = None,
+        proxy: ProxySpec | None = None,
     ) -> Session:
         key = profile or ProfileKey("_shared", urlsplit(base_url).hostname or "site", None)
-        return BrowserSession(self.pool, key, base_url, seed_cookies, identity)
+        return BrowserSession(self.pool, key, base_url, seed_cookies, identity, proxy)

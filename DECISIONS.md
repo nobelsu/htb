@@ -339,7 +339,22 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   - A URL sign-in prompt's retry is only accepted from the user who started it.
   - Not done: users can't see or rotate their own key on the page (lost key = `reissue` by us); no per-user
     rate limits or quotas; `heal_status` shows any job (jobs are about sites).
+- **L10 Residential proxies (asked).** One setting, `PROXY_URL`, a URL template in the provider's own sticky-session
+  format with `{session}` (asked: any provider). Each sign-in (user + site + provider) gets a stable id, 16 hex
+  characters of a SHA-256 (providers restrict the characters), so it keeps one IP as long as the provider allows
+  (asked). What goes through it (asked): everything that belongs to a sign-in, on every tier (http, impersonate,
+  browser, escalations, sign-in checks) and the Neko login browser; public actions go direct (providers bill per GB).
+  - Sites on this machine (localhost, 127.0.0.0/8, ::1) always go direct: a provider can't reach them
+    (`ProxyConfig(local=True)` overrides it in tests).
+  - Chromium can't send proxy credentials, so the login browser uses an in-container helper (`proxy_auth.py`,
+    stdlib, run as root by supervisord) that adds them; the credentials are only in a 0600 file mounted for it,
+    never on a command line. The login browser's temp folder (config and that file) is now deleted when it stops
+    (it used to be left behind). The helper takes http:// upstream proxies only; with https/socks the login
+    browser goes direct (logged). For plain-http requests it forces one request per connection so each carries
+    the credentials.
+  - The browser tier's warm profile browser gets the proxy when it starts (Playwright's proxy option).
+  - Credentials are never logged: `ProxySpec`'s repr and every log line show `scheme://***@host:port (session ...)`.
+  - Not covered: the mapper's own capture/replay browser (heal adapter) doesn't use the proxy.
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
-- **Not handled yet:** sites that bind sessions to an IP may notice the switch from the login browser to server
-  requests (planned: residential proxies; the device identity is handled, L8); per-user quotas (several users: L9).
+- **Not handled yet:** per-user quotas (L9); the mapper's own browser doesn't use the residential proxy (L10).

@@ -91,6 +91,11 @@ sign-in, so sites that rotate their login cookie stay signed in. The login brows
 hints, language) is saved too, and every tier presents it on that sign-in's later requests; requests with no saved
 identity look like Chrome 152 on Windows.
 
+**Residential proxy (optional).** Set `PROXY_URL` to your provider's sticky-session URL with `{session}` where its
+session id goes. Each sign-in (user + site) gets its own session id, so the login browser and every later request
+for that sign-in leave through the same home IP; public actions go direct. The login browser can't send proxy
+credentials itself, so a small helper inside its container adds them (`runtime/neko/proxy_auth.py`).
+
 Setup:
 - Neko: Docker running, and `docker pull ghcr.io/m1k1o/neko/chromium:latest` (about 2.2 GB). Hosted: set
   `NEKO_PUBLIC_IP` to the server's public IP, open the `NEKO_UDP_PORTS` range (UDP and TCP), and for users behind

@@ -51,7 +51,8 @@ class FakeNeko:
     async def cleanup_stale(self) -> int:
         return 0
 
-    async def launch(self, token: str, start_url: str, site_urls: list[str]) -> FakeSession:
+    async def launch(self, token: str, start_url: str, site_urls: list[str], proxy: Any = None) -> FakeSession:
+        self.proxy = proxy
         return self.sessions.setdefault(token, FakeSession(token))
 
     def get(self, token: str) -> FakeSession | None:
