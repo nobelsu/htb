@@ -1,9 +1,33 @@
-.venv/
+# live sessions and captures: never commit
+captures/
+*.har
+state.json
+*.state.json
+.env
+.env.*
+!.env.example
+
+# python
 __pycache__/
 *.pyc
-.env
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# local db
+*.sqlite
+*.sqlite3
 *.db
 *.db-wal
 *.db-shm
 .pytest_cache/
 profiles/
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/
+
+# tooling
+.ruff_cache/
+.mypy_cache/
