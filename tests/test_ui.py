@@ -63,3 +63,41 @@ async def test_pages_follow_the_design_rules(env: Env) -> None:
 def test_spine_word_fits() -> None:
     assert short_name("www.github.com") == "github" and short_name("fixture.test") == "fixture"
     assert spine_size("Join") == 200 and spine_size("Account") == 180 and spine_size("Password") == 140
+
+
+# ---- motion ---------------------------------------------------------------------------------------------------
+
+from tests.test_login import chromium  # noqa: E402,F401  (fixture: skips without Playwright's Chromium)
+
+
+async def test_every_page_has_motion_that_respects_reduce_motion(env: Env) -> None:
+    async with httpx.AsyncClient(follow_redirects=False) as http:
+        for path in ("/", "/signup", "/account/login"):
+            text = (await http.get(f"{env.base}{path}")).text
+            assert "@media (prefers-reduced-motion:reduce)" in text and "@keyframes rise" in text
+            assert 'matchMedia("(prefers-reduced-motion: reduce)").matches) return;' in text
+
+
+@pytest.mark.parametrize("motion", ["no-preference", "reduce"])
+async def test_disconnect_folds_the_row_then_disconnects(env: Env, chromium: None, motion: str) -> None:
+    from playwright.async_api import async_playwright
+
+    env.store.put("alice", "fixture.test", env.provider, {"sid": "x"})
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page(reduced_motion=motion)  # type: ignore[arg-type]
+            await page.goto(f"{env.base}/account/login")
+            await page.fill("input[name=login]", "alice")
+            await page.fill("input[name=password]", PASSWORD)
+            await page.click("button.bar")
+            await page.wait_for_url(f"{env.base}/account")
+            row = page.locator(".row", has_text="fixture.test")
+            await row.locator("button.sq").click()
+            if motion == "no-preference":
+                await page.wait_for_selector(".big.struck")  # struck through first, then folded away
+            await page.wait_for_url(f"{env.base}/account")
+            await page.wait_for_function("!document.body.innerText.includes('fixture.test')")
+        finally:
+            await browser.close()
+    assert env.store.get("alice", "fixture.test", env.provider) is None

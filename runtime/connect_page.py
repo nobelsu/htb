@@ -41,10 +41,27 @@ function setStatus(text) {
 function show(state) {
   for (const id of ["start", "viewer", "done-panel", "expired-panel"]) $(id).hidden = id !== state;
 }
+let finished = false;
 function signedIn() {
-  $("frame").src = "about:blank"; show("done-panel"); setStatus("");
-  wrap.classList.add("inv"); word.textContent = "Done"; word.style.fontSize = "min(200px, calc((100vh - 150px) / 2.4))";
-  document.title = "Signed in to __DOMAIN__";
+  if (finished) return;
+  finished = true;
+  const apply = () => {
+    $("frame").src = "about:blank"; show("done-panel"); setStatus("");
+    wrap.classList.add("inv"); word.textContent = "Done"; word.style.fontSize = "min(200px, calc((100vh - 150px) / 2.4))";
+    document.title = "Signed in to __DOMAIN__";
+  };
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { apply(); return; }
+  // Done wipe: black sweeps across, then the inverted page shows through and its lines rise in.
+  const w = document.createElement("div"); w.className = "wipe"; document.body.append(w);
+  w.animate([{transform: "scaleX(0)"}, {transform: "scaleX(1)"}],
+    {duration: 520, easing: "cubic-bezier(.7,0,.2,1)", fill: "forwards"}).onfinish = () => {
+    apply();
+    let i = 0;
+    for (const el of document.querySelectorAll("#done-panel .center > *")) {
+      el.style.setProperty("--i", i++); el.classList.add("reveal");
+    }
+    w.animate([{opacity: 1}, {opacity: 0}], {duration: 300, fill: "forwards"}).onfinish = () => w.remove();
+  };
 }
 function expired() {
   $("frame").src = "about:blank"; show("expired-panel"); setStatus("");

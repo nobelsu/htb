@@ -132,17 +132,22 @@ def message_page(spine: str, title: str, line: str, bar: str, status: int = 200,
 ACCOUNT_SCRIPT = """<script>
 const waiting = document.getElementById("waiting");
 const seen = new Set(JSON.parse(waiting.dataset.seen || "[]"));
+const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let shown = [...seen].sort().join(" ");
 function arrow(n) {
   return `<svg width="${n}" height="${n}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
     stroke-linecap="square" aria-hidden="true"><path d="M4 12h16"/><path d="M13 5l7 7-7 7"/></svg>`;
 }
 function render(pending) {
+  const now = pending.map((p) => p.url).sort().join(" ");
+  if (now === shown) return;  // nothing changed: leave the rows (and their pulse) alone
+  shown = now;
   waiting.replaceChildren(...pending.map((p) => {
     const a = document.createElement("a");
-    a.className = "row strong"; a.href = p.url; a.target = "_blank"; a.rel = "noopener";
+    a.className = "row strong" + (seen.has(p.url) ? "" : " arrive"); a.href = p.url; a.target = "_blank"; a.rel = "noopener";
     a.style.textDecoration = "none";
     const name = document.createElement("span"); name.className = "big"; name.textContent = p.domain;
-    const pill = document.createElement("span"); pill.className = "pill"; pill.innerHTML = "Sign in" + arrow(20);
+    const pill = document.createElement("span"); pill.className = "pill pulse"; pill.innerHTML = "Sign in" + arrow(20);
     a.append(name, pill);
     return a;
   }));
@@ -176,6 +181,20 @@ if (alerts) alerts.addEventListener("click", async () => {
   showAlerts();
 });
 showAlerts();
+// Disconnect: strike the name through, fold the row away, then send it.
+for (const f of document.querySelectorAll("form.disconnect")) {
+  f.addEventListener("submit", (e) => {
+    if (still) return;
+    e.preventDefault();
+    const row = f.closest(".row");
+    row.querySelector(".big").classList.add("struck");
+    row.style.overflow = "hidden";
+    row.animate(
+      [{height: row.offsetHeight + "px", opacity: 1}, {height: "0px", paddingTop: "0px", paddingBottom: "0px", opacity: 0}],
+      {duration: 450, delay: 350, easing: "cubic-bezier(.7,0,.2,1)", fill: "forwards"}
+    ).onfinish = () => f.submit();
+  });
+}
 setTimeout(poll, 2000);
 </script>"""
 
@@ -313,7 +332,7 @@ def routes(
 
     def square(action: str, name: str, value: str, label: str) -> str:
         return (
-            f'<form method="post" action="{action}" style="margin:0">{hidden(name, value)}'
+            f'<form class="disconnect" method="post" action="{action}" style="margin:0">{hidden(name, value)}'
             f'<button class="sq" type="submit" aria-label="{esc(label)}">{icon("x", 22)}</button></form>'
         )
 
@@ -323,7 +342,7 @@ def routes(
         sites, apps = connected_sites(user), oauth.apps(user)
         waiting_rows = "".join(
             f'<a class="row strong" href="{esc(p["url"])}" target="_blank" rel="noopener" style="text-decoration:none">'
-            f'<span class="big">{esc(p["domain"])}</span><span class="pill">Sign in{icon("arrow", 20)}</span></a>'
+            f'<span class="big">{esc(p["domain"])}</span><span class="pill pulse">Sign in{icon("arrow", 20)}</span></a>'
             for p in pending
         )
         site_rows = "".join(
