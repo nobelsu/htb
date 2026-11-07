@@ -202,3 +202,20 @@ def test_envelope_shape() -> None:
     assert list(dumped) == ["status", "data", "next_params", "confirmation", "heal", "meta", "error"]
     assert dumped["heal"] is None
     assert len(ResultCode) == 12
+
+
+def test_tool_description_and_summary() -> None:
+    from schema.params import confirmation_summary, tool_description
+
+    card = Card.model_validate(EXAMPLE)
+    search, follow = card.actions[0], card.actions[2]
+    assert tool_description(search) == search.description  # no confirmation, no spend: unchanged
+    desc = tool_description(follow)
+    assert desc.startswith(follow.description)
+    assert "explicit approval" in desc and "original request is not approval" in desc
+    assert "spends money" not in desc
+    assert confirmation_summary(follow, '{"a":1}') == f'{follow.description} Params: {{"a":1}}'
+
+    spender = follow.model_copy(update={"spends": True})
+    assert "This action spends money." in tool_description(spender)
+    assert confirmation_summary(spender, "{}").startswith("This will spend money. ")

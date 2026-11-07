@@ -123,3 +123,13 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **Runtime tools** (`connection_status`, `start_connection`, `poll_connection`, `heal_status`) are not exposed yet:
   sessions/login and healing are out of scope. `AUTH_REQUIRED`'s hint still names `start_connection` per the spec.
 - `--load card.json` saves the card on startup only if it differs from the active version.
+
+## Confirmation guidance (added after the first Claude Code test)
+- In testing, the agent got `NEEDS_CONFIRMATION` and confirmed by itself, treating the user's request as approval.
+  Layer 1 fix, with no envelope change: for actions with `requires_confirmation`, the MCP tool description and the
+  `_confirmation_id` param description tell the agent to show the summary and wait for the user's explicit approval
+  ("their original request is not approval"). `spends: true` actions also say "This action spends money." in the
+  description, and their `summary` starts with "This will spend money. ".
+- This is advisory: the agent still holds the confirmation id. Layer 2 (not built, needs agreement as it changes
+  the spec's flow): MCP elicitation for `spends: true`, so the gateway asks the user directly and the agent
+  never holds the approval; the HMAC id flow stays as the fallback for clients without elicitation.
