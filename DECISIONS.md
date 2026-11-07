@@ -380,6 +380,25 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
     revoke their tokens), and a new API key (the old one stops working; not for `default`, whose key is in .env).
     It's a cookie session (HttpOnly, SameSite=Lax, Secure on https), 30 days; POSTs from another origin are refused.
     Signing in for an app or signing up also signs you in to the account page.
+- **L12 Page design: Spine (asked, after wireframes).** Every page the gateway serves (home, sign-up, sign-in for
+  the account and for apps, account, change password, website sign-in, errors) shares `runtime/ui.py`: a full-height
+  black spine on the left with the page name rotated and huge, giant stacked type on the right (fields use
+  placeholders, not labels), and the main action as a full-width black bar at the bottom. Black and white, Inter
+  Tight (IBM Plex Mono only for URLs and commands), stroke icons instead of symbols, no subtitles or helper lines;
+  errors are one black line. The finished website sign-in turns the page black (white spine, "Done").
+  Wireframes and rejected directions: https://claude.ai/artifact/99VgbA8VVt2CN56cp1cGYE.
+  - The spine word scales to its length and to the window height; on phones the spine becomes a top band.
+  - New with it: a home page at `/` (public: the auth check exempts exactly "/"), change password
+    (`/account/password`), sign-in modes as links (`?with=key`, `?with=signup`), one-click copy for the connector URL
+    and the Claude Code command, and an alerts tile for browser notifications.
+  - `PRODUCT_NAME` (env, default "htb") names the product on every page until the real name is chosen.
+  - **Motion (asked: all of the options).** Hover: ink fill (black sweeps in from the left and the text flips to
+    white; on black bars and buttons the ink is white). Load: the spine word is unmasked and every line rises from
+    behind an edge, 70 ms apart. Moments: the finished website sign-in wipes to black; a new waiting sign-in slides in
+    and its Sign in button pulses; disconnecting strikes the name through and folds the row away before submitting;
+    copy turns its icon into a tick. Extras: a big inverting cursor (mouse only), field underlines thicken on focus
+    and the placeholder slides out as you type, bar arrows nudge, the spine word drifts on scroll. All of it is off
+    under prefers-reduced-motion.
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
 - **Not handled yet:** per-user quotas (L9); the mapper's own browser doesn't use the residential proxy (L10).

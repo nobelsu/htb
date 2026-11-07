@@ -171,7 +171,7 @@ async def test_signed_in_button_on_the_page(weak_gateway: tuple[str, FakeNeko], 
             await page.goto(link)
             await page.click("#browser")
             await page.wait_for_selector("#done", state="visible")
-            assert "once you've finished signing in" in await page.inner_text("#done-hint")
+            assert await page.is_hidden("#start")
             await asyncio.sleep(0.3)  # the watcher records the first cookies
 
             await page.click("#done")
@@ -181,8 +181,9 @@ async def test_signed_in_button_on_the_page(weak_gateway: tuple[str, FakeNeko], 
             neko.cookies_now = {"anon": "1", **SIGNED_IN}
             await page.click("#done")
             await page.wait_for_selector("#done-panel", state="visible")
-            assert "You're signed in to fixture.test" in await page.inner_text("#done-panel")
-            assert await page.is_hidden("#viewer")
+            assert "You're in." in await page.inner_text("#done-panel")
+            assert await page.is_hidden("#viewer") and await page.inner_text(".word") == "Done"
+            assert "inv" in (await page.get_attribute(".wrap", "class") or "")  # the page turns black
             await browser.close()
         assert envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "connected"
         assert envelope(await client.call_tool(*act("list_orders", {})))["status"] == "SUCCESS"

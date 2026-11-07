@@ -11,18 +11,19 @@ POST /connect/{token}/done     the user clicked "I've signed in"
 from __future__ import annotations
 
 import asyncio
-import html
 import logging
 
 import httpx
 import websockets
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import BaseRoute, Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from runtime.connect import Connection, ConnectError, ConnectionManager
 from runtime.neko.manager import NekoSession
+from runtime.ui import bar_link, esc, icon, short_name
+from runtime.ui import page as spine_page
 
 log = logging.getLogger("runtime.connect_page")
 NO_STORE = {"cache-control": "no-store", "referrer-policy": "no-referrer"}
@@ -31,111 +32,103 @@ HOP_BY_HOP = {
     "transfer-encoding", "upgrade", "host", "content-length", "content-encoding",
 }
 
-PAGE_HTML = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in to __DOMAIN__</title>
-<style>
-  :root { color-scheme: light dark; --bg:#f7f7f5; --fg:#1c1c1a; --muted:#66665f; --line:#d9d9d4; --accent:#2f5fb3;
-          --ok:#1f7a4d; --ok-bg:#e6f3ec; --bad:#b3261e; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#171716; --fg:#ececea; --muted:#a0a09a; --line:#33332f;
-          --accent:#7aa2e8; --ok:#5fc48f; --ok-bg:#1b2e24; --bad:#f2827a; } }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif; }
-  main { max-width:1280px; margin:32px auto; padding:0 16px; }
-  .intro { max-width:640px; }
-  h1 { font-size:22px; margin:0 0 4px; }
-  p { margin:0 0 12px; } .muted { color:var(--muted); }
-  button { font:inherit; padding:10px 18px; border-radius:6px; border:0; background:var(--accent); color:#fff; cursor:pointer; }
-  button:disabled { opacity:.5; cursor:default; }
-  .actions { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin:16px 0; }
-  #viewer { display:none; margin-top:8px; }
-  #viewer iframe { width:100%; aspect-ratio:__W__/__H__; border:1px solid var(--line); border-radius:8px; background:#000; display:block; }
-  #status { min-height:1.5em; margin-top:8px; }
-  #status.bad, #status.expired { color:var(--bad); }
-  .hint { color:var(--muted); font-size:14px; }
-  #done-panel { display:none; margin-top:24px; padding:28px 24px; border-radius:12px; background:var(--ok-bg);
-                border:1px solid color-mix(in srgb, var(--ok) 35%, transparent); max-width:640px; }
-  #done-panel .check { font-size:40px; line-height:1; color:var(--ok); }
-  #done-panel h2 { margin:12px 0 6px; font-size:22px; color:var(--ok); }
-</style></head>
-<body><main>
-<div class="intro" id="intro">
-  <h1>Sign in to __DOMAIN__</h1>
-  <p class="muted">Your agent needs your __DOMAIN__ account. You sign in yourself, in a private browser below; your
-  password is never shared with the agent or with us. We only keep the site's sign-in, encrypted.</p>
-  <div class="actions"><button id="browser" type="button">Log in to __DOMAIN__</button></div>
-  <p id="status" role="status"></p>
-</div>
-<div id="viewer"><iframe id="frame" title="Private browser for signing in to __DOMAIN__"
-  allow="autoplay; fullscreen; clipboard-read; clipboard-write"></iframe>
-  <div class="actions"><button id="done" type="button">I've signed in</button>
-  <span id="done-hint" class="hint"></span></div>
-  <p class="hint">This browser runs on our server, just for this sign-in, and closes once you're signed in.</p></div>
-<div id="done-panel" role="status" aria-live="polite">
-  <div class="check" aria-hidden="true">&#10003;</div>
-  <h2>You're signed in to __DOMAIN__</h2>
-  <p>You can close this tab and go back to your agent. It will carry on by itself.</p>
-</div>
-</main>
-<script>
+CONNECT_SCRIPT = """<script>
 const $ = (id) => document.getElementById(id);
-const statusEl = $("status");
-function setStatus(s, text) { statusEl.className = s; statusEl.textContent = text || ""; }
-function showSignedIn() {
-  $("viewer").style.display = "none"; $("frame").src = "about:blank"; $("intro").style.display = "none";
-  $("done-panel").style.display = "block"; document.title = "Signed in to __DOMAIN__";
+const wrap = document.querySelector(".wrap"), word = document.querySelector(".word");
+function setStatus(text) {
+  const s = $("status"); s.textContent = text || ""; s.hidden = !text; s.className = text ? "notice bad" : "notice";
+}
+function show(state) {
+  for (const id of ["start", "viewer", "done-panel", "expired-panel"]) $(id).hidden = id !== state;
+}
+let finished = false;
+function signedIn() {
+  if (finished) return;
+  finished = true;
+  const apply = () => {
+    $("frame").src = "about:blank"; show("done-panel"); setStatus("");
+    wrap.classList.add("inv"); word.textContent = "Done"; word.style.fontSize = "min(200px, calc((100vh - 150px) / 2.4))";
+    document.title = "Signed in to __DOMAIN__";
+  };
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { apply(); return; }
+  // Done wipe: black sweeps across, then the inverted page shows through and its lines rise in.
+  const w = document.createElement("div"); w.className = "wipe"; document.body.append(w);
+  w.animate([{transform: "scaleX(0)"}, {transform: "scaleX(1)"}],
+    {duration: 520, easing: "cubic-bezier(.7,0,.2,1)", fill: "forwards"}).onfinish = () => {
+    apply();
+    let i = 0;
+    for (const el of document.querySelectorAll("#done-panel .center > *")) {
+      el.style.setProperty("--i", i++); el.classList.add("reveal");
+    }
+    w.animate([{opacity: 1}, {opacity: 0}], {duration: 300, fill: "forwards"}).onfinish = () => w.remove();
+  };
+}
+function expired() {
+  $("frame").src = "about:blank"; show("expired-panel"); setStatus("");
+  word.textContent = "Expired"; word.style.fontSize = "min(180px, calc((100vh - 150px) / 4.2))";
 }
 $("browser").addEventListener("click", async () => {
-  $("browser").disabled = true;
-  setStatus("pending", "Starting a private browser…");
+  $("browser").disabled = true; setStatus("");
   try {
     const resp = await fetch(location.pathname + "/browser", {method: "POST"});
     const body = await resp.json();
     if (!resp.ok) throw new Error(body.error || ("HTTP " + resp.status));
-    $("frame").src = body.viewer;
-    $("viewer").style.display = "block";
-    $("done-hint").textContent = body.confirm
-      ? "Click this once you've finished signing in."
-      : "We'll notice when you're signed in, or click this to check now.";
-    setStatus("pending", "Sign in to __DOMAIN__ below. Click inside the browser to start.");
-    $("viewer").scrollIntoView({behavior: "smooth", block: "start"});
+    $("frame").src = body.viewer; show("viewer"); $("frame").focus();
   } catch (e) {
-    setStatus("bad", "Couldn't start the browser: " + e.message);
-    $("browser").disabled = false;
+    setStatus("The private browser didn't start: " + e.message);
   }
+  $("browser").disabled = false;
 });
 $("done").addEventListener("click", async () => {
   $("done").disabled = true;
   try {
     const resp = await fetch(location.pathname + "/done", {method: "POST"});
     const body = await resp.json();
-    if (resp.ok) showSignedIn();
-    else setStatus("bad", body.error || ("HTTP " + resp.status));
+    if (resp.ok) signedIn(); else setStatus(body.error || ("HTTP " + resp.status));
   } catch (e) {
-    setStatus("bad", "Couldn't check: " + e.message);
+    setStatus("Couldn't check: " + e.message);
   }
   $("done").disabled = false;
 });
 async function poll() {
   try {
     const s = await (await fetch(location.pathname + "/status", {cache: "no-store"})).json();
-    if (s.status === "connected") { showSignedIn(); return; }
-    if (s.status === "expired") {
-      $("viewer").style.display = "none"; $("browser").disabled = true;
-      setStatus("expired", "This link has expired. Ask your agent for a new one."); return;
-    }
+    if (s.status === "connected") { signedIn(); return; }
+    if (s.status === "expired") { expired(); return; }
   } catch (e) {}
   setTimeout(poll, 1000);
 }
 poll();
-</script></body></html>"""
+</script>"""
 
 
-def render_page(conn: Connection, width: int = 1280, height: int = 800) -> str:
-    return (
-        PAGE_HTML.replace("__DOMAIN__", html.escape(conn.domain))
-        .replace("__W__", str(width))
-        .replace("__H__", str(height))
+def render_page(conn: Connection, width: int = 1280, height: int = 800) -> Response:
+    """The website sign-in page, in the Spine design: start, live browser, done (inverted), expired."""
+    domain = esc(conn.domain)
+    body = (
+        '<p id="status" class="notice" role="alert" hidden></p>'
+        '<section id="start" class="state">'
+        f'<h1 class="headline" style="padding-top:88px">Sign in to {domain}</h1>'
+        f'<div class="center">{icon("lock", 120, 1.2, label="Private and encrypted")}</div>'
+        f'<button id="browser" class="bar" type="button">Open private browser{icon("arrow", 44)}</button>'
+        "</section>"
+        '<section id="viewer" class="state" hidden>'
+        f'<iframe id="frame" title="Private browser for signing in to {domain}" '
+        f'style="width:100%;aspect-ratio:{width}/{height};border:0;border-bottom:3px solid #000;background:#000;display:block" '
+        'allow="autoplay; fullscreen; clipboard-read; clipboard-write"></iframe>'
+        f'<button id="done" class="bar" type="button">I have signed in{icon("arrow", 44)}</button>'
+        "</section>"
+        '<section id="done-panel" class="state" hidden aria-live="polite">'
+        f'<div class="center">{icon("check", 96, 1.2)}<p class="giant">You&#39;re in.<br>Close this tab.</p></div>'
+        "</section>"
+        '<section id="expired-panel" class="state" hidden>'
+        f'<div class="center">{icon("clock", 96, 1.2)}<p class="giant">This link expired.</p></div>'
+        '<a class="bar" href="/account">Go to your account' + icon("arrow", 44) + "</a>"
+        "</section>"
+    )
+    return spine_page(
+        title=f"Sign in to {conn.domain}", spine=short_name(conn.domain), body=body,
+        script=CONNECT_SCRIPT.replace("__DOMAIN__", domain),
     )
 
 
@@ -146,9 +139,11 @@ def routes(manager: ConnectionManager) -> list[BaseRoute]:
     async def page(request: Request) -> Response:
         conn = manager.by_token(request.path_params["token"])
         if conn is None:
-            return HTMLResponse("<p>Unknown login link.</p>", status_code=404, headers=NO_STORE)
+            return spine_page(title="Link expired", spine="Expired", status=404, body=(
+                f'<div class="center">{icon("clock", 96, 1.2)}<h1 class="giant">This link expired.</h1></div>'
+                + bar_link("Go to your account", "/account")))
         manager.mark_opened(conn.token)
-        return HTMLResponse(render_page(conn, *size), headers=NO_STORE)
+        return render_page(conn, *size)
 
     async def status(request: Request) -> Response:
         conn = manager.by_token(request.path_params["token"])
