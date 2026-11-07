@@ -134,8 +134,9 @@ class ConnectionManager:
         out = conn.public(self.public_base_url)
         out["user_message"] = _poll_message(conn, out.get("url"))
         out["instructions"] = (
-            "The user can't see this result. In this same reply: first write the user_message (it contains the "
-            "link), then immediately call poll_connection (don't end your turn): it waits until they've signed in. "
+            "The user can't see this result. In this same reply: first write the user_message exactly as given (it "
+            "is a markdown link), then immediately call poll_connection (don't end your turn): it waits until they've "
+            "signed in. "
             "Their password is never shared with you. If it returns 'pending', call it again. Once 'connected', "
             "retry the original tool."
         )
@@ -413,7 +414,7 @@ def _poll_message(conn: Connection, url: str | None) -> str:
     if conn.status == "expired":
         return f"That sign-in link for {conn.domain} has expired. I can get you a new one."
     minutes = max(1, int((conn.expires_at - time.time()) // 60))
-    return f"Sign in to {conn.domain} here: {url} (the link works for {minutes} more minutes)."
+    return f"**[Sign in to {conn.domain} →]({url})** (the link works for {minutes} more minutes)"
 
 
 

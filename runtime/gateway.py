@@ -68,8 +68,9 @@ INSTRUCTIONS = (
     "\"Sign in here: <link>\", \"The site changed; I'll retry in a moment\"). Don't mention tool names, status "
     "codes, sessions, cookies, browser profiles, cards or other internals unless the user asks how it works. "
     "Results about signing in include a `user_message`; use it.\n"
-    "The user cannot see tool results. When start_connection gives you a sign-in link, write that link in your "
-    "reply to the user before you call poll_connection, or they will have nothing to click. (Apps that support "
+    "The user cannot see tool results. When start_connection gives you a sign-in link, write its user_message "
+    "(a markdown link) exactly as given in your reply before you call poll_connection, or they will have nothing "
+    "to click. (Apps that support "
     "it show the link to the user themselves; then start_connection simply returns once they've signed in.)"
 )
 
@@ -373,8 +374,8 @@ class Gateway:
             out = await self.connections.poll(conn.user, conn.domain)
             out["hint"] = (
                 "Your app couldn't show the sign-in link to the user. In this same reply, write the user_message "
-                "(it contains the link), then immediately call poll_connection; don't end your turn, it waits for "
-                "them to sign in."
+                "exactly as given (a markdown link), then immediately call poll_connection; don't end your turn, it "
+                "waits for them to sign in."
             )
             return _json_result(out)
         out = await self.connections.poll(conn.user, conn.domain, wait_s=40, opened=True)

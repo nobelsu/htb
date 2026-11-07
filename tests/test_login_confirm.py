@@ -307,7 +307,7 @@ async def test_clients_without_url_elicitation_get_the_link(strong_gateway: tupl
     base, _ = strong_gateway
     async with connect(f"{base}/mcp", "auto") as client:  # no elicitation callback
         out = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
-        assert out["status"] == "pending" and out["user_message"].startswith("Sign in to fixture.test here: ")
+        assert out["status"] == "pending" and out["user_message"].startswith("**[Sign in to fixture.test →](")
 
 
 async def test_app_that_cancels_url_prompts_gets_the_link_back(strong_gateway: tuple[str, FakeNeko]) -> None:
@@ -322,5 +322,5 @@ async def test_app_that_cancels_url_prompts_gets_the_link_back(strong_gateway: t
     http, client = await _client_with_elicitation(base, on_url)
     async with http, client:
         out = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
-        assert out["status"] == "pending" and out["user_message"].startswith("Sign in to fixture.test here: ")
+        assert out["status"] == "pending" and out["user_message"].startswith("**[Sign in to fixture.test →](")
         assert "couldn't show the sign-in link" in out["hint"] and "don't end your turn" in out["hint"]

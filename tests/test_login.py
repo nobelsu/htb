@@ -193,7 +193,7 @@ async def test_link_routes_and_auth_boundaries(login_gateway: tuple[str, Path, E
 async def test_disconnect_forgets_session_and_cancels_link(manager: ConnectionManager, site_url: str) -> None:
     manager.store.put("u", DOMAIN, "shop", {"sid": VALID_SID, "csrftoken": CSRF})
     started = manager.start("u", DOMAIN)
-    assert "Sign in to fixture.test here: http://gw/connect/" in started["user_message"]
+    assert started["user_message"].startswith("**[Sign in to fixture.test →](http://gw/connect/")
     assert manager.status("u", DOMAIN)["user_message"] == "Waiting for you to finish signing in to fixture.test."
     out = await manager.disconnect("u", DOMAIN)
     assert out["disconnected"] is True
