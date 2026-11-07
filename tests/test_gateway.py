@@ -77,7 +77,10 @@ async def test_list_and_call(mcp_url: str, mode: str) -> None:
         assert search.description and search.description.startswith("Search the shop's products")
         assert search.input_schema["required"] == ["query"]
         assert search.input_schema["properties"]["page"]["default"] == 1
-        assert "_confirmation_id" in tools["shop_add_to_cart"].input_schema["properties"]
+        cart = tools["shop_add_to_cart"]
+        assert "_confirmation_id" in cart.input_schema["properties"]
+        assert cart.description and "explicit approval" in cart.description
+        assert "explicitly approved" in cart.input_schema["properties"]["_confirmation_id"]["description"]
 
         env = envelope(await client.call_tool("shop_search_products", {"query": "lamp"}))
         assert env["status"] == "SUCCESS"

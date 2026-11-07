@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schema.card import Param
+from schema.card import Action, Param
 
 CONFIRMATION_ARG = "_confirmation_id"
 
@@ -62,6 +62,29 @@ def format_field_errors(errors: dict[str, str]) -> str:
     return "; ".join(f"{k}: {v}" for k, v in sorted(errors.items()))
 
 
+SPEND_PREFIX = "This will spend money. "
+
+
+def tool_description(action: Action) -> str:
+    """The MCP tool description: the card's description, plus confirmation instructions when needed."""
+    text = action.description
+    if action.spends:
+        text += " This action spends money."
+    if action.requires_confirmation:
+        text += (
+            " Requires the user's confirmation: the first call sends nothing and returns NEEDS_CONFIRMATION with a "
+            "summary. Show that summary to the user and wait for their explicit approval before calling again "
+            "with _confirmation_id. Their original request is not approval."
+        )
+    return text
+
+
+def confirmation_summary(action: Action, canonical: str) -> str:
+    """The summary shown to the user (spec: the action description plus the params)."""
+    prefix = SPEND_PREFIX if action.spends else ""
+    return f"{prefix}{action.description} Params: {canonical}"
+
+
 _JSON_TYPES = {"string": "string", "integer": "integer", "number": "number", "boolean": "boolean"}
 
 
@@ -84,8 +107,9 @@ def input_schema(specs: dict[str, Param], requires_confirmation: bool) -> dict[s
     if requires_confirmation:
         props[CONFIRMATION_ARG] = {
             "type": "string",
-            "description": "Confirmation id from a previous NEEDS_CONFIRMATION result. "
-            "Call again with identical params plus this id to run the action.",
+            "description": "Confirmation id from a previous NEEDS_CONFIRMATION result. Only pass it after the "
+            "user has seen that result's summary and explicitly approved it; then call again with identical "
+            "params plus this id. Never pass it on your own judgement.",
         }
     schema: dict[str, Any] = {"type": "object", "properties": props, "additionalProperties": False}
     required = [n for n, s in specs.items() if s.required]
