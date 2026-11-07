@@ -39,16 +39,25 @@ watch `heal_status`, call again.
 ## Login (connect a site) and the browser tier
 
 Sites with `connect_providers` need the user's login once. The agent calls `start_connection(domain)` and gets a
-link. The user logs in to the site in their own browser as usual, opens the link and clicks **Connect**. The
-**HTB Connect** extension (`extension/`) asks Chrome for access to that one site and sends its login cookies to the
-gateway, which checks them with the provider's `session_check` and stores them encrypted (`SESSION_KEY`). The
-password never reaches us or the agent. `poll_connection` / `connection_status` report progress; a keep-alive
-marks sessions that have expired.
+link. The page offers:
+- **Log in to the site** (default, nothing to install): a real Chromium in a short-lived Neko container, streamed
+  over WebRTC into the page. The user signs in there; we watch the browser's cookies and stop the container once
+  the login works.
+- **Use my existing login** (if the **HTB Connect** extension in `extension/` is installed): sends the site's
+  cookies from the user's own browser.
 
-Install the extension (until it's on the Chrome Web Store): `chrome://extensions` → Developer mode → Load unpacked →
-the `extension` folder. For a hosted gateway, first run `uv run python -m runtime.extension --origin https://your.gateway`.
+Either way the cookies are checked with the provider's `session_check` and stored encrypted (`SESSION_KEY`); the
+password never reaches us or the agent. `poll_connection` / `connection_status` report progress; a keep-alive marks
+sessions that have expired.
 
-Hosting notes: install Chrome on the server for the browser tier (`uv run playwright install --with-deps chrome`),
-keep `PROFILES_DIR` and the SQLite file on persistent storage, serve over HTTPS and set `PUBLIC_BASE_URL`.
-Fixture shop login for testing: `demo` / `demo-password`. The end-to-end login tests need Playwright's Chromium
-(`uv run playwright install chromium`), since branded Chrome no longer loads unpacked extensions under automation.
+Setup:
+- Neko: Docker running, and `docker pull ghcr.io/m1k1o/neko/chromium:latest` (about 2.2 GB). Hosted: set
+  `NEKO_PUBLIC_IP` to the server's public IP, open the `NEKO_UDP_PORTS` range (UDP), and for users behind strict
+  networks add a TURN server via `NEKO_ICE_SERVERS`. `NEKO_ENABLED=0` turns it off.
+- Extension (optional): `chrome://extensions` → Developer mode → Load unpacked → `extension/`. For a hosted gateway,
+  first run `uv run python -m runtime.extension --origin https://your.gateway`.
+- Browser tier: install Chrome on the server (`uv run playwright install --with-deps chrome`); keep `PROFILES_DIR` and
+  the SQLite file on persistent storage; serve over HTTPS and set `PUBLIC_BASE_URL`.
+
+Fixture shop login for testing: `demo` / `demo-password`. Tests needing Docker/Neko or Playwright's Chromium skip
+themselves when those aren't installed.

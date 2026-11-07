@@ -33,6 +33,7 @@ from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
 from runtime.connect_page import routes as connect_routes
 from runtime.extension import manifest_extension_id
+from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
 from runtime.registry import Registry
@@ -283,10 +284,21 @@ class Gateway:
                 tg.start_soon(self.pool.reap_forever)
             if self.connections is not None:
                 tg.start_soon(self.connections.keepalive_forever, self.keepalive_s)
+                if self.connections.neko is not None:
+                    if not await self.connections.neko.available():
+                        log.warning("Neko image not available (docker pull %s); 'log in here' is off",
+                                    self.connections.neko.config.image)
+                        self.connections.neko = None
+                    else:
+                        removed = await self.connections.neko.cleanup_stale()
+                        if removed:
+                            log.info("removed %d leftover login browsers", removed)
             try:
                 yield {}
             finally:
                 tg.cancel_scope.cancel()
+                if self.connections is not None:
+                    await self.connections.close()
                 if self.pool is not None:
                     await self.pool.close()
 
@@ -303,7 +315,7 @@ class Gateway:
     def asgi_app(self, api_key: str, host: str = "127.0.0.1") -> ASGIApp:
         extra = connect_routes(self.connections, self.extension_id) if self.connections is not None else []
         inner = self.server.streamable_http_app(host=host, custom_starlette_routes=extra)  # type: ignore[arg-type]
-        return BearerAuth(inner, api_key, exempt_prefixes=("/connect/",))
+        return BearerAuth(inner, api_key, exempt_prefixes=("/connect/", "/neko/"))
 
 
 def _error_result(message: str) -> types.CallToolResult:
@@ -404,9 +416,20 @@ def main() -> None:
         tiers=tiers,
     )
     public_url = os.environ.get("PUBLIC_BASE_URL", f"http://{args.host}:{args.port}")
+    neko = None
+    if os.environ.get("NEKO_ENABLED", "1") != "0":
+        low, _, high = os.environ.get("NEKO_UDP_PORTS", "52000-52099").partition("-")
+        neko = NekoManager(
+            NekoConfig(
+                image=os.environ.get("NEKO_IMAGE", "ghcr.io/m1k1o/neko/chromium:latest"),
+                public_ip=os.environ.get("NEKO_PUBLIC_IP", "127.0.0.1"),
+                udp_ports=(int(low), int(high or low)),
+                ice_servers=os.environ.get("NEKO_ICE_SERVERS", ""),
+            )
+        )
     connections = ConnectionManager(
         registry, session_store, executor, public_url, pool=pool,
-        timeout_s=float(os.environ.get("CONNECT_TIMEOUT_S", "600")),
+        timeout_s=float(os.environ.get("CONNECT_TIMEOUT_S", "600")), neko=neko,
     )
     config = HealConfig(
         retry_after_s=int(os.environ.get("HEAL_RETRY_AFTER_S", "30")),

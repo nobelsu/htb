@@ -1,13 +1,17 @@
-"""The login flow behind start_connection / poll_connection / connection_status (extension capture).
+"""The login flow behind start_connection / poll_connection / connection_status.
 
-start_connection returns a link to our connect page. The user logs in to the site normally in their own
-browser, opens the link and clicks Connect; our browser extension reads that one site's cookies and posts them
-back (runtime/connect_page.py). We verify them with the provider's session_check before storing them encrypted.
-The password never reaches us or the agent.
+start_connection returns a link to our connect page, which offers two ways in:
+- **Log in here**: a real Chromium in a short-lived Neko container, streamed to the user over WebRTC
+  (runtime/neko). The user logs in to the site inside it; we watch its cookies.
+- **Connect with the extension**: the user logs in to the site in their own browser and our extension sends
+  that one site's cookies back (runtime/connect_page.py).
+Either way, cookies are verified with the provider's session_check before being stored encrypted. The password
+never reaches us or the agent.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import time
@@ -18,6 +22,7 @@ from urllib.parse import urlsplit
 
 from runtime.browser.pool import BrowserPool
 from runtime.executor import Executor
+from runtime.neko.manager import NekoManager, NekoUnavailable
 from runtime.registry import Registry
 from runtime.session_store import EncryptedSessionStore
 from runtime.tiers import ProfileKey
@@ -42,6 +47,7 @@ class Connection:
     expires_at: float
     status: ConnStatus = "pending"
     message: str = "waiting for the user to connect"
+    browser_task: asyncio.Task[None] | None = None  # the "log in here" watcher, if started
 
     def refresh(self) -> None:
         if self.status == "pending" and time.time() > self.expires_at:
@@ -83,6 +89,8 @@ class ConnectionManager:
         public_base_url: str,
         pool: BrowserPool | None = None,
         timeout_s: float = 600.0,
+        neko: NekoManager | None = None,
+        check_every_s: float = 2.0,
     ) -> None:
         self.registry = registry
         self.store = store
@@ -90,6 +98,8 @@ class ConnectionManager:
         self.pool = pool
         self.public_base_url = public_base_url.rstrip("/")
         self.timeout_s = timeout_s
+        self.neko = neko
+        self.check_every_s = check_every_s
         self._by_token: dict[str, Connection] = {}
         self._latest: dict[tuple[str, str], Connection] = {}  # (user, domain) -> most recent connection
 
@@ -130,10 +140,10 @@ class ConnectionManager:
     def _with_instructions(self, conn: Connection) -> dict[str, Any]:
         out = conn.public(self.public_base_url)
         out["instructions"] = (
-            f"Give the user this link. They log in to {conn.domain} in their own browser as usual, then open the "
-            "link and click Connect (it needs our browser extension; the page explains how to add it). Their "
-            "password is never shared with you or us. Then call poll_connection until status is 'connected', and "
-            "retry the original tool."
+            f"Give the user this link. It opens a page where they log in to {conn.domain} themselves (in a secure "
+            "browser shown on the page, or with our browser extension if they have it). Their password is never "
+            "shared with you or us. Then call poll_connection until status is 'connected', and retry the original "
+            "tool."
         )
         return out
 
@@ -179,7 +189,18 @@ class ConnectionManager:
             conn.refresh()
         return conn
 
-    # ---- cookie import (called by the connect page's endpoint) -------------
+    async def _verify(self, conn: Connection, jar: dict[str, str]) -> ResultCode | None:
+        card = self._card(conn.domain)
+        if card is None:
+            return R.ERROR
+        return await self.executor.check_session(card, conn.provider, conn.user, cookies=jar)
+
+    def _connected(self, conn: Connection, jar: dict[str, str], via: str) -> None:
+        self.store.put(conn.user, conn.domain, conn.provider, jar)
+        conn.status, conn.message = "connected", f"connected to {conn.domain}"
+        log.info("%s connected to %s via %s (%d cookies)", conn.user, conn.domain, via, len(jar))
+
+    # ---- extension capture (called by the connect page's endpoint) ---------
 
     async def import_cookies(self, token: str, cookies: Any) -> Connection:
         """Verify and store cookies the extension captured. Raises CookieImportError with a user-facing reason."""
@@ -191,18 +212,65 @@ class ConnectionManager:
         jar = _parse_cookies(cookies)
         if not jar:
             raise CookieImportError(f"no cookies found for {conn.domain}; log in to {conn.domain} first")
-        card = self._card(conn.domain)
-        if card is None:
-            raise CookieImportError("the site is no longer available")
-        code = await self.executor.check_session(card, conn.provider, conn.user, cookies=jar)
+        code = await self._verify(conn, jar)
         if code is not None:
             conn.message = f"those cookies are not logged in ({code.value}); log in to {conn.domain}, then try again"
             log.info("cookie import for %s on %s rejected: %s", conn.user, conn.domain, code.value)
             raise CookieImportError(conn.message)
-        self.store.put(conn.user, conn.domain, conn.provider, jar)
-        conn.status, conn.message = "connected", f"connected to {conn.domain}"
-        log.info("%s connected to %s via the extension (%d cookies)", conn.user, conn.domain, len(jar))
+        self._connected(conn, jar, "the extension")
+        await self._stop_browser(conn)
         return conn
+
+    # ---- "log in here": a Neko login browser ------------------------------
+
+    async def start_browser_login(self, token: str) -> str:
+        """Start (or reuse) the login browser for this link. Returns the viewer path. Raises CookieImportError."""
+        conn = self.by_token(token)
+        if conn is None:
+            raise CookieImportError("unknown login link")
+        if conn.status != "pending":
+            raise CookieImportError(f"this link is {conn.status}")
+        if self.neko is None:
+            raise CookieImportError("logging in here is not available on this server; use the extension")
+        try:
+            session = await self.neko.launch(conn.token, conn.login_url, [conn.base_url])
+        except NekoUnavailable as e:
+            log.warning("login browser unavailable: %s", e)
+            raise CookieImportError(f"the login browser could not start ({e})") from None
+        if conn.browser_task is None:
+            conn.browser_task = asyncio.get_running_loop().create_task(self._watch_browser(conn))
+        return session.viewer_path()
+
+    async def _watch_browser(self, conn: Connection) -> None:
+        assert self.neko is not None
+        try:
+            while True:
+                await asyncio.sleep(self.check_every_s)
+                conn.refresh()
+                if conn.status != "pending":
+                    return
+                try:
+                    jar = await self.neko.cookies(conn.token, conn.base_url)
+                except Exception as e:  # container restarting, DevTools briefly unavailable...
+                    log.debug("reading login browser cookies failed: %s", e)
+                    continue
+                if jar and await self._verify(conn, jar) is None:
+                    self._connected(conn, jar, "the login browser")
+                    return
+        finally:
+            await self.neko.stop(conn.token)
+
+    async def _stop_browser(self, conn: Connection) -> None:
+        if conn.browser_task is not None and not conn.browser_task.done():
+            conn.browser_task.cancel()
+        if self.neko is not None:
+            await self.neko.stop(conn.token)
+
+    async def close(self) -> None:
+        for conn in list(self._by_token.values()):
+            await self._stop_browser(conn)
+        if self.neko is not None:
+            await self.neko.close()
 
     # ---- keep-alive --------------------------------------------------------
 

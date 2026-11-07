@@ -190,11 +190,27 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   starts from the card's tier.
 
 ## Login flow and browser tier
-- **L1 How the user logs in (asked; changed).** Extension capture, replacing the first version's streamed
-  browser (blurry, laggy, no password managers). The user logs in to the site in their own browser, opens the
-  `start_connection` link and clicks Connect; the **HTB Connect** extension (`/extension`, Manifest V3) asks
-  Chrome for access to that one site, reads its cookies (`chrome.cookies.getAll({url: base_url})`, which
-  includes httpOnly ones) and posts them to `/connect/{token}/cookies`. Password managers, 2FA and passkeys work.
+- **L1 How the user logs in (asked; changed twice).** The connect page offers two ways in:
+  1. **"Log in here" (default, no install):** a real Chromium in a short-lived [Neko](https://github.com/m1k1o/neko)
+     container, streamed to the user over **WebRTC** (asked: option A). This replaced the first version's
+     screenshot-over-WebSocket stream (blurry, laggy).
+  2. **"Use my existing login" (HTB Connect extension):** shown only when the extension is installed. The user's
+     own browser session is captured (`chrome.cookies.getAll`, httpOnly included) and posted back.
+- **Neko details.** One container per login link (`ghcr.io/m1k1o/neko/chromium`, Neko 3.2), started when the user
+  clicks "Log in", removed once connected or expired; leftovers are removed at startup (label `htb.neko`).
+  Chromium runs in kiosk mode on the provider's `login_url`, at 1920x1200 with device scale 1.5 (sites lay out at
+  1280x800; the stream stays sharp on retina screens), ~25 fps. The client runs in Neko's `embed` mode, logged in
+  with a random per-container password, and is reverse-proxied by the gateway under `/neko/{token}/` (HTTP and the
+  `/api/ws` signalling WebSocket), so it is same-origin and works behind HTTPS. WebRTC media goes directly to the
+  container over one published UDP port per login (`NEKO_UDP_PORTS`), advertised as `NEKO_PUBLIC_IP`; a TURN
+  server can be set with `NEKO_ICE_SERVERS` for users behind strict networks.
+- **Reading the login.** Every 2 s the watcher reads the browser's cookies with one browser-level DevTools command
+  (`Storage.getCookies` over Chrome's WebSocket, exposed through a small in-container forwarder because Chrome binds
+  DevTools to localhost) and keeps those the site would receive for `base_url`. Page-level DevTools stays disabled
+  by policy, so the user can't open DevTools in the streamed browser.
+- **Local development.** If the site is on the Docker host's loopback (the fixture shop), the forwarder maps the
+  container's `127.0.0.1:<port>` to `host.docker.internal:<port>`.
+- **Typing.** Click into a field before typing: Neko's client keeps the Tab key for its own page.
 - **Verification before storing.** The gateway runs the provider's `session_check` with the posted cookies (card's
   default tier). Only if it passes are they stored; otherwise the link stays pending and the user can log in and
   retry. Links are single-use and expire (`CONNECT_TIMEOUT_S`, default 10 min). One pending link per (user, site).
@@ -218,8 +234,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **L5 Browser tier (asked).** Each step runs as `fetch()` in a tab on the request's origin, so it goes out as real
   Chrome. Browser-owned headers (cookie, user-agent, origin, referer, host...) are dropped. Only a redirect's final
   URL is visible, so `redirect:` signals see the final path only.
-- **Link security.** `/connect/` routes skip the Bearer check; the unguessable, expiring, single-use token is their
-  credential. Every other HTTP and websocket path needs the Bearer key.
+- **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
+  their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
 - **Not handled yet:** sites that bind sessions to the device/IP may reject the imported cookies (they fail the
   session check, so the user sees a clear error); Chrome Web Store publishing (load unpacked for now); browsers
   other than Chromium-based ones; per-user API keys (everything is user `default`).

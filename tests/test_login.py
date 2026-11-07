@@ -278,7 +278,7 @@ async def test_connect_while_logged_out_is_refused(
         assert envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "pending"
 
 
-async def test_page_without_extension_explains(login_gateway: tuple[str, Path], chromium: None) -> None:
+async def test_page_without_extension_offers_log_in_here(login_gateway: tuple[str, Path], chromium: None) -> None:
     base, _ = login_gateway
     async with connect(f"{base}/mcp", "auto") as client:
         link = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))["url"]
@@ -286,8 +286,9 @@ async def test_page_without_extension_explains(login_gateway: tuple[str, Path], 
         browser = await pw.chromium.launch(channel="chromium", headless=True)
         page = await browser.new_page()
         await page.goto(link)
-        await page.wait_for_selector("#ext-missing:not([hidden])", timeout=10_000)
-        assert await page.is_disabled("#connect")
+        await page.wait_for_timeout(500)  # give the extension ping time to fail
+        assert await page.is_visible("#browser") and await page.is_enabled("#browser")
+        assert await page.is_hidden("#connect")  # no extension: only "log in here"
         await browser.close()
 
 
@@ -305,5 +306,8 @@ async def test_link_routes_and_auth_boundaries(login_gateway: tuple[str, Path]) 
         link = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))["url"]
     page = httpx.get(link)
     assert page.status_code == 200 and "Connect fixture.test" in page.text
+    token = link.rsplit("/", 1)[1]
+    assert httpx.get(f"{base}/neko/{token}/").status_code == 404  # no login browser started
+    assert httpx.post(f"{link}/browser").status_code == 400  # this gateway has no Neko
     assert manifest_extension_id() in page.text
     assert httpx.get(link + "/status").json()["status"] == "pending"
