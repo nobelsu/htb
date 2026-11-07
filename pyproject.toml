@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "htb-mapper"
+version = "0.1.0"
+description = "Capture websites and map their internal HTTP calls into agent-callable action cards"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "jsonpath-ng==1.16.0",
+    "playwright==1.64.1",
+]
+
+[project.optional-dependencies]
+# LLM steps are optional: without ANTHROPIC_API_KEY the pipeline uses deterministic fallbacks.
+llm = ["anthropic==2.6.0"]
+dev = [
+    "pytest==9.2.0",
+    "ruff==0.17.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["mapper*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests/mapper"]
+addopts = ["--import-mode=importlib", "-ra"]
+markers = [
+    "browser: needs a Playwright Chromium install (skipped when unavailable)",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
