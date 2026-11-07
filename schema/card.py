@@ -143,14 +143,10 @@ class Action(_Model):
     cache_ttl_s: int | None = Field(default=None, ge=0)
     rate_limit_per_min: int | None = Field(default=None, gt=0)
 
-    def _inherit(self, field: str, defaults: Defaults) -> Any:
-        # An explicit value on the action (even null) wins over defaults.
-        if field in self.model_fields_set:
-            return getattr(self, field)
-        return getattr(defaults, field)
+    # For these fields an explicit value on the action (even null) wins over defaults.
 
     def effective_auth_provider(self, defaults: Defaults) -> str | None:
-        return self._inherit("auth_provider", defaults)
+        return self.auth_provider if "auth_provider" in self.model_fields_set else defaults.auth_provider
 
     def effective_tier(self, defaults: Defaults) -> Tier:
         return self.tier if self.tier is not None else defaults.tier
@@ -159,10 +155,12 @@ class Action(_Model):
         return self.timeout_ms if self.timeout_ms is not None else defaults.timeout_ms
 
     def effective_cache_ttl_s(self, defaults: Defaults) -> int | None:
-        return self._inherit("cache_ttl_s", defaults)
+        return self.cache_ttl_s if "cache_ttl_s" in self.model_fields_set else defaults.cache_ttl_s
 
     def effective_rate_limit_per_min(self, defaults: Defaults) -> int | None:
-        return self._inherit("rate_limit_per_min", defaults)
+        if "rate_limit_per_min" in self.model_fields_set:
+            return self.rate_limit_per_min
+        return defaults.rate_limit_per_min
 
     def write_step_index(self) -> int | None:
         """Index of the first step whose method is not GET/HEAD, or None."""

@@ -55,7 +55,7 @@ def escape_restli(value: str) -> str:
     return out
 
 
-def _to_int(value: Any) -> int:
+def to_int(value: Any) -> int:
     if isinstance(value, bool):
         raise TemplateError(f"cannot convert boolean {value!r} to int")
     if isinstance(value, int):
@@ -77,10 +77,10 @@ def apply_filter(value: Any, f: Filter) -> Any:
         s = to_text(value)
         return s[1:-1] if len(s) >= 2 and s[0] == '"' and s[-1] == '"' else s
     if f.name == "int":
-        return _to_int(value)
+        return to_int(value)
     if f.name == "offset":
         assert f.arg is not None
-        return (_to_int(value) - 1) * f.arg
+        return (to_int(value) - 1) * f.arg
     if f.name == "escape_restli":
         return escape_restli(to_text(value))
     raise TemplateError(f"unknown filter {f.name!r}")  # validate_card prevents this

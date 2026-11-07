@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from jsonpath_ng.ext import parse as jp_parse
+from jsonpath_ng.ext.parser import parse as jp_parse
 from pydantic import ValidationError
 
 from schema.card import Action, Card, Request
@@ -200,8 +200,8 @@ class _Checker:
 
         if a.kind == "read" and not a.examples:
             self.err(f"{n}: read action needs at least one example")
-        for i, ex in enumerate(a.examples):
-            _, errs = coerce_params(a.params, ex.params)
+        for i, example in enumerate(a.examples):
+            _, errs = coerce_params(a.params, example.params)
             for k in [k for k in errs if k.startswith("_")]:
                 errs[k] = "examples may not use reserved params"
             if errs:

@@ -11,13 +11,15 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **D4 `retry_after_s` (asked, my suggestion).** Lives in the error object: `error.retry_after_s`, from the
   `Retry-After` header (seconds), `null` when absent. The only addition to the spec's `error` shape.
 - **D5 Status not in `expect.status` (asked).** A 2xx/3xx not in the list → `PAGE_CHANGED` (row 6).
-  A 4xx that *is* listed in `expect.status` counts as expected and skips rows 1–5.
+  A status that *is* listed in `expect.status` (even a 4xx/5xx) is expected: the status-only rules (429, 401, 5xx,
+  4xx probe) don't fire for it. Signal rules (`logged_out_signals`, `blocked_signals`) still apply.
 - **D6 Probe outcome (asked).** Probe fails with the same 4xx → `PAGE_CHANGED`. Anything else (success, EMPTY,
   5xx, a different 4xx, BLOCKED...) → `ERROR`, with the probe's result in the message. No heal on unclear evidence.
 - **D7 Tiers (asked).** Only `http` exists. Cards whose effective tier is `impersonate`/`browser` run on `http`;
   `meta.tier` reports `"http"`. Ladder escalation is a TODO, so `BLOCKED` is returned directly.
-- **D8 Sessions (asked).** A `SessionStore` interface. Tests use an in-memory store; for local dev, cookies can be
-  loaded from `.env` (`DEV_SESSION_COOKIES`). The remote-login flow will fill the store later.
+- **D8 Sessions (asked).** A `SessionStore` interface keyed by (user, domain, provider id). Tests use an in-memory
+  store; for local dev, cookies can be loaded from `.env` (`DEV_SESSION_COOKIES`,
+  `{"<domain>": {"<provider_id>": {"<cookie>": "<value>"}}}`). The remote-login flow will fill the store later.
 
 ## Schema / validation
 - Card models use `extra="forbid"`: unknown fields are rejected at save time, so typos surface early.
@@ -65,3 +67,38 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   goes from `ERROR` (unknown id, probe passes) to `PAGE_CHANGED` (probe gets the same 404).
 - `add_to_cart` SKU prefixes drive write outcomes: `SLOW-` stores then stalls past the timeout, `FAIL-` 500s without
   storing, `GHOST-` answers 201 without storing.
+
+## Executor
+- **Evaluation per response**, first match wins: 429 → `RATE_LIMITED` (no retry) · 401 or `logged_out_signals` →
+  `AUTH_EXPIRED` (`ERROR` if no auth) · `blocked_signals` → `BLOCKED` · 5xx/timeout → retry rules · 4xx →
+  `changed_signals` then probe · status not in `expect.status` → `PAGE_CHANGED` · content type · `expect.paths`.
+  Then extracts; a body that cannot be read as the extract needs (not JSON, regex match not JSON) → `PAGE_CHANGED`.
+- **Write steps.** In a non-idempotent action, every non-GET/HEAD step at or after the first one is a write step
+  (never retried; timeout/5xx → `UNKNOWN_OUTCOME`). GET/HEAD steps anywhere, and every step of an idempotent action,
+  are retried once on timeout/5xx.
+- **Transport errors.** A connect failure (request certainly not sent) is treated like a 5xx for reads, and as
+  `ERROR` "write was not sent" for write steps. Other transport errors (sent, no response) are like a timeout.
+- **Probe.** Uses `examples[0]`, with a fresh cookie jar, inside the same 30 s budget, and with probing (and heal
+  queueing) disabled. "Same status" = the example run ended in `ERROR` because of the same 4xx, at any step.
+- **`_confirmation_id`** on an action without `requires_confirmation` → `BAD_PARAMS`. The id is checked only once
+  the params themselves are valid. The id format is `c_` + base64url(`expires_at.hmac_hex`); `expires_at` is a
+  Unix timestamp; the HMAC (SHA-256) covers `user|domain|action|canonical_params|expires_at`. `summary` is
+  `"<description> Params: <canonical_params>"`.
+- **User.** A single API key means a single user, `"default"`. Per-user keys are a TODO.
+- **Single-value extract errors** report `error.step` = the step that *extracted* the value (where the bad data
+  came from). `EMPTY` envelopes have `error: null` and `data: []` (or `null` if `output.from` is null).
+- **`until`** follows the single-value rule literally: zero matches → `EMPTY`, several → `PAGE_CHANGED`, a value
+  that is not an integer → `PAGE_CHANGED`. Without `until`, a next page exists when the raw item count (before
+  `limit`) is at least `page_size`. `next_params` is only set on `SUCCESS`.
+- **`output.fields`**: the first match is used. Raw items that are not objects/arrays project to all-null fields.
+- **Verify** runs after `SUCCESS`/`EMPTY` and after `UNKNOWN_OUTCOME`. It passes when the status is in
+  `verify.expect.status`, the content type and paths check out, and the assert has at least one match with every match
+  equal to `equals`. Any failure, including a timeout, → `VERIFY_FAILED` (`step: "verify"`), never retried.
+  `VERIFY_FAILED` keeps the run's `data`. Verify after `UNKNOWN_OUTCOME` passing → `SUCCESS`.
+- **Timeouts.** Step → action → defaults → 10 s, each attempt limited by what is left of the 30 s action budget.
+  The budget being used up counts as a timeout.
+- **Redaction.** Headers whose names contain cookie/csrf/xsrf/auth/token/session/api-key are logged as
+  `[redacted]`; requests are only logged at DEBUG. Session cookie values are scrubbed from every error message.
+  Envelopes never include headers or cookies.
+- **Out of scope stubs.** `NoHealQueue` (PAGE_CHANGED → `heal: null`), and TODOs for cache, rate limits,
+  EMPTY tracking, ladder escalation and the impersonate/browser tiers.
