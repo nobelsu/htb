@@ -1,12 +1,9 @@
 """The login flow behind start_connection / poll_connection / connection_status.
 
-start_connection returns a link to our connect page, which offers two ways in:
-- **Log in here**: a real Chromium in a short-lived Neko container, streamed to the user over WebRTC
-  (runtime/neko). The user logs in to the site inside it; we watch its cookies.
-- **Connect with the extension**: the user logs in to the site in their own browser and our extension sends
-  that one site's cookies back (runtime/connect_page.py).
-Either way, cookies are verified with the provider's session_check before being stored encrypted. The password
-never reaches us or the agent.
+start_connection returns a link to our connect page. There the user clicks "Log in" and signs in to the site
+inside a real Chromium in a short-lived Neko container, streamed over WebRTC (runtime/neko). We watch its cookies
+and verify them with the provider's session_check before storing them encrypted. The password never reaches us
+or the agent.
 """
 
 from __future__ import annotations
@@ -18,7 +15,6 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
-from urllib.parse import urlsplit
 
 from runtime.browser.pool import BrowserPool
 from runtime.executor import Executor
@@ -29,11 +25,11 @@ from runtime.tiers import ProfileKey
 from schema import Card, ResultCode
 
 log = logging.getLogger("runtime.connect")
+MAX_POLL_WAIT_S = 45.0
+UNOPENED_POLL_WAIT_S = 6.0  # until the link is opened, don't hold the agent: it may not have sent the link
 R = ResultCode
 
 ConnStatus = Literal["pending", "connected", "expired"]
-MAX_COOKIES = 300
-MAX_COOKIE_BYTES = 16_384
 
 
 @dataclass
@@ -48,6 +44,11 @@ class Connection:
     status: ConnStatus = "pending"
     message: str = "waiting for the user to connect"
     browser_task: asyncio.Task[None] | None = None  # the "log in here" watcher, if started
+    # True when the provider's session_check also passes with no cookies at all: it can't tell signed-in from
+    # signed-out, so we wait for the user to confirm instead of auto-connecting (None = not checked yet).
+    check_is_weak: bool | None = None
+    first_cookies: dict[str, str] | None = None  # the login browser's cookies when first read
+    page_opened: bool = False  # someone loaded the connect page (so the user has the link)
 
     def refresh(self) -> None:
         if self.status == "pending" and time.time() > self.expires_at:
@@ -66,17 +67,9 @@ class Connection:
             out["url"] = f"{base_url}/connect/{self.token}"
         return out
 
-    def cookie_origins(self, card_domain: str) -> list[str]:
-        """Host-permission patterns the extension asks the user for (the site's host and its domain)."""
-        parts = urlsplit(self.base_url)
-        scheme, host = parts.scheme or "https", parts.hostname or card_domain
-        origins = [f"{scheme}://{host}/*"]
-        if host != card_domain and host.endswith("." + card_domain):
-            origins.append(f"{scheme}://*.{card_domain}/*")  # cookies set on the parent domain (e.g. .linkedin.com)
-        return origins
 
 
-class CookieImportError(ValueError):
+class ConnectError(ValueError):
     pass
 
 
@@ -139,24 +132,48 @@ class ConnectionManager:
 
     def _with_instructions(self, conn: Connection) -> dict[str, Any]:
         out = conn.public(self.public_base_url)
+        out["user_message"] = _poll_message(conn, out.get("url"))
         out["instructions"] = (
-            f"Give the user this link. It opens a page where they log in to {conn.domain} themselves (in a secure "
-            "browser shown on the page, or with our browser extension if they have it). Their password is never "
-            "shared with you or us. Then call poll_connection until status is 'connected', and retry the original "
-            "tool."
+            "The user can't see this result. In this same reply: first write the user_message exactly as given (it "
+            "is a markdown link), then immediately call poll_connection (don't end your turn): it waits until they've "
+            "signed in. "
+            "Their password is never shared with you. If it returns 'pending', call it again. Once 'connected', "
+            "retry the original tool."
         )
         return out
 
-    def poll(self, user: str, domain: str) -> dict[str, Any]:
+    async def poll(self, user: str, domain: str, wait_s: float = 0.0, opened: bool = False) -> dict[str, Any]:
+        """Report the latest sign-in. With wait_s, hold until it finishes (or wait_s passes) before answering.
+
+        `opened`: the client confirmed the user was sent to the link (URL elicitation), so wait the full time.
+        """
         conn = self._latest.get((user, domain))
         if conn is None:
             return self.status(user, domain)
+        if opened:
+            conn.page_opened = True
+        started = time.monotonic()
+        wait_s = max(0.0, min(wait_s, MAX_POLL_WAIT_S))
+        while True:
+            conn.refresh()
+            limit = wait_s if conn.page_opened else min(wait_s, UNOPENED_POLL_WAIT_S)
+            if conn.status != "pending" or time.monotonic() - started >= limit:
+                break
+            await asyncio.sleep(0.25)
         out = conn.public(self.public_base_url)
+        out["user_message"] = _poll_message(conn, out.get("url"))
         out["hint"] = {
             "connected": "connected: call the original tool again",
-            "pending": "still waiting for the user; poll again in a few seconds",
+            "pending": "still waiting for the user to sign in; call poll_connection again",
             "expired": "call start_connection again for a new link",
         }[conn.status]
+        out["link_opened"] = conn.page_opened
+        if conn.status == "pending" and not conn.page_opened:
+            out["hint"] = (
+                "The user hasn't opened the sign-in link yet, probably because they haven't seen it: they can't see "
+                "tool results. Write the user_message (with the link) in your reply to them now, then call "
+                "poll_connection again."
+            )
         return out
 
     def status(self, user: str, domain: str) -> dict[str, Any]:
@@ -181,7 +198,28 @@ class ConnectionManager:
                     "browser_warm": bool(self.pool and self.pool.is_warm(ProfileKey(user, domain, p.id))),
                 }
             )
-        return {"domain": domain, "login_needed": bool(card.connect_providers), "providers": providers}
+        states = {p["status"] for p in providers}
+        if not providers:
+            message = f"{domain} doesn't need you to sign in."
+        elif "connected" in states:
+            message = f"You're signed in to {domain}."
+        elif "pending" in states:
+            message = f"Waiting for you to finish signing in to {domain}."
+        elif "expired" in states:
+            message = f"Your sign-in to {domain} has expired, so you'll need to sign in again."
+        else:
+            message = f"You're not signed in to {domain}."
+        return {
+            "domain": domain,
+            "login_needed": bool(card.connect_providers),
+            "user_message": message,
+            "providers": providers,
+        }
+
+    def mark_opened(self, token: str) -> None:
+        conn = self._by_token.get(token)
+        if conn is not None:
+            conn.page_opened = True
 
     def by_token(self, token: str) -> Connection | None:
         conn = self._by_token.get(token)
@@ -200,46 +238,59 @@ class ConnectionManager:
         conn.status, conn.message = "connected", f"connected to {conn.domain}"
         log.info("%s connected to %s via %s (%d cookies)", conn.user, conn.domain, via, len(jar))
 
-    # ---- extension capture (called by the connect page's endpoint) ---------
-
-    async def import_cookies(self, token: str, cookies: Any) -> Connection:
-        """Verify and store cookies the extension captured. Raises CookieImportError with a user-facing reason."""
-        conn = self.by_token(token)
-        if conn is None:
-            raise CookieImportError("unknown login link")
-        if conn.status != "pending":
-            raise CookieImportError(f"this link is {conn.status}")
-        jar = _parse_cookies(cookies)
-        if not jar:
-            raise CookieImportError(f"no cookies found for {conn.domain}; log in to {conn.domain} first")
-        code = await self._verify(conn, jar)
-        if code is not None:
-            conn.message = f"those cookies are not logged in ({code.value}); log in to {conn.domain}, then try again"
-            log.info("cookie import for %s on %s rejected: %s", conn.user, conn.domain, code.value)
-            raise CookieImportError(conn.message)
-        self._connected(conn, jar, "the extension")
-        await self._stop_browser(conn)
-        return conn
-
     # ---- "log in here": a Neko login browser ------------------------------
 
-    async def start_browser_login(self, token: str) -> str:
-        """Start (or reuse) the login browser for this link. Returns the viewer path. Raises CookieImportError."""
+    async def start_browser_login(self, token: str) -> dict[str, Any]:
+        """Start (or reuse) the login browser for this link. Raises ConnectError.
+
+        Returns {"viewer": path, "confirm": bool}: confirm=True means the user must click "I've signed in"
+        because the site's session_check can't tell signed-in from signed-out.
+        """
         conn = self.by_token(token)
         if conn is None:
-            raise CookieImportError("unknown login link")
+            raise ConnectError("unknown login link")
         if conn.status != "pending":
-            raise CookieImportError(f"this link is {conn.status}")
+            raise ConnectError(f"this link is {conn.status}")
         if self.neko is None:
-            raise CookieImportError("logging in here is not available on this server; use the extension")
+            raise ConnectError("signing in is not available on this server right now")
         try:
             session = await self.neko.launch(conn.token, conn.login_url, [conn.base_url])
         except NekoUnavailable as e:
             log.warning("login browser unavailable: %s", e)
-            raise CookieImportError(f"the login browser could not start ({e})") from None
+            raise ConnectError(f"the login browser could not start ({e})") from None
+        if conn.check_is_weak is None:
+            conn.check_is_weak = await self._verify(conn, {}) is None
+            if conn.check_is_weak:
+                log.info("session_check for %s passes without cookies; asking the user to confirm", conn.domain)
         if conn.browser_task is None:
             conn.browser_task = asyncio.get_running_loop().create_task(self._watch_browser(conn))
-        return session.viewer_path()
+        return {"viewer": session.viewer_path(), "confirm": conn.check_is_weak}
+
+    async def confirm_browser_login(self, token: str) -> Connection:
+        """The user clicked "I've signed in". Raises ConnectError with a user-facing reason."""
+        conn = self.by_token(token)
+        if conn is None:
+            raise ConnectError("unknown login link")
+        if conn.status != "pending":
+            raise ConnectError(f"this link is {conn.status}")
+        if self.neko is None or self.neko.get(conn.token) is None:
+            raise ConnectError("start the sign-in first")
+        try:
+            jar = await self.neko.cookies(conn.token, conn.base_url)
+        except Exception:
+            raise ConnectError("the sign-in browser isn't responding; try again in a moment") from None
+        not_yet = f"It doesn't look like you've signed in to {conn.domain} yet. Finish signing in, then try again."
+        if not jar:
+            raise ConnectError(not_yet)
+        if conn.check_is_weak:
+            # The check can't verify the login, so at least require that signing in changed the cookies.
+            if conn.first_cookies is not None and jar == conn.first_cookies:
+                raise ConnectError(not_yet)
+        elif await self._verify(conn, jar) is not None:
+            raise ConnectError(not_yet)
+        self._connected(conn, jar, "the login browser (confirmed)")
+        await self._stop_browser(conn)
+        return conn
 
     async def _watch_browser(self, conn: Connection) -> None:
         assert self.neko is not None
@@ -254,6 +305,10 @@ class ConnectionManager:
                 except Exception as e:  # container restarting, DevTools briefly unavailable...
                     log.debug("reading login browser cookies failed: %s", e)
                     continue
+                if conn.first_cookies is None:
+                    conn.first_cookies = dict(jar)
+                if conn.check_is_weak:
+                    continue  # can't tell signed-in from signed-out: wait for "I've signed in"
                 if jar and await self._verify(conn, jar) is None:
                     self._connected(conn, jar, "the login browser")
                     return
@@ -303,11 +358,17 @@ class ConnectionManager:
             conn.status, conn.message = "expired", "disconnected by the user"
             await self._stop_browser(conn)
         log.info("%s disconnected from %s (%s)", user, domain, ", ".join(ids) or "no providers")
+        was_connected = any(r["was_connected"] for r in results)
         return {
             "domain": domain,
             "disconnected": True,
-            "providers": results,
-            "next_step": "the agent will get AUTH_REQUIRED for this site until the user connects again",
+            "user_message": (
+                f"You're signed out of {domain}. To use it again, you'll need to sign in."
+                if was_connected
+                else f"You weren't signed in to {domain}, so there was nothing to sign out of."
+            ),
+            "next_step": "tools for this site will ask the user to sign in again (AUTH_REQUIRED)",
+            "details": {"providers": results},  # for the agent's logic, not for the user
         }
 
     # ---- keep-alive --------------------------------------------------------
@@ -346,27 +407,16 @@ class ConnectionManager:
                 log.exception("keep-alive failed")
 
 
-def _parse_cookies(raw: Any) -> dict[str, str]:
-    """Accept the extension's list of chrome.cookies objects (or a name->value dict); keep name -> value."""
-    if isinstance(raw, dict):
-        items = [{"name": k, "value": v} for k, v in raw.items()]
-    elif isinstance(raw, list):
-        items = raw
-    else:
-        raise CookieImportError("cookies must be a list")
-    if len(items) > MAX_COOKIES:
-        raise CookieImportError("too many cookies")
-    jar: dict[str, str] = {}
-    for item in items:
-        if not isinstance(item, dict):
-            raise CookieImportError("each cookie must be an object")
-        name, value = item.get("name"), item.get("value")
-        if not isinstance(name, str) or not isinstance(value, str) or not name:
-            raise CookieImportError("each cookie needs a string name and value")
-        if len(name) + len(value) > MAX_COOKIE_BYTES:
-            raise CookieImportError(f"cookie {name!r} is too large")
-        jar[name] = value
-    return jar
+def _poll_message(conn: Connection, url: str | None) -> str:
+    """The plain-language line the agent shows the user about this sign-in."""
+    if conn.status == "connected":
+        return f"You're signed in to {conn.domain}."
+    if conn.status == "expired":
+        return f"That sign-in link for {conn.domain} has expired. I can get you a new one."
+    minutes = max(1, int((conn.expires_at - time.time()) // 60))
+    return f"**[Sign in to {conn.domain} →]({url})** (the link works for {minutes} more minutes)"
+
+
 
 
 def _iso(ts: float) -> str:
