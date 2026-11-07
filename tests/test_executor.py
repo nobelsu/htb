@@ -250,8 +250,9 @@ async def test_blocked_by_challenge_page(executor: Executor, stored: StoredCard)
 
 async def test_blocked_by_status(executor: Executor, stored: StoredCard, site_url: str) -> None:
     env = await call(executor, stored, "forbidden")
-    assert env.status == R.BLOCKED
-    assert hits(site_url) == {"GET /api/forbidden": 1}  # not probed, not retried
+    assert env.status == R.BLOCKED and env.meta.tier == "impersonate"
+    assert env.error is not None and "tiers tried: http, impersonate" in env.error.message
+    assert hits(site_url) == {"GET /api/forbidden": 2}  # one per tier; not probed, not 5xx-retried
 
 
 # ---- ERROR: 5xx / timeout --------------------------------------------------

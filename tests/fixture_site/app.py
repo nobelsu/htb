@@ -181,6 +181,72 @@ async def slow(ms: int = 1000) -> dict[str, Any]:
     return {"status": {"ok": True}}
 
 
+# ---- bot-guarded endpoints (for the impersonate tier) ------------------------
+# A real site would check the TLS fingerprint; here a Chrome User-Agent plus client-hint headers stand in.
+
+
+def looks_like_browser(request: Request) -> bool:
+    return "Chrome/" in request.headers.get("user-agent", "") and "sec-ch-ua" in request.headers
+
+
+CHALLENGE_HTML = "<html><title>Just a moment...</title><div id='cf-challenge'></div></html>"
+
+
+@app.get("/api/guarded/products")
+def guarded_products(request: Request, q: str = "") -> Response:
+    if not looks_like_browser(request):
+        return HTMLResponse(CHALLENGE_HTML, status_code=403)
+    return JSONResponse({"results": [p for p in PRODUCTS if q.lower() in p["name"].lower()][:5]})
+
+
+@app.get("/api/guarded/flow-finish")
+def guarded_flow_finish(request: Request, flow: str | None = Cookie(default=None)) -> Response:
+    if not looks_like_browser(request):
+        return HTMLResponse(CHALLENGE_HTML)  # 200 challenge page
+    if flow != "flow-token-1":
+        return JSONResponse({"error": "flow cookie missing"}, status_code=400)
+    return JSONResponse({"result": [{"order_id": "o-guarded", "status": "done"}]})
+
+
+@app.get("/api/guarded/token")
+def guarded_token(request: Request) -> Response:
+    if not looks_like_browser(request):
+        return HTMLResponse(CHALLENGE_HTML, status_code=403)
+    return JSONResponse({"token": "t-1"})
+
+
+@app.post("/api/guarded/cart")
+async def guarded_cart(request: Request) -> Response:
+    """Hard block: non-browsers get a 403 and nothing is stored."""
+    if not looks_like_browser(request):
+        return HTMLResponse(CHALLENGE_HTML, status_code=403)
+    body = await request.json()
+    state.cart[str(body["sku"])] = state.cart.get(str(body["sku"]), 0) + 1
+    return JSONResponse({"ok": True}, status_code=201)
+
+
+@app.post("/api/guarded/cart-soft")
+async def guarded_cart_soft(request: Request) -> Response:
+    """Soft block: the write is applied, then a 200 challenge page is returned to non-browsers."""
+    body = await request.json()
+    state.cart[str(body["sku"])] = state.cart.get(str(body["sku"]), 0) + 1
+    if not looks_like_browser(request):
+        return HTMLResponse(CHALLENGE_HTML)
+    return JSONResponse({"ok": True}, status_code=201)
+
+
+@app.get("/api/echo")
+def echo(request: Request) -> dict[str, Any]:
+    return {"url": str(request.url), "headers": dict(request.headers), "cookies": dict(request.cookies)}
+
+
+@app.get("/api/redirect-to-echo")
+def redirect_to_echo() -> Response:
+    resp = RedirectResponse("/api/echo?via=redirect", status_code=302)
+    resp.set_cookie("hop", "1")
+    return resp
+
+
 @app.get("/api/challenge")
 def challenge() -> HTMLResponse:
     return HTMLResponse("<html><title>Just a moment...</title><div id='cf-challenge'></div></html>")
