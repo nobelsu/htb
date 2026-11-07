@@ -18,7 +18,7 @@ Stored in SQLite `action_maps.map_json`, one row per version, one active version
 |---|---|
 | `schema_version` | `"0.4"` (matches this spec) |
 | `domain` | Registry key, e.g. `linkedin.com` |
-| `tool_prefix` | `[a-z0-9_]{1,20}`. MCP tool name = `{tool_prefix}_{action.name}`, at most 64 characters |
+| `tool_prefix` | `[a-z0-9_]{1,20}`. A short name for the site (`{tool_prefix}_{action.name}` at most 64 characters). Not used for MCP tool names since the generic tools |
 | `base_url` | Fills `{{base_url}}` |
 | `blocked_signals` | Signals meaning "bot-blocked" (see Signals) |
 | `changed_signals` | Optional. Signals meaning "this endpoint no longer exists", e.g. `body_contains:PersistedQueryNotFound` |
@@ -39,7 +39,8 @@ Stored in SQLite `action_maps.map_json`, one row per version, one active version
 ## Params
 Each param: `type` (`string` | `integer` | `number` | `boolean` | `enum`), `required`, optional `default`, `description`, `example`, and `values` for `enum`.
 - A param is never both `required` and given a `default`.
-- The MCP tool's input schema is generated from `params`. The tool description is `action.description`.
+- The action's input schema is generated from `params`, and its description is `action.description`. Agents see
+  them through `find_actions` and call the action with `run_action`.
 - Validation failure → `BAD_PARAMS`, before any request.
 
 ## Inheritance
@@ -210,7 +211,11 @@ Evaluated **in this order**, first match wins:
    - If nothing changed in the end, no new version is saved.
 
 ## Runtime tools (not part of the card)
-Besides one tool per action, the MCP server exposes: `connection_status(domain)`, `start_connection(domain)` → URL, `poll_connection(domain)`, `heal_status(job_id)`.
+*Changed 2026-11-07 (decided by Nobel): generic tools only.* The MCP server exposes a small fixed set of tools:
+`find_actions(query?, site?)` (search the actions of every active card; returns each action's site, description and
+parameters), `run_action(site, action, params, confirmation_id?)` (runs one action and returns the result envelope),
+`connection_status(domain)`, `start_connection(domain)` → URL, `poll_connection(domain)`, `disconnect(domain)` and
+`heal_status(job_id)`. Sites are identified by their `domain`. There is no longer one MCP tool per action.
 
 ## Mapper notes
 - **Search marker:** search with a distinctive marker value, then look for it in raw, URL-encoded, JSON-escaped and Rest.li-escaped forms. The form found decides the filter (found Rest.li-escaped → `escape_restli`).

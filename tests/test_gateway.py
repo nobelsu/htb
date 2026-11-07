@@ -53,6 +53,11 @@ async def connect(url: str, mode: str, message_handler: Any = None) -> AsyncIter
             yield client
 
 
+def act(action: str, params: dict[str, Any] | None = None, site: str = "fixture.test") -> tuple[str, dict[str, Any]]:
+    """Arguments for a run_action call: `client.call_tool(*act("search_products", {"query": "lamp"}))`."""
+    return "run_action", {"site": site, "action": action, "params": params or {}}
+
+
 def envelope(result: types.CallToolResult) -> dict[str, Any]:
     first = result.content[0]
     assert isinstance(first, types.TextContent)
@@ -72,17 +77,16 @@ def test_requires_bearer_key(mcp_url: str) -> None:
 async def test_list_and_call(mcp_url: str, mode: str) -> None:
     async with connect(mcp_url, mode) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-        assert "shop_search_products" in tools and "shop_add_to_cart" in tools
-        search = tools["shop_search_products"]
-        assert search.description and search.description.startswith("Search the shop's products")
-        assert search.input_schema["required"] == ["query"]
-        assert search.input_schema["properties"]["page"]["default"] == 1
-        cart = tools["shop_add_to_cart"]
-        assert "_confirmation_id" in cart.input_schema["properties"]
-        assert cart.description and "explicit approval" in cart.description
-        assert "explicitly approved" in cart.input_schema["properties"]["_confirmation_id"]["description"]
+        assert {"find_actions", "run_action"} <= set(tools) and not any(n.startswith("shop_") for n in tools)
+        found = envelope(await client.call_tool("find_actions", {"site": "fixture.test"}))
+        by_name = {a["action"]: a for a in found["actions"]}
+        search = by_name["search_products"]
+        assert search["description"].startswith("Search the shop's products")
+        assert search["params"]["required"] == ["query"] and search["params"]["properties"]["page"]["default"] == 1
+        cart = by_name["add_to_cart"]
+        assert cart["requires_confirmation"] and "explicit approval" in cart["description"]
 
-        env = envelope(await client.call_tool("shop_search_products", {"query": "lamp"}))
+        env = envelope(await client.call_tool(*act("search_products", {"query": "lamp"})))
         assert env["status"] == "SUCCESS"
         assert env["data"][0]["name"] == "Desk lamp"
         assert env["next_params"] == {"query": "lamp", "page": 2}
@@ -91,31 +95,31 @@ async def test_list_and_call(mcp_url: str, mode: str) -> None:
 
 async def test_every_code_reachable_over_mcp(mcp_url: str, site_url: str) -> None:
     calls: list[tuple[str, dict[str, Any], str]] = [
-        ("shop_search_products", {"query": "lamp"}, "SUCCESS"),
-        ("shop_search_products", {"query": "zzz"}, "EMPTY"),
-        ("shop_search_products", {}, "BAD_PARAMS"),
-        ("shop_list_orders", {}, "AUTH_REQUIRED"),
-        ("shop_add_to_cart", {"sku": "SKU-001"}, "NEEDS_CONFIRMATION"),
-        ("shop_rate_limited", {}, "RATE_LIMITED"),
-        ("shop_challenge", {}, "BLOCKED"),
-        ("shop_flaky_status", {"key": "mcp", "fail": 5}, "ERROR"),
-        ("shop_changed_structure", {}, "PAGE_CHANGED"),
+        ("search_products", {"query": "lamp"}, "SUCCESS"),
+        ("search_products", {"query": "zzz"}, "EMPTY"),
+        ("search_products", {}, "BAD_PARAMS"),
+        ("list_orders", {}, "AUTH_REQUIRED"),
+        ("add_to_cart", {"sku": "SKU-001"}, "NEEDS_CONFIRMATION"),
+        ("rate_limited", {}, "RATE_LIMITED"),
+        ("challenge", {}, "BLOCKED"),
+        ("flaky_status", {"key": "mcp", "fail": 5}, "ERROR"),
+        ("changed_structure", {}, "PAGE_CHANGED"),
     ]
     async with connect(mcp_url, "auto") as client:
         for tool, args, expected in calls:
-            env = envelope(await client.call_tool(tool, args))
+            env = envelope(await client.call_tool(*act(tool, args)))
             assert env["status"] == expected, (tool, env)
 
         # Writes: confirm, then the three write outcomes.
         for sku, expected in [("SKU-002", "SUCCESS"), ("FAIL-1", "UNKNOWN_OUTCOME"), ("GHOST-1", "VERIFY_FAILED")]:
-            first = envelope(await client.call_tool("shop_add_to_cart", {"sku": sku}))
+            first = envelope(await client.call_tool(*act("add_to_cart", {"sku": sku})))
             conf_id = first["confirmation"]["id"]
-            env = envelope(await client.call_tool("shop_add_to_cart", {"sku": sku, "_confirmation_id": conf_id}))
+            env = envelope(await client.call_tool(*act("add_to_cart", {"sku": sku, "_confirmation_id": conf_id})))
             assert env["status"] == expected, (sku, env)
 
         # AUTH_EXPIRED needs a session; the gateway uses the executor's store.
         httpx.post(f"{site_url}/_admin/break")
-        env = envelope(await client.call_tool("shop_get_item", {"id": "p1"}))
+        env = envelope(await client.call_tool(*act("get_item", {"id": "p1"})))
         assert env["status"] == "PAGE_CHANGED" and "same HTTP 404" in env["error"]["message"]
 
 
@@ -124,14 +128,14 @@ async def test_auth_expired_over_mcp(gateway: Gateway, mcp_url: str) -> None:
     assert isinstance(store, InMemorySessionStore)
     store.put("default", "fixture.test", "shop", {"sid": "sid-revoked", "csrftoken": "x"})
     async with connect(mcp_url, "auto") as client:
-        env = envelope(await client.call_tool("shop_list_orders", {}))
+        env = envelope(await client.call_tool(*act("list_orders", {})))
         assert env["status"] == "AUTH_EXPIRED"
 
 
 async def test_unknown_tool(mcp_url: str) -> None:
     async with connect(mcp_url, "auto") as client:
-        result = await client.call_tool("shop_nope", {})
-        assert result.is_error
+        assert (await client.call_tool("nope_tool", {})).is_error
+        assert (await client.call_tool(*act("nope"))).is_error
 
 
 def changed_card(registry: Registry) -> dict[str, Any]:
@@ -145,48 +149,38 @@ def changed_card(registry: Registry) -> dict[str, Any]:
     return card
 
 
-async def test_card_change_notifies_legacy_client(registry: Registry, mcp_url: str) -> None:
-    got = anyio.Event()
+async def test_new_actions_appear_without_restart(registry: Registry, mcp_url: str, tmp_path: Path) -> None:
+    def names(out: dict[str, Any]) -> set[str]:
+        return {a["action"] for a in out["actions"]}
 
-    async def on_message(message: Any) -> None:
-        if isinstance(message, types.ToolListChangedNotification) or (
-            getattr(message, "method", None) == "notifications/tools/list_changed"
-        ):
-            got.set()
-
-    async with connect(mcp_url, "legacy", message_handler=on_message) as client:
-        before = {t.name for t in (await client.list_tools()).tools}
-        assert "shop_find_products" not in before
-        registry.save(changed_card(registry))
-        with anyio.fail_after(5):
-            await got.wait()
-        after = {t.name for t in (await client.list_tools()).tools}
-        assert "shop_find_products" in after
-
-
-async def test_card_change_notifies_modern_client(registry: Registry, mcp_url: str, tmp_path: Path) -> None:
     async with connect(mcp_url, "auto") as client:
-        assert client.session.protocol_version >= "2026"
-        async with client.listen(tools_list_changed=True) as sub:
-            # Simulate the mapper writing from another process.
-            other = Registry(tmp_path / "gw.db")
-            other.save(changed_card(other))
-            other.close()
-            with anyio.fail_after(5):
-                event = await sub.__anext__()
-            assert type(event).__name__ == "ToolsListChanged"
-        tools = {t.name for t in (await client.list_tools()).tools}
-        assert "shop_find_products" in tools
+        before = envelope(await client.call_tool("find_actions", {"site": "fixture.test"}))
+        assert "find_products" not in names(before)
+        tool_count = len((await client.list_tools()).tools)
+        other = Registry(tmp_path / "gw.db")  # the mapper writing from another process
+        other.save(changed_card(other))
+        other.close()
+        await anyio.sleep(0.3)  # the gateway refreshes the registry in the background
+        after = envelope(await client.call_tool("find_actions", {"site": "fixture.test"}))
+        assert "find_products" in names(after)
+        assert len((await client.list_tools()).tools) == tool_count  # the tool list itself never changes
+        env = envelope(await client.call_tool(*act("find_products", {"query": "lamp"})))
+        assert env["status"] == "SUCCESS" and env["meta"]["map_version"] == 2
 
 
-async def test_rollback_notifies_and_restores(registry: Registry, gateway: Gateway) -> None:
+async def test_rollback_is_picked_up(registry: Registry, gateway: Gateway) -> None:
+    from runtime.catalog import find_actions
+
+    def has_find_products() -> bool:
+        actions = find_actions(registry.active_cards(), site="fixture.test")["actions"]
+        return any(a["action"] == "find_products" for a in actions)
+
     registry.save(changed_card(registry))
-    assert await gateway.reload_if_changed()
-    assert "shop_find_products" in gateway.tool_names()
+    gateway.refresh_registry()
+    assert has_find_products()
     registry.rollback("fixture.test", 1)
-    assert await gateway.reload_if_changed()
-    assert "shop_find_products" not in gateway.tool_names()
-    assert not await gateway.reload_if_changed()
+    gateway.refresh_registry()
+    assert not has_find_products()
 
 
 async def test_break_and_heal_over_mcp(registry: Registry, tmp_path: Path, site_url: str) -> None:
@@ -201,7 +195,7 @@ async def test_break_and_heal_over_mcp(registry: Registry, tmp_path: Path, site_
         async with connect(f"{server.url}/mcp", "auto") as client:
             assert "heal_status" in {t.name for t in (await client.list_tools()).tools}
             httpx.post(f"{site_url}/_admin/break")
-            env = envelope(await client.call_tool("shop_get_item", {"id": "p1"}))
+            env = envelope(await client.call_tool(*act("get_item", {"id": "p1"})))
             assert env["status"] == "PAGE_CHANGED" and env["heal"]["retry_after_s"] == 30
             job_id = env["heal"]["job_id"]
             with anyio.fail_after(10):
@@ -211,7 +205,7 @@ async def test_break_and_heal_over_mcp(registry: Registry, tmp_path: Path, site_
                         break
                     await anyio.sleep(0.05)
             assert status["status"] == "succeeded" and status["new_version"] == 2
-            env = envelope(await client.call_tool("shop_get_item", {"id": "p1"}))
+            env = envelope(await client.call_tool(*act("get_item", {"id": "p1"})))
             assert env["status"] == "SUCCESS" and env["meta"]["map_version"] == 2
             missing = await client.call_tool("heal_status", {"job_id": "h_nope"})
             assert missing.is_error

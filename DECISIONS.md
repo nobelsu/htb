@@ -106,23 +106,16 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   EMPTY tracking, ladder escalation and the impersonate/browser tiers.
 
 ## Gateway (mcp SDK 2.3.0)
-- **Low-level `Server`** with `on_list_tools` / `on_call_tool`; input schemas come from `schema.params.input_schema`
-  (`additionalProperties: false`; actions with `requires_confirmation` also get an optional `_confirmation_id`).
-- **Both protocol eras are served.** 2026-07-28 clients get list-changed through `subscriptions/listen`
-  (`ListenHandler` + `InMemorySubscriptionBus`). Handshake-era clients get `notifications/tools/list_changed` on their
-  standalone stream; `tools.listChanged` is advertised by overriding `create_initialization_options`.
-- **Private SDK attribute.** To reach handshake-era clients outside a request, the gateway keeps each client's
-  `Connection`, which 2.3.0 only exposes as `ServerSession._connection` (the session object is a per-request proxy).
-  Isolated in `Gateway._track`; revisit when upgrading the SDK.
-- **Reload.** A background task polls `registry.refresh()` every second (catching writes from the mapper process),
-  rebuilds the tool table on any active-card change and notifies clients. Tool-name clashes across cards: first
-  domain (alphabetical) wins; the other is skipped with a warning.
+- **Low-level `Server`** with `on_list_tools` / `on_call_tool`. *Superseded:* the first version exposed one MCP tool
+  per card action (input schemas from `schema.params.input_schema`) and sent tool-list-changed notifications in both
+  protocol eras (via `subscriptions/listen` and, for handshake-era clients, the private `ServerSession._connection`).
+  All of that was removed with the switch to generic tools (see "Generic tools").
+- **Reload.** A background task polls `registry.refresh()` every second, catching cards saved by the mapper process;
+  they show up through `find_actions` straight away.
 - **Result shape.** The envelope is returned as JSON text content and as `structuredContent`. `isError` is `false`
   for every envelope (its `status` carries the outcome); `true` only for an unknown tool or an executor crash.
 - **Auth.** A plain ASGI middleware checks `Authorization: Bearer $GATEWAY_API_KEY` (constant-time compare) on every
   HTTP request, 401 otherwise. The SDK's OAuth `AuthSettings` path was not used (it needs an issuer, scopes etc.).
-- **Runtime tools** (`connection_status`, `start_connection`, `poll_connection`, `heal_status`) are not exposed yet:
-  sessions/login and healing are out of scope. `AUTH_REQUIRED`'s hint still names `start_connection` per the spec.
 - `--load card.json` saves the card on startup only if it differs from the active version.
 
 ## Confirmation guidance (added after the first Claude Code test)
@@ -213,6 +206,11 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   link-in-the-result flow above. Caveat found in testing: Claude Code declares URL elicitation but its desktop app
   and `claude -p` answer "cancel" instantly without showing anything, so "cancel" is treated as "the app couldn't
   show it": the result carries the link and tells the agent to write it and call poll_connection in the same turn. The gateway logs each client's name and elicitation support once.
+- **L6 Instant "decline" means the app answered (judgement call).** Since Claude Code 2.1.318 the desktop app
+  answers URL prompts with "decline" instead of "cancel", still within ~10 ms and without showing anything, so the
+  agent was told "cancelled" and stopped waiting. No person answers in under 2 s (`HUMAN_REPLY_MIN_S`), so a decline
+  faster than that gets the same fallback as "cancel" (agent writes the link, then calls poll_connection). A slower
+  decline is still a real "no".
 - **Neko details.** One container per login link (`ghcr.io/m1k1o/neko/chromium`, Neko 3.2), started when the user
   clicks "Log in", removed once connected or expired; leftovers are removed at startup (label `htb.neko`).
   Chromium runs in kiosk mode on the provider's `login_url`, at 1920x1200 with device scale 1.5 (sites lay out at
@@ -240,6 +238,14 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   session, closes and deletes the user's server-side browser profile for that site, and cancels a pending login
   link (stopping its Neko browser). It is idempotent and marked destructive in MCP (`destructiveHint`); its
   description tells agents to call it only when the user asks. It does not log the user out on the site itself.
+- **Generic tools only (asked; spec changed).** The gateway exposes a fixed set of tools instead of one per
+  action: `find_actions(query?, site?)` and `run_action(site, action, params, confirmation_id?)`, plus the sign-in
+  tools and `heal_status`. Reasons: Claude Code defers loading large tool sets ("Loaded tools" round trips cost
+  seconds per call), and a fixed set scales to any number of sites; new cards appear through `find_actions` without
+  a tool-list change. Search is a simple keyword score over each action's name (weighted), site, description and
+  parameter names, top 10. `run_action`'s `confirmation_id` maps to the card's `_confirmation_id`. The old
+  one-tool-per-action mode was removed entirely (asked), along with tool-list-changed notifications: the tool list
+  never changes.
 - **Plain language for users (asked).** What the agent tells the user should describe outcomes, not internals.
   The MCP server instructions ask agents not to mention tool names, status codes, sessions, cookies, browser
   profiles or cards unless the user asks how it works. The sign-in tools (`start_connection`, `poll_connection`,

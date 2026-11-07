@@ -22,7 +22,7 @@ from runtime.registry import Registry
 from runtime.session_store import EncryptedSessionStore, new_session_key
 from tests.conftest import LiveServer
 from tests.fixture_site.app import LOGIN_PASSWORD, LOGIN_USER
-from tests.test_gateway import API_KEY, connect, envelope
+from tests.test_gateway import API_KEY, act, connect, envelope
 
 DOMAIN = "fixture.test"
 IMAGE = NekoConfig().image
@@ -139,7 +139,7 @@ async def test_log_in_here_with_neko(neko_gateway: tuple[str, Path], site_url: s
         print(f"{engine}: stream {stream_size[0]}x{stream_size[1]}, playback {fps}x")
 
         assert envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "connected"
-        env = envelope(await client.call_tool("shop_list_orders", {}))
+        env = envelope(await client.call_tool(*act("list_orders", {})))
         assert env["status"] == "SUCCESS", env
 
     for _ in range(40):  # the login browser is removed once connected

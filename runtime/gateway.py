@@ -1,4 +1,5 @@
-"""MCP server: one tool per active card action, served over Streamable HTTP with Bearer-key auth.
+"""MCP server: a fixed set of generic tools (find_actions, run_action, sign-in, heal) over every active card,
+served over Streamable HTTP with Bearer-key auth.
 
 Run:  uv run python -m runtime.gateway --load tests/fixture_site.json
 """
@@ -11,23 +12,19 @@ import importlib
 import json
 import logging
 import os
-import threading
-import weakref
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import anyio
 import mcp_types as types
-from mcp.server.connection import Connection
-from mcp.server.lowlevel.server import NotificationOptions, Server
-from mcp.server.models import InitializationOptions
-from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, ToolsListChanged
+from mcp.server.lowlevel.server import Server
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from runtime.browser.pool import BrowserConfig, BrowserPool
+from runtime.catalog import find_actions
 from runtime.browser.tier import BrowserTier
 from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
@@ -35,13 +32,12 @@ from runtime.connect_page import routes as connect_routes
 from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
-from runtime.registry import Registry
+from runtime.registry import Registry, StoredCard
 from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
 from runtime.sessions import DevEnvSessionStore
 from runtime.tiers import default_tiers
 from runtime.state import StateStore
 from schema import load_card
-from schema.params import input_schema, tool_description
 
 log = logging.getLogger("runtime.gateway")
 
@@ -54,16 +50,10 @@ Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
-@dataclass(frozen=True)
-class ToolEntry:
-    domain: str
-    action: str
-    tool: types.Tool
-
-
 INSTRUCTIONS = (
-    "Tools that act on websites for the user. Every tool returns JSON; check its `status` field (SUCCESS, EMPTY, "
-    "NEEDS_CONFIRMATION, AUTH_REQUIRED, ...) to decide what to do next.\n"
+    "Tools that act on websites for the user. Use find_actions to discover what a site can do, then run_action "
+    "to do it. Every tool returns JSON; check its `status` field (SUCCESS, EMPTY, NEEDS_CONFIRMATION, "
+    "AUTH_REQUIRED, ...) to decide what to do next.\n"
     "When you talk to the user, describe outcomes in plain terms (\"You're signed out of linkedin.com\", "
     "\"Sign in here: <link>\", \"The site changed; I'll retry in a moment\"). Don't mention tool names, status "
     "codes, sessions, cookies, browser profiles, cards or other internals unless the user asks how it works. "
@@ -74,6 +64,44 @@ INSTRUCTIONS = (
     "it show the link to the user themselves; then start_connection simply returns once they've signed in.)"
 )
 
+
+FIND_ACTIONS_TOOL = types.Tool(
+    name="find_actions",
+    description="Find what you can do on websites for the user. Give a short description of the task (query), a "
+    "site (its domain, e.g. linkedin.com), or both. Returns matching actions with their parameters; then call "
+    "run_action. With no arguments it lists the available sites.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "what you want to do, e.g. 'search companies'"},
+            "site": {"type": "string", "description": "a site's domain, e.g. linkedin.com"},
+        },
+        "additionalProperties": False,
+    },
+    annotations=types.ToolAnnotations(read_only_hint=True),
+)
+
+RUN_ACTION_TOOL = types.Tool(
+    name="run_action",
+    description="Run an action from find_actions. Pass its params as an object. Returns JSON with a `status` "
+    "(SUCCESS, EMPTY, NEEDS_CONFIRMATION, AUTH_REQUIRED, ...) and the data. Actions that need confirmation first "
+    "return NEEDS_CONFIRMATION with a summary: show it to the user and, only after their explicit approval, call "
+    "again with identical params plus confirmation_id.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "site": {"type": "string", "description": "the site's domain, from find_actions"},
+            "action": {"type": "string", "description": "the action's name, from find_actions"},
+            "params": {"type": "object", "description": "the action's parameters, as described by find_actions"},
+            "confirmation_id": {
+                "type": "string",
+                "description": "from a NEEDS_CONFIRMATION result, only after the user explicitly approved it",
+            },
+        },
+        "required": ["site", "action"],
+        "additionalProperties": False,
+    },
+)
 
 HEAL_STATUS_TOOL = types.Tool(
     name="heal_status",
@@ -137,20 +165,6 @@ CONNECTION_TOOLS = {
 }
 
 
-class _Server(Server[dict[str, Any]]):
-    """Advertises `tools.listChanged` on handshake-era connections too."""
-
-    def create_initialization_options(
-        self,
-        notification_options: NotificationOptions | None = None,
-        experimental_capabilities: dict[str, dict[str, Any]] | None = None,
-        extensions: dict[str, dict[str, Any]] | None = None,
-    ) -> InitializationOptions:
-        return super().create_initialization_options(
-            notification_options or NotificationOptions(tools_changed=True), experimental_capabilities, extensions
-        )
-
-
 class Gateway:
     def __init__(
         self,
@@ -169,78 +183,25 @@ class Gateway:
         self.pool = pool
         self.keepalive_s = keepalive_s
         self.poll_interval_s = poll_interval_s
-        self.bus = InMemorySubscriptionBus()  # 2026-07-28 clients: subscriptions/listen
-        self._legacy_connections: weakref.WeakSet[Connection] = weakref.WeakSet()  # handshake-era clients
-        self._tools: dict[str, ToolEntry] = {}
         self._seen_clients: set[tuple[object, object, object]] = set()
-        self._dirty = threading.Event()
-        self.server = _Server(
+        self._prompted_at: dict[str, float] = {}  # sign-in token -> when we asked the client to show the link
+        self.server: Server[dict[str, Any]] = Server(
             "htb-runtime",
             version="0.1.0",
             instructions=INSTRUCTIONS,
             lifespan=self._lifespan,
             on_list_tools=self._list_tools,
             on_call_tool=self._call_tool,
-            on_subscriptions_listen=ListenHandler(self.bus),
         )
-        self.server.add_notification_handler(
-            "notifications/initialized", types.NotificationParams, self._on_initialized
-        )
-        registry.on_change(lambda _domain: self._dirty.set())
-        self.rebuild()
 
-    # ---- tool table --------------------------------------------------------
+    # ---- registry --------------------------------------------------------
 
-    def rebuild(self) -> None:
-        tools: dict[str, ToolEntry] = {}
-        for domain, stored in sorted(self.registry.active_cards().items()):
-            card = stored.card
-            for action in card.actions:
-                name = f"{card.tool_prefix}_{action.name}"
-                if name in tools:
-                    log.warning("tool %s from %s clashes with %s; skipped", name, domain, tools[name].domain)
-                    continue
-                tool = types.Tool(
-                    name=name,
-                    description=tool_description(action),
-                    input_schema=input_schema(action.params, action.requires_confirmation),
-                )
-                tools[name] = ToolEntry(domain, action.name, tool)
-        self._tools = tools
-        log.info("serving %d tools", len(tools))
-
-    def tool_names(self) -> list[str]:
-        return list(self._tools)
-
-    async def reload_if_changed(self) -> bool:
-        """Pick up registry changes (including from other processes) and notify clients."""
-        self.registry.refresh()
-        if not self._dirty.is_set():
-            return False
-        self._dirty.clear()
-        self.rebuild()
-        await self.notify_tools_changed()
-        return True
-
-    async def notify_tools_changed(self) -> None:
-        await self.bus.publish(ToolsListChanged())
-        for conn in list(self._legacy_connections):
-            await conn.send_tool_list_changed()  # best-effort; never raises
+    def refresh_registry(self) -> set[str]:
+        """Pick up cards saved by other processes (the mapper). The tool list never changes: new cards and
+        actions are found through find_actions."""
+        return self.registry.refresh()
 
     # ---- MCP handlers ------------------------------------------------------
-
-    def _track(self, ctx: Any) -> None:
-        """Remember handshake-era connections so list-changed can reach their standalone stream.
-
-        `ctx.session` is a per-request proxy; the long-lived per-client object is its `Connection`,
-        which the 2.3.0 SDK only exposes as `ServerSession._connection` (see DECISIONS.md).
-        """
-        conn = getattr(getattr(ctx, "session", None), "_connection", None)
-        if isinstance(conn, Connection) and conn.protocol_version not in MODERN_PROTOCOL_VERSIONS:
-            self._legacy_connections.add(conn)
-
-    async def _on_initialized(self, ctx: Any, params: types.NotificationParams) -> None:
-        self._track(ctx)
 
     def _log_client(self, ctx: Any) -> None:
         """Log each client's identity and elicitation support once (decides how sign-in links are shown)."""
@@ -265,9 +226,8 @@ class Gateway:
         )
 
     async def _list_tools(self, ctx: Any, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
-        self._track(ctx)
         self._log_client(ctx)
-        tools = [e.tool for e in self._tools.values()]
+        tools = [FIND_ACTIONS_TOOL, RUN_ACTION_TOOL]
         if self.healer is not None:
             tools.append(HEAL_STATUS_TOOL)
         if self.connections is not None:
@@ -277,20 +237,50 @@ class Gateway:
     async def _call_tool(
         self, ctx: Any, params: types.CallToolRequestParams
     ) -> types.CallToolResult | types.InputRequiredResult:
-        self._track(ctx)
         if params.name in CONNECTION_TOOLS and self.connections is not None:
             return await self._connection_tool(params.name, dict(params.arguments or {}), ctx, params)
         if params.name == HEAL_STATUS_TOOL.name and self.healer is not None:
             return self._heal_status(dict(params.arguments or {}))
-        entry = self._tools.get(params.name)
-        stored = self.registry.get(entry.domain) if entry else None
-        if entry is None or stored is None or stored.card.action(entry.action) is None:
-            return _error_result(f"unknown tool {params.name!r}")
+        if params.name == FIND_ACTIONS_TOOL.name:
+            return self._find_actions(dict(params.arguments or {}))
+        if params.name == RUN_ACTION_TOOL.name:
+            return await self._run_action(dict(params.arguments or {}))
+        return _error_result(f"unknown tool {params.name!r}")
+
+    def _find_actions(self, args: dict[str, Any]) -> types.CallToolResult:
+        query, site = args.get("query"), args.get("site")
+        if (query is not None and not isinstance(query, str)) or (site is not None and not isinstance(site, str)):
+            return _error_result("query and site must be strings")
+        out = find_actions(self.registry.active_cards(), query or None, site or None)
+        if "error" in out:
+            return _error_result(str(out["error"]))
+        return _json_result(out)
+
+    async def _run_action(self, args: dict[str, Any]) -> types.CallToolResult:
+        site, action, params = args.get("site"), args.get("action"), args.get("params", {})
+        if not isinstance(site, str) or not isinstance(action, str):
+            return _error_result("site and action (strings) are required; use find_actions to look them up")
+        if not isinstance(params, dict):
+            return _error_result("params must be an object")
+        stored = self.registry.get(site)
+        if stored is None:
+            return _error_result(f"unknown site {site!r}; use find_actions to see the available sites")
+        if stored.card.action(action) is None:
+            return _error_result(f"{site} has no action {action!r}; use find_actions(site={site!r}) to list them")
+        call_args = dict(params)
+        confirmation_id = args.get("confirmation_id")
+        if confirmation_id is not None:
+            call_args["_confirmation_id"] = confirmation_id
+        return await self._execute(stored, action, call_args, f"{site}/{action}")
+
+    async def _execute(
+        self, stored: StoredCard, action: str, args: dict[str, Any], label: str
+    ) -> types.CallToolResult:
         try:
-            env = await self.executor.run(stored, entry.action, dict(params.arguments or {}), user=DEFAULT_USER)
+            env = await self.executor.run(stored, action, args, user=DEFAULT_USER)
         except Exception:
-            log.exception("executor crashed on %s", params.name)
-            return _error_result(f"internal error running {params.name}")
+            log.exception("executor crashed on %s", label)
+            return _error_result(f"internal error running {label}")
         payload = env.model_dump(mode="json")
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=json.dumps(payload))],
@@ -336,6 +326,7 @@ class Gateway:
                     )
                 )
                 log.info("start_connection: asking the client to show the sign-in link (URL elicitation)")
+                self._prompted_at[token] = time.monotonic()
                 return types.InputRequiredResult(input_requests={SIGN_IN_REQUEST: request}, request_state=token)
         elif name == "poll_connection":
             wait = args.get("wait_seconds", 25)
@@ -362,6 +353,12 @@ class Gateway:
             return _error_result("unknown or expired sign-in; call start_connection again")
         response = (params.input_responses or {}).get(SIGN_IN_REQUEST)
         action = getattr(response, "action", None)
+        prompted_at = self._prompted_at.pop(conn.token, None)
+        answered_in = time.monotonic() - prompted_at if prompted_at is not None else None
+        if action == "decline" and answered_in is not None and answered_in < HUMAN_REPLY_MIN_S:
+            # Claude Code's desktop app declines URL prompts by itself within milliseconds; no person is that fast.
+            log.info("start_connection: the client answered the sign-in prompt itself (%.0f ms)", answered_in * 1000)
+            action = "cancel"
         if action == "decline":  # the user said no
             out = await self.connections.poll(conn.user, conn.domain)
             out.pop("url", None)
@@ -414,7 +411,7 @@ class Gateway:
         while True:
             await anyio.sleep(self.poll_interval_s)
             try:
-                await self.reload_if_changed()
+                self.refresh_registry()
             except Exception:
                 log.exception("registry reload failed")
 
@@ -427,6 +424,8 @@ class Gateway:
 
 
 SIGN_IN_REQUEST = "sign_in"
+# An answer to the sign-in prompt faster than this came from the app, not the person (see DECISIONS.md L6).
+HUMAN_REPLY_MIN_S = 2.0
 
 
 def _supports_url_elicitation(ctx: Any) -> bool:

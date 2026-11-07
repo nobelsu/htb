@@ -241,8 +241,8 @@ def routes(manager: ConnectionManager) -> list[BaseRoute]:
             await upstream.close()
             try:
                 await ws.close()
-            except RuntimeError:
-                pass
+            except (RuntimeError, WebSocketDisconnect):
+                pass  # the viewer tab already went away (normal once the user is signed in)
 
     return [
         Route("/connect/{token}", page),

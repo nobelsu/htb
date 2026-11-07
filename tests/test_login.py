@@ -26,7 +26,7 @@ from runtime.tiers import ProfileKey, default_tiers
 from schema import ResultCode, load_card
 from tests.conftest import LiveServer
 from tests.fixture_site.app import CSRF, VALID_SID
-from tests.test_gateway import API_KEY, connect, envelope
+from tests.test_gateway import API_KEY, act, connect, envelope
 
 R = ResultCode
 DOMAIN = "fixture.test"
@@ -243,13 +243,13 @@ async def test_disconnect_over_mcp(
         assert store_rows == 0
         envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))  # a pending link to cancel
         store.put("default", DOMAIN, "shop", {"sid": VALID_SID, "csrftoken": CSRF})  # as if signed in
-        assert envelope(await client.call_tool("shop_browser_orders", {}))["status"] == "SUCCESS"  # warms the profile
+        assert envelope(await client.call_tool(*act("browser_orders", {})))["status"] == "SUCCESS"  # warms the profile
 
         out = envelope(await client.call_tool("disconnect", {"domain": DOMAIN}))
         assert out["details"]["providers"][0]["was_connected"] is True
         assert out["details"]["providers"][0]["browser_profile_deleted"] is True
         assert out["user_message"].startswith("You're signed out of fixture.test.")
         assert sqlite3.connect(db).execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
-        assert envelope(await client.call_tool("shop_list_orders", {}))["status"] == "AUTH_REQUIRED"
+        assert envelope(await client.call_tool(*act("list_orders", {})))["status"] == "AUTH_REQUIRED"
         status = envelope(await client.call_tool("connection_status", {"domain": DOMAIN}))
         assert status["providers"][0]["status"] == "not_connected" and not status["providers"][0]["browser_warm"]
