@@ -115,6 +115,29 @@ def dumps(value: Any) -> str:
     return escape(text) if text else "''"
 
 
+def render(value: Any, leaf, path: str = "$") -> str:
+    """Like ``dumps``, but each leaf is rendered by ``leaf(jsonpath, value) -> str`` (already escaped).
+
+    Used to rebuild a templated Rest.li value: literal leaves come back escaped, templated leaves
+    come back as ``{{params.x | escape_restli}}``. Paths match ``jsonpaths.flatten``.
+    """
+    from mapper.jsonpaths import child
+
+    if isinstance(value, dict):
+        if not value:
+            return leaf(path, value)
+        return (
+            "("
+            + ",".join(f"{escape(str(k))}:{render(v, leaf, child(path, str(k)))}" for k, v in value.items())
+            + ")"
+        )
+    if isinstance(value, list):
+        if not value:
+            return leaf(path, value)
+        return "List(" + ",".join(render(v, leaf, child(path, i)) for i, v in enumerate(value)) + ")"
+    return leaf(path, value)
+
+
 def quote_component(value: str) -> str:
     """Percent-encode for use in a URL path segment (the spec's ``urlencode`` filter)."""
     return quote(value, safe="")

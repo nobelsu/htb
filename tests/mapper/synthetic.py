@@ -74,3 +74,39 @@ def har_entry(
 def write_har(path: Path, entries: list[dict]) -> Path:
     path.write_text(json.dumps({"log": {"version": "1.2", "creator": {"name": "test"}, "entries": entries}}))
     return path
+
+
+def make_bundle(
+    run: str,
+    entries: list[dict],
+    *,
+    values: dict[str, str] | None = None,
+    kind: str = "read",
+    marks: list[float] | None = None,
+    actions: list[dict] | None = None,
+    state_cookies: dict[str, str] | None = None,
+    domain: str = "example.com",
+):
+    """An in-memory Bundle from synthetic HAR entries (M1 filter applied, like load_bundle)."""
+    from mapper.pipeline.m1_load import entry_from_har, filter_entries
+    from mapper.pipeline.runs import Bundle
+
+    is_marker_run = run in ("m1", "m2")
+    meta = {
+        "bundle_version": "1",
+        "domain": domain,
+        "task": "t",
+        "run": run,
+        "markers": dict(values or {}) if is_marker_run else {},
+        "real_inputs": {} if is_marker_run else dict(values or {}),
+        "kind_hint": kind,
+        "goal_marks": [ts(m) for m in marks or []],
+        "started_at": ts(0),
+    }
+    parsed = sorted((entry_from_har(i, e) for i, e in enumerate(entries)), key=lambda e: (e.started, e.index))
+    result = filter_entries(parsed, domain)
+    return Bundle(meta, result.kept, result.dropped, list(actions or []), dict(state_cookies or {}))
+
+
+def action(kind: str, at: float, **extra) -> dict:
+    return {"t": ts(at), "type": kind, **extra}

@@ -77,3 +77,53 @@ def chromium():
     except Exception as e:  # pragma: no cover - depends on the machine
         pytest.skip(f"Playwright Chromium unavailable: {e}")
     return True
+
+
+MARKERS = {"m1": "zqxv8841", "m2": "kjtr5527"}
+REAL = "software"
+
+
+@pytest.fixture(scope="session")
+def fixture_captures(chromium, tmp_path_factory):
+    """Capture the fixture site's tasks once per session. Returns a callable(task, run) -> bundle dir."""
+    from fixture_site import scripts
+
+    from mapper.capture.record import CaptureConfig, record
+
+    root = tmp_path_factory.mktemp("captures")
+    site = FixtureSite().start()
+    state = root / "login.state.json"
+    site.login_state(state)  # one logged-in session shared by every run, like a real operator
+    tasks = {
+        "search": ("query", scripts.SEARCH, scripts.SEARCH_PAGE2, "read"),
+        "add_note": ("text", scripts.ADD_NOTE, None, "write"),
+    }
+    done: dict[tuple[str, str], object] = {}
+
+    def capture(task: str, run: str):
+        if (task, run) in done:
+            return done[(task, run)]
+        param, script, page2_script, kind = tasks[task]
+        value = MARKERS.get(run, REAL)
+        if task == "add_note" and run not in MARKERS:
+            value = "Call Acme about the Q3 renewal"
+        cfg = CaptureConfig(
+            start_url=site.url + "/",
+            task=task,
+            run=run,
+            markers={param: value} if run in MARKERS else {},
+            real_inputs={} if run in MARKERS else {param: value},
+            kind=kind,
+            description={"search": "Search companies by keyword", "add_note": "Save a note"}[task],
+            state=state,
+            out=root,
+            headless=True,
+            script=page2_script if run == "page2" else script,
+        )
+        done[(task, run)] = record(cfg)
+        return done[(task, run)]
+
+    capture.root = root
+    capture.site = site
+    yield capture
+    site.stop()

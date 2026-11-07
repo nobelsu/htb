@@ -42,6 +42,15 @@ def flatten(obj: Any, root: str = "$") -> Iterator[tuple[str, Any]]:
         yield root, obj
 
 
+def map_leaves(obj: Any, fn, root: str = "$") -> Any:
+    """Rebuild ``obj`` with each leaf (as yielded by ``flatten``) replaced by ``fn(path, leaf)``."""
+    if isinstance(obj, dict) and obj:
+        return {k: map_leaves(v, fn, child(root, str(k))) for k, v in obj.items()}
+    if isinstance(obj, list) and obj:
+        return [map_leaves(v, fn, child(root, i)) for i, v in enumerate(obj)]
+    return fn(root, obj)
+
+
 def walk(obj: Any, root: str = "$") -> Iterator[tuple[str, Any]]:
     """Yield ``(jsonpath, node)`` for every node, containers included (pre-order)."""
     yield root, obj

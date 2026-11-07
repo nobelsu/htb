@@ -88,7 +88,7 @@ Event types: `input` (final value of a field), `click`, `key` (Enter only, so fo
 | **M0 recon** (stretch) | domain → platform guess | Look for `__NEXT_DATA__`, JSON-LD, Shopify/WordPress markers. Informational for now | no |
 | **M1 load + filter** | HAR → candidate entries | Keep same-site hosts (registrable domain match), methods any, mime JSON/HTML/text/form. Drop images, fonts, css, js, media, known analytics/ads hosts, OPTIONS preflights | no |
 | **M2 normalize** | entries → fields | Address every field (see Definitions). Flatten JSON bodies to JSONPath leaves. Parse form bodies, and Rest.li `(k:v,...)` and GraphQL `variables` query values into sub-fields | no |
-| **M3 goal** | fields + markers + goal_marks → goal entry | Read: entries whose fields contain a marker (in any encoding) and whose response has a list-like structure; the earliest such entry after the marker was typed. Write: the first non-GET/HEAD same-site entry after a goal mark. Ties → LLM picks with a short summary of each candidate | ties only |
+| **M3 goal** | fields + markers + goal_marks → goal entry | Read: entries whose fields contain a marker (in any encoding) and whose response has a list-like structure; the earliest such entry after the marker was typed, and after the last click/Enter before the goal mark when there is one. Write: the operator marks right *after* the click, so take the last same-site non-GET/HEAD entry that started after that click and before the goal mark (fallback: the first one after the mark). Ties → LLM picks with a short summary of each candidate | ties only |
 | **M4 provenance** | goal + earlier entries → labelled fields + dependency edges | See algorithm below | no |
 | **M5 prune + order** | edges → `steps[]` | Keep only entries reachable backwards from the goal. Topological order by capture time. Step ids are short slugs (`company`, `people`) | naming only (optional) |
 | **M6 extractors + output** | steps + responses → `extract`, `expect`, `output` | Dependencies: the exact location M4 found becomes the extract (JSONPath for JSON; regex with surrounding context for HTML/text). `expect.paths`: the structural parent of each extracted path (e.g. `$.elements`, not `$.elements[0].id`). Output: find the list in the goal response that grew with results, then pick 3–8 item fields | output fields |
@@ -107,6 +107,8 @@ For each field `f` of the goal request (and recursively for each new step, max d
 2. **Session cookie.** If the value equals (or equals after stripping quotes) a cookie that existed in
    `state.json` before the goal request → `{{session.cookies.NAME}}`, adding `| strip_quotes` if needed.
    This needs an `auth_provider` (M8 adds `connect_providers` when any session cookie is used).
+   `cookie.*` fields themselves are **never templated**: the executor's cookie jar sends them (spec,
+   Cookies). A session cookie on a request only marks the action as needing an `auth_provider`.
 3. **Earlier response.** Search every earlier entry (time < goal start, nearest first) in: JSON response
    bodies (record the exact JSONPath), raw HTML/text bodies (record a regex built from about 20 chars of
    stable context on each side), response headers, and `Set-Cookie`. If found → `dependency` on that
@@ -118,7 +120,13 @@ For each field `f` of the goal request (and recursively for each new step, max d
    goal request → set `tier: "browser"` for the action and write a warning into the mapping report.
 
 Ignore trivial values (length < 4, `true`/`false`, `0`/`1`, common locale and version strings) during
-the earlier-response search to avoid false dependencies.
+the earlier-response search to avoid false dependencies. A value that is the **same** in m1 and m2 is
+only searched for if it looks like a token (≥ 8 chars mixing letters and digits); otherwise words such
+as a `search` path segment would match the HTML of the search page. Browser-managed headers
+(`user-agent`, `accept-encoding`, `referer`, `sec-*`, …) are omitted from templates: the executor's
+tier sets them. A dependency found in m1 is confirmed by evaluating the same extract on m2.
+
+Steps, requests and the rest of the card follow `action_map.example.json` exactly.
 
 **Pagination** (`page2` run): diff the goal request against `real`. A numeric field that changed by N
 → template `{{params.page | offset:N}}`, `page_size: N`, `next_params.param: "page"`. If a total-count
