@@ -382,6 +382,14 @@ def load_remapper(spec: str | None) -> Remapper | None:
     return remapper
 
 
+class _DropWebSocketLines(logging.Filter):
+    """uvicorn logs each WebSocket handshake with its full URL (login tokens, Neko session tokens)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not (message.startswith(("connection open", "connection closed")) or '"WebSocket ' in message)
+
+
 def main() -> None:
     import uvicorn
     from dotenv import load_dotenv
@@ -396,6 +404,7 @@ def main() -> None:
     # URL-level request logs would record login tokens (/connect/<token>), the login browser's password and users'
     # query parameters, so they stay off; the runtime logs its own redacted events.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.error").addFilter(_DropWebSocketLines())
 
     db_path = os.environ.get("REGISTRY_DB", "./runtime.db")
     registry = Registry(db_path)

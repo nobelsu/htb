@@ -202,7 +202,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   1280x800; the stream stays sharp on retina screens), ~25 fps. The client runs in Neko's `embed` mode, logged in
   with a random per-container password, and is reverse-proxied by the gateway under `/neko/{token}/` (HTTP and the
   `/api/ws` signalling WebSocket), so it is same-origin and works behind HTTPS. WebRTC media goes directly to the
-  container over one published UDP port per login (`NEKO_UDP_PORTS`), advertised as `NEKO_PUBLIC_IP`; a TURN
+  container over one published port per login (`NEKO_UDP_PORTS`), on UDP and, as a fallback, TCP (Neko's TCP mux:
+  some browsers, VPNs and office networks won't do WebRTC over UDP), advertised as `NEKO_PUBLIC_IP`; a TURN
   server can be set with `NEKO_ICE_SERVERS` for users behind strict networks.
 - **Reading the login.** Every 2 s the watcher reads the browser's cookies with one browser-level DevTools command
   (`Storage.getCookies` over Chrome's WebSocket, exposed through a small in-container forwarder because Chrome binds
@@ -211,8 +212,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **Local development.** If the site is on the Docker host's loopback (the fixture shop), the forwarder maps the
   container's `127.0.0.1:<port>` to `host.docker.internal:<port>`.
 - **Typing.** Click into a field before typing: Neko's client keeps the Tab key for its own page.
-- **No URL-level request logs.** The gateway runs uvicorn without its access log and keeps httpx at WARNING: those
-  lines would record login tokens, the login browser's per-container password and users' query parameters.
+- **No URL-level request logs.** The gateway runs uvicorn without its access log, filters uvicorn's WebSocket
+  handshake lines and keeps httpx at WARNING: those lines would record login tokens, the login browser's per-container password and users' query parameters.
 - **Verification before storing.** The gateway runs the provider's `session_check` with the posted cookies (card's
   default tier). Only if it passes are they stored; otherwise the link stays pending and the user can log in and
   retry. Links are single-use and expire (`CONNECT_TIMEOUT_S`, default 10 min). One pending link per (user, site).

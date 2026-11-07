@@ -60,7 +60,8 @@ user=%(ENV_USER)s
 class NekoConfig:
     image: str = "ghcr.io/m1k1o/neko/chromium:latest"
     public_ip: str = "127.0.0.1"  # the address users' browsers reach for WebRTC media (NAT1TO1)
-    udp_ports: tuple[int, int] = (52000, 52099)  # one per running login, published to the host
+    udp_ports: tuple[int, int] = (52000, 52099)  # one per running login, published to the host (UDP and TCP)
+    transports: tuple[str, ...] = ("udp", "tcp")  # TCP for browsers/networks that won't do WebRTC over UDP
     width: int = 1920  # streamed screen size, in device pixels
     height: int = 1200
     scale: float = 1.5  # Chrome's device scale factor: sites lay out at width/scale x height/scale (1280x800)
@@ -194,6 +195,7 @@ class NekoManager:
             "NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD": secrets.token_urlsafe(18),
             "NEKO_SESSION_IMPLICIT_HOSTING": "true",
             "NEKO_WEBRTC_UDPMUX": str(udp),
+            "NEKO_WEBRTC_TCPMUX": str(udp),  # same port number, TCP: ICE-TCP fallback
             "NEKO_WEBRTC_NAT1TO1": cfg.public_ip,
         }
         if cfg.ice_servers:
@@ -203,8 +205,10 @@ class NekoManager:
             "run", "-d", "--rm", "--shm-size=2g", "--memory=1g",
             "--label", f"{LABEL}={token[:12]}",
             "--add-host=host.docker.internal:host-gateway",
-            "-p", f"127.0.0.1:{http_port}:8080", "-p", f"127.0.0.1:{cdp_port}:9223", "-p", f"{udp}:{udp}/udp",
+            "-p", f"127.0.0.1:{http_port}:8080", "-p", f"127.0.0.1:{cdp_port}:9223",
         ]
+        for transport in cfg.transports:
+            args += ["-p", f"{udp}:{udp}/{transport}"]
         for key, value in env.items():
             args += ["-e", f"{key}={value}"]
         args += [

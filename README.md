@@ -52,7 +52,7 @@ sessions that have expired.
 
 Setup:
 - Neko: Docker running, and `docker pull ghcr.io/m1k1o/neko/chromium:latest` (about 2.2 GB). Hosted: set
-  `NEKO_PUBLIC_IP` to the server's public IP, open the `NEKO_UDP_PORTS` range (UDP), and for users behind strict
+  `NEKO_PUBLIC_IP` to the server's public IP, open the `NEKO_UDP_PORTS` range (UDP and TCP), and for users behind strict
   networks add a TURN server via `NEKO_ICE_SERVERS`. `NEKO_ENABLED=0` turns it off.
 - Extension (optional): `chrome://extensions` → Developer mode → Load unpacked → `extension/`. For a hosted gateway,
   first run `uv run python -m runtime.extension --origin https://your.gateway`.
