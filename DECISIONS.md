@@ -223,6 +223,11 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   session, closes and deletes the user's server-side browser profile for that site, and cancels a pending login
   link (stopping its Neko browser). It is idempotent and marked destructive in MCP (`destructiveHint`); its
   description tells agents to call it only when the user asks. It does not log the user out on the site itself.
+- **Plain language for users (asked).** What the agent tells the user should describe outcomes, not internals.
+  The MCP server instructions ask agents not to mention tool names, status codes, sessions, cookies, browser
+  profiles or cards unless the user asks how it works. The sign-in tools (`start_connection`, `poll_connection`,
+  `connection_status`, `disconnect`) return a ready-made `user_message`; `disconnect` keeps its technical fields
+  under `details`. Tool descriptions avoid internal vocabulary. The result envelope is unchanged (it is for agents).
 - **No URL-level request logs.** The gateway runs uvicorn without its access log, filters uvicorn's WebSocket
   handshake lines and keeps httpx at WARNING: those lines would record login tokens, the login browser's per-container password and users' query parameters.
 - **Verification before storing.** The gateway runs the provider's `session_check` with the posted cookies (card's
