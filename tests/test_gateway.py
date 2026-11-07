@@ -215,3 +215,10 @@ async def test_break_and_heal_over_mcp(registry: Registry, tmp_path: Path, site_
             assert env["status"] == "SUCCESS" and env["meta"]["map_version"] == 2
             missing = await client.call_tool("heal_status", {"job_id": "h_nope"})
             assert missing.is_error
+
+
+def test_instructions_ask_for_plain_language() -> None:
+    from runtime.gateway import INSTRUCTIONS
+
+    assert "plain terms" in INSTRUCTIONS and "user_message" in INSTRUCTIONS
+    assert "Don't mention tool names, status codes, sessions, cookies, browser profiles" in INSTRUCTIONS

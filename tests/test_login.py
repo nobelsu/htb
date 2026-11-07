@@ -244,7 +244,7 @@ async def test_connect_with_extension_over_mcp(
         started = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
         link = started["url"]
         assert started["status"] == "pending" and link.startswith(f"{base}/connect/")
-        assert "extension" in started["instructions"]
+        assert started["user_message"].startswith(f"Sign in to {DOMAIN} here: {link}")
 
         # The user logs in to the shop in their own browser, as usual, then connects.
         await log_in_normally(await user_browser.new_page(), site_url)
@@ -319,13 +319,18 @@ async def test_link_routes_and_auth_boundaries(login_gateway: tuple[str, Path]) 
 async def test_disconnect_forgets_session_and_cancels_link(manager: ConnectionManager, site_url: str) -> None:
     manager.store.put("u", DOMAIN, "shop", {"sid": VALID_SID, "csrftoken": CSRF})
     started = manager.start("u", DOMAIN)
+    assert "Sign in to fixture.test here: http://gw/connect/" in started["user_message"]
+    assert manager.status("u", DOMAIN)["user_message"] == "Waiting for you to finish signing in to fixture.test."
     out = await manager.disconnect("u", DOMAIN)
     assert out["disconnected"] is True
-    assert out["providers"] == [
+    assert out["user_message"] == "You're signed out of fixture.test. To use it again, you'll need to sign in."
+    assert out["details"]["providers"] == [
         {"provider": "shop", "was_connected": True, "session_deleted": True, "browser_profile_deleted": False}
     ]
     assert manager.store.get("u", DOMAIN, "shop") is None
     assert manager.status("u", DOMAIN)["providers"][0]["status"] == "not_connected"
+    assert manager.status("u", DOMAIN)["user_message"] == "You're not signed in to fixture.test."
+    assert manager.poll("u", DOMAIN)["user_message"].startswith("That sign-in link for fixture.test has expired")
     conn = manager.by_token(started["url"].rsplit("/", 1)[1])
     assert conn is not None and conn.status == "expired" and "disconnected" in conn.message
     stored = manager.registry.get(DOMAIN)
@@ -333,7 +338,8 @@ async def test_disconnect_forgets_session_and_cancels_link(manager: ConnectionMa
     env = await manager.executor.run(stored, "list_orders", {}, user="u")
     assert env.status == R.AUTH_REQUIRED
     again = await manager.disconnect("u", DOMAIN)  # idempotent
-    assert again["providers"][0]["was_connected"] is False and again["providers"][0]["session_deleted"] is False
+    assert again["details"]["providers"][0]["was_connected"] is False
+    assert again["user_message"] == "You weren't signed in to fixture.test, so there was nothing to sign out of."
 
 
 async def test_disconnect_errors(manager: ConnectionManager) -> None:
@@ -356,6 +362,7 @@ async def test_disconnect_over_mcp(login_gateway: tuple[str, Path], site_url: st
     async with connect(f"{base}/mcp", "auto") as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
         assert tools["disconnect"].annotations is not None and tools["disconnect"].annotations.destructive_hint
+        assert "browser profile" not in (tools["disconnect"].description or "")  # no internals in descriptions
         store_rows = sqlite3.connect(db).execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
         assert store_rows == 0
         # Connect by importing cookies through the real endpoint, then use the session.
@@ -366,8 +373,9 @@ async def test_disconnect_over_mcp(login_gateway: tuple[str, Path], site_url: st
         assert envelope(await client.call_tool("shop_browser_orders", {}))["status"] == "SUCCESS"  # warms the profile
 
         out = envelope(await client.call_tool("disconnect", {"domain": DOMAIN}))
-        assert out["providers"][0]["was_connected"] is True
-        assert out["providers"][0]["browser_profile_deleted"] is True
+        assert out["details"]["providers"][0]["was_connected"] is True
+        assert out["details"]["providers"][0]["browser_profile_deleted"] is True
+        assert out["user_message"].startswith("You're signed out of fixture.test.")
         assert sqlite3.connect(db).execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         assert envelope(await client.call_tool("shop_list_orders", {}))["status"] == "AUTH_REQUIRED"
         status = envelope(await client.call_tool("connection_status", {"domain": DOMAIN}))

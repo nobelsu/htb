@@ -139,11 +139,11 @@ class ConnectionManager:
 
     def _with_instructions(self, conn: Connection) -> dict[str, Any]:
         out = conn.public(self.public_base_url)
+        out["user_message"] = _poll_message(conn, out.get("url"))
         out["instructions"] = (
-            f"Give the user this link. It opens a page where they log in to {conn.domain} themselves (in a secure "
-            "browser shown on the page, or with our browser extension if they have it). Their password is never "
-            "shared with you or us. Then call poll_connection until status is 'connected', and retry the original "
-            "tool."
+            "Show the user the user_message. They sign in to the site themselves on that page; their password is "
+            "never shared with you. Then call poll_connection until status is 'connected', and retry the "
+            "original tool."
         )
         return out
 
@@ -152,6 +152,7 @@ class ConnectionManager:
         if conn is None:
             return self.status(user, domain)
         out = conn.public(self.public_base_url)
+        out["user_message"] = _poll_message(conn, out.get("url"))
         out["hint"] = {
             "connected": "connected: call the original tool again",
             "pending": "still waiting for the user; poll again in a few seconds",
@@ -181,7 +182,23 @@ class ConnectionManager:
                     "browser_warm": bool(self.pool and self.pool.is_warm(ProfileKey(user, domain, p.id))),
                 }
             )
-        return {"domain": domain, "login_needed": bool(card.connect_providers), "providers": providers}
+        states = {p["status"] for p in providers}
+        if not providers:
+            message = f"{domain} doesn't need you to sign in."
+        elif "connected" in states:
+            message = f"You're signed in to {domain}."
+        elif "pending" in states:
+            message = f"Waiting for you to finish signing in to {domain}."
+        elif "expired" in states:
+            message = f"Your sign-in to {domain} has expired, so you'll need to sign in again."
+        else:
+            message = f"You're not signed in to {domain}."
+        return {
+            "domain": domain,
+            "login_needed": bool(card.connect_providers),
+            "user_message": message,
+            "providers": providers,
+        }
 
     def by_token(self, token: str) -> Connection | None:
         conn = self._by_token.get(token)
@@ -303,11 +320,17 @@ class ConnectionManager:
             conn.status, conn.message = "expired", "disconnected by the user"
             await self._stop_browser(conn)
         log.info("%s disconnected from %s (%s)", user, domain, ", ".join(ids) or "no providers")
+        was_connected = any(r["was_connected"] for r in results)
         return {
             "domain": domain,
             "disconnected": True,
-            "providers": results,
-            "next_step": "the agent will get AUTH_REQUIRED for this site until the user connects again",
+            "user_message": (
+                f"You're signed out of {domain}. To use it again, you'll need to sign in."
+                if was_connected
+                else f"You weren't signed in to {domain}, so there was nothing to sign out of."
+            ),
+            "next_step": "tools for this site will ask the user to sign in again (AUTH_REQUIRED)",
+            "details": {"providers": results},  # for the agent's logic, not for the user
         }
 
     # ---- keep-alive --------------------------------------------------------
@@ -344,6 +367,16 @@ class ConnectionManager:
                     log.info("keep-alive: %s", results)
             except Exception:
                 log.exception("keep-alive failed")
+
+
+def _poll_message(conn: Connection, url: str | None) -> str:
+    """The plain-language line the agent shows the user about this sign-in."""
+    if conn.status == "connected":
+        return f"You're signed in to {conn.domain}."
+    if conn.status == "expired":
+        return f"That sign-in link for {conn.domain} has expired. I can get you a new one."
+    minutes = max(1, int((conn.expires_at - time.time()) // 60))
+    return f"Sign in to {conn.domain} here: {url} (the link works for {minutes} more minutes)."
 
 
 def _parse_cookies(raw: Any) -> dict[str, str]:

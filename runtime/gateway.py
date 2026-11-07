@@ -62,6 +62,16 @@ class ToolEntry:
     tool: types.Tool
 
 
+INSTRUCTIONS = (
+    "Tools that act on websites for the user. Every tool returns JSON; check its `status` field (SUCCESS, EMPTY, "
+    "NEEDS_CONFIRMATION, AUTH_REQUIRED, ...) to decide what to do next.\n"
+    "When you talk to the user, describe outcomes in plain terms (\"You're signed out of linkedin.com\", "
+    "\"Sign in here: <link>\", \"The site changed; I'll retry in a moment\"). Don't mention tool names, status "
+    "codes, sessions, cookies, browser profiles, cards or other internals unless the user asks how it works. "
+    "Results about signing in include a `user_message`; use it."
+)
+
+
 HEAL_STATUS_TOOL = types.Tool(
     name="heal_status",
     description="Status of a heal job started by a PAGE_CHANGED result (its heal.job_id). When the status is "
@@ -96,24 +106,24 @@ CONNECTION_TOOLS = {
     for t in (
         _domain_tool(
             "start_connection",
-            "Connect the user's account on a site (after an AUTH_REQUIRED or AUTH_EXPIRED result). Returns a link: "
-            "give it to the user, who logs in to the site in their own browser and clicks Connect on that page. "
-            "Then call poll_connection.",
+            "Get a sign-in link for a site, after a tool result says the user needs to sign in (AUTH_REQUIRED or "
+            "AUTH_EXPIRED). Show the user the result's user_message (it contains the link); they sign in to the site "
+            "themselves on that page. Then call poll_connection.",
             {"provider": {"type": "string", "description": "optional connect provider id, if the site has several"}},
         ),
         _domain_tool(
             "poll_connection",
-            "Check a login started with start_connection. When status is 'connected', retry the original tool.",
+            "Check whether the user has finished signing in. When status is 'connected', retry the original tool.",
         ),
         _domain_tool(
             "connection_status",
-            "Whether the user is connected to a site (connected, expired, pending or not_connected).",
+            "Whether the user is signed in to a site through this service (connected, expired, pending or "
+            "not_connected).",
         ),
         _domain_tool(
             "disconnect",
-            "Disconnect the user's account on a site: permanently deletes the stored login session and the "
-            "server-side browser profile for it, and cancels any pending login link. Only call this when the user "
-            "asks to disconnect or log out of that site.",
+            "Sign the user out of a site in this service (it forgets their sign-in; the site itself is not "
+            "touched). Only call this when the user asks to disconnect or sign out of that site.",
             {"provider": {"type": "string", "description": "optional connect provider id; default: all of them"}},
             types.ToolAnnotations(destructive_hint=True, idempotent_hint=True, read_only_hint=False),
         ),
@@ -162,8 +172,7 @@ class Gateway:
         self.server = _Server(
             "htb-runtime",
             version="0.1.0",
-            instructions="Tools generated from website action cards. Every tool returns a JSON result envelope; "
-            "check its `status` field (SUCCESS, EMPTY, NEEDS_CONFIRMATION, ...).",
+            instructions=INSTRUCTIONS,
             lifespan=self._lifespan,
             on_list_tools=self._list_tools,
             on_call_tool=self._call_tool,
