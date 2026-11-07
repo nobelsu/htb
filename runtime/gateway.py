@@ -31,7 +31,7 @@ from runtime.executor import Executor
 from runtime.registry import Registry
 from runtime.sessions import DevEnvSessionStore
 from schema import load_card
-from schema.params import input_schema
+from schema.params import input_schema, tool_description
 
 log = logging.getLogger("runtime.gateway")
 
@@ -103,7 +103,7 @@ class Gateway:
                     continue
                 tool = types.Tool(
                     name=name,
-                    description=action.description,
+                    description=tool_description(action),
                     input_schema=input_schema(action.params, action.requires_confirmation),
                 )
                 tools[name] = ToolEntry(domain, action.name, tool)

@@ -30,7 +30,7 @@ from runtime.template import (
 from runtime.tiers import HttpResponse, HttpTier, Session, TierClient, TransportError, TransportTimeout
 from schema.card import Action, Card, Expect, Request, Step
 from schema.envelope import Envelope, ErrorInfo, Heal, Meta, ResultCode
-from schema.params import CONFIRMATION_ARG, coerce_params, format_field_errors
+from schema.params import CONFIRMATION_ARG, coerce_params, confirmation_summary, format_field_errors
 from schema.placeholders import parse_step_ref
 
 log = logging.getLogger("runtime.executor")
@@ -184,7 +184,7 @@ class Executor:
 
         # Row 0: confirmation.
         if action.requires_confirmation and conf_id is None:
-            summary = f"{action.description} Params: {canonical_params(params)}"
+            summary = confirmation_summary(action, canonical_params(params))
             conf = self.confirmer.issue(user, card.domain, action.name, params, summary)
             return envelope(R.NEEDS_CONFIRMATION, confirmation=conf), None
 
