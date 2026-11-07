@@ -169,7 +169,19 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return validate.main(args)
 
 
+def load_env() -> None:
+    """Read ``.env`` (from the working directory upwards, then the repo root) like the gateway does.
+    Variables already set in the environment win."""
+    from pathlib import Path
+
+    from dotenv import find_dotenv, load_dotenv
+
+    load_dotenv(find_dotenv(usecwd=True))
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    load_env()
     parser = build_parser()
     args = parser.parse_args(argv)
     return int(args.handler(args) or 0)

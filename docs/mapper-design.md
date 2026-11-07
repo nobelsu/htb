@@ -195,7 +195,7 @@ prompt is unchanged.
 
 Write tasks are skipped unless `--include-writes` is given: exploring one performs it for real, four
 times (dry run + m1 + m2 + real), e.g. four follows or connection requests. The LLM is Claude Sonnet 5.5;
-`explore` needs `ANTHROPIC_API_KEY` (the rest of the pipeline still runs offline). Everything the LLM
+`explore` needs `ANTHROPIC_API_KEY` (set it in `.env`, which the mapper CLI reads; see `.env.example`), and the rest of the pipeline still runs offline. Everything the LLM
 decided is saved in `captures/<domain>/explore.json` and summarised in the mapping report.
 
 ## Open items for Nobel
