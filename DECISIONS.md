@@ -284,6 +284,21 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **L5 Browser tier (asked).** Each step runs as `fetch()` in a tab on the request's origin, so it goes out as real
   Chrome. Browser-owned headers (cookie, user-agent, origin, referer, host...) are dropped. Only a redirect's final
   URL is visible, so `redirect:` signals see the final path only.
+- **L7 Cookie rotation (asked; spec changed).** Nobel and WeiWei agreed the spec shouldn't forbid saving refreshed
+  cookies (`CARD_SPEC.md` "Cookies" is updated). After a run that ends `SUCCESS` or `EMPTY`, and after a passing
+  `session_check` (so the 15-minute keep-alive refreshes idle sign-ins too), the cookies are saved back to the
+  user's encrypted sign-in, mirroring the site: changed values updated, new cookies added, deleted ones removed
+  (both asked). Details (judgement calls):
+  - Only cookies the site's own host gets are saved (its own and parent domains), not ones set for other sites
+    during a cross-site redirect. The browser tier already reads only `base_url`'s cookies.
+  - Written only if the stored cookies are still what the run started from, so a fresh sign-in or another run's
+    save made meanwhile wins, and a sign-in disconnected meanwhile isn't brought back.
+  - Rotation keeps the status and `connected_at` (it isn't a new sign-in); it updates `checked_at`.
+  - An empty jar is never saved (it means we saw no cookies, not that the site signed us out). Nothing is written
+    when nothing changed.
+  - The login flow's own checks (with the login browser's cookies) save nothing here; it saves on connect.
+  - Sign-ins pasted into `DEV_SESSION_COOKIES` are not rotated; they stay as written in `.env`.
+  - The log says how many cookies changed, with no cookie names or values.
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
 - **Not handled yet:** sites that bind sessions to a device or IP may notice the switch from the login browser to

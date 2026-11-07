@@ -88,6 +88,19 @@ class EncryptedSessionStore:
             return None  # written with a different SESSION_KEY: treat as not connected
         return {str(k): str(v) for k, v in data.items()}
 
+    def refresh(self, user: str, domain: str, provider_id: str, before: Cookies, after: Cookies) -> bool:
+        """Cookie rotation: replace the cookies only if they are still `before` (the user didn't sign in again
+        and no other run saved first meanwhile). Keeps the status and when the user connected."""
+        with self._lock:
+            if self.get(user, domain, provider_id) != before:
+                return False
+            blob = self._fernet.encrypt(json.dumps(after).encode())
+            self._conn.execute(
+                "UPDATE sessions SET cookies_enc = ?, checked_at = ? WHERE user = ? AND domain = ? AND provider = ?",
+                (blob, _now(), user, domain, provider_id),
+            )
+            return True
+
     def mark(self, user: str, domain: str, provider_id: str, status: SessionStatus) -> None:
         with self._lock:
             self._conn.execute(
@@ -141,6 +154,14 @@ class ChainedSessionStore:
             if found is not None:
                 return found
         return None
+
+    def refresh(self, user: str, domain: str, provider_id: str, before: Cookies, after: Cookies) -> bool:
+        """Rotate in the store the session came from."""
+        for store in self.stores:
+            if store.get(user, domain, provider_id) is not None:
+                refresh = getattr(store, "refresh", None)
+                return bool(refresh(user, domain, provider_id, before, after)) if refresh is not None else False
+        return False
 
 
 def _now() -> str:

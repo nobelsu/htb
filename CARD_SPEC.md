@@ -79,7 +79,8 @@ Rules:
 5. Use `urlencode` only inside `url` paths.
 
 ## Cookies
-- **`http` / `impersonate` tiers:** one cookie jar per execution, seeded from the user's session. Each response's `Set-Cookie` updates the jar, so later steps see it. The jar is **never written back** to the stored session.
+- **`http` / `impersonate` tiers:** one cookie jar per execution, seeded from the user's session. Each response's `Set-Cookie` updates the jar, so later steps see it.
+- **Cookie rotation:** after a run that ends `SUCCESS` or `EMPTY`, and after a passing `session_check`, the site's cookies as they now stand (changed, new and deleted ones; only those the site's own host gets) are written back to the stored session, so sites that rotate their login cookie stay signed in. Never after any other result.
 - **`browser` tier:** the browser profile *is* the session. Cookies come from the browser context, and cookies set by responses persist in the profile, just as for a real user. This is expected.
 - `session.cookies.X` reads from whichever applies.
 

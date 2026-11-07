@@ -42,12 +42,14 @@ class State:
     hits: Counter[str] = field(default_factory=Counter)
     flaky: Counter[str] = field(default_factory=Counter)
     cart: dict[str, int] = field(default_factory=dict)
+    rotations: int = 0
 
     def reset(self) -> None:
         self.broken = False
         self.hits.clear()
         self.flaky.clear()
         self.cart.clear()
+        self.rotations = 0
 
 
 state = State()
@@ -145,6 +147,43 @@ def orders(request: Request, sid: str | None = Cookie(default=None)) -> Response
     if sid != VALID_SID or request.headers.get("x-csrf") != CSRF:
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
     return JSONResponse({"orders": [{"id": "o1", "total": 30}, {"id": "o2", "total": 12}]})
+
+
+# ---- a site that rotates its sign-in cookie on every signed-in response -------------------------------------
+ROTATED_SID = "sid-rotated-"
+
+
+def _rotating_signed_in(sid: str | None) -> bool:
+    return sid == VALID_SID or (sid or "").startswith(ROTATED_SID)
+
+
+def _rotate(resp: Response) -> Response:
+    """Like real sites: a fresh sign-in cookie, a new cookie, and one cookie deleted."""
+    state.rotations += 1
+    resp.set_cookie("sid", f"{ROTATED_SID}{state.rotations}", httponly=True)
+    resp.set_cookie("seen", "1")
+    resp.delete_cookie("tracker")
+    return resp
+
+
+def _rotating_refused() -> Response:
+    resp = JSONResponse({"error": "unauthenticated"}, status_code=401)
+    resp.set_cookie("seen", "anonymous")  # set on failures too: must never be saved
+    return resp
+
+
+@app.get("/api/rotating/me")
+def rotating_me(sid: str | None = Cookie(default=None)) -> Response:
+    if not _rotating_signed_in(sid):
+        return _rotating_refused()
+    return _rotate(JSONResponse({"user": {"name": "Test User"}}))
+
+
+@app.get("/api/rotating/orders")
+def rotating_orders(sid: str | None = Cookie(default=None)) -> Response:
+    if not _rotating_signed_in(sid):
+        return _rotating_refused()
+    return _rotate(JSONResponse({"orders": [{"id": "o1", "total": 30}]}))
 
 
 LOGIN_USER, LOGIN_PASSWORD = "demo", "demo-password"

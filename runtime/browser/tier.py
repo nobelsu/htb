@@ -53,6 +53,10 @@ class BrowserSession:
     def cookies(self) -> dict[str, str]:
         return dict(self._cookies)
 
+    @property
+    def site_cookies(self) -> dict[str, str]:
+        return dict(self._cookies)  # already only what the browser sends to base_url
+
     async def prepare(self) -> None:
         self._lease = self._pool.lease(self._key)
         self._context = await self._lease.__aenter__()

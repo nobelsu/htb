@@ -15,7 +15,7 @@ from runtime.confirm import Confirmer, canonical_params
 from runtime.extract import ExtractError, ResponseView, jsonpath_all, project, run_extract
 from runtime.redact import redact_headers, scrub
 from runtime.registry import StoredCard
-from runtime.sessions import SessionStore
+from runtime.sessions import Cookies, SessionStore
 from runtime.signals import content_type_ok, match_signal
 from runtime.template import (
     BuiltRequest,
@@ -37,7 +37,7 @@ from runtime.tiers import (
     TransportTimeout,
     default_tiers,
 )
-from schema.card import Action, Card, Expect, Request, Step, Tier
+from schema.card import Action, Card, ConnectProvider, Expect, Request, Step, Tier
 from schema.envelope import Envelope, ErrorInfo, Heal, Meta, ResultCode
 from schema.params import CONFIRMATION_ARG, coerce_params, confirmation_summary, format_field_errors
 from schema.placeholders import parse_step_ref
@@ -171,6 +171,7 @@ class Executor:
         provider = card.provider(provider_id)
         if provider is None:
             return R.ERROR
+        from_store = cookies is None  # the login flow passes its own cookies: those aren't saved here
         if cookies is None:
             cookies = self.sessions.get(user, card.domain, provider_id)
             if cookies is None:
@@ -195,8 +196,27 @@ class Executor:
                 resp = await session.send(built, DEFAULT_TIMEOUT_MS / 1000)
             except (TransportTimeout, TransportError):
                 return R.ERROR
+            refreshed = session.site_cookies
         finally:
             await session.aclose()
+        verdict = self._session_verdict(card, provider, resp)
+        if verdict is None and from_store:
+            self._save_refreshed(user, card.domain, provider_id, cookies, refreshed)
+        return verdict
+
+    def _save_refreshed(self, user: str, domain: str, provider_id: str, before: Cookies, after: Cookies) -> None:
+        """Cookie rotation (DECISIONS.md): save the cookies as the site left them after a successful run."""
+        if not after or after == before:
+            return  # nothing changed, or we saw no cookies at all (that isn't the site signing us out)
+        refresh = getattr(self.sessions, "refresh", None)
+        if refresh is None or not refresh(user, domain, provider_id, before, after):
+            return
+        changed = sum(1 for name in before.keys() | after.keys() if before.get(name) != after.get(name))
+        log.info("saved a refreshed sign-in for %s/%s/%s (%d cookie(s) changed)", user, domain, provider_id, changed)
+
+    @staticmethod
+    def _session_verdict(card: Card, provider: ConnectProvider, resp: HttpResponse) -> ResultCode | None:
+        check = provider.session_check
         listed = resp.status in check.expect.status
         if not listed and resp.status == 429:
             return R.RATE_LIMITED
@@ -298,7 +318,7 @@ class Executor:
             auth=auth,
             tier=tier_used,
         )
-        try:
+        async def attempt() -> tuple[Envelope, int | None]:
             try:
                 await self._prepare(run)
                 await self._run_steps(run)
@@ -318,6 +338,12 @@ class Executor:
                 if verdict is not None:
                     return failed(Stop(R.VERIFY_FAILED, verdict, step="verify"), data), None
             return envelope(code, data, next_params=next_params), None
+
+        try:
+            outcome = await attempt()
+            if auth is not None and outcome[0].status in (R.SUCCESS, R.EMPTY):
+                self._save_refreshed(user, card.domain, auth, cookies, run.session.site_cookies)
+            return outcome
         finally:
             await run.session.aclose()
 
