@@ -1,0 +1,968 @@
+{
+  "schema_version": "0.4",
+  "domain": "fixture.test",
+  "tool_prefix": "shop",
+  "base_url": "http://127.0.0.1:8900",
+  "blocked_signals": [
+    "status:403",
+    "body_contains:cf-challenge"
+  ],
+  "changed_signals": [
+    "body_contains:PersistedQueryNotFound"
+  ],
+  "provenance": {
+    "mapped_at": "2026-11-07T12:00:00Z",
+    "source": "hand_written",
+    "mapper_version": "fixture"
+  },
+  "connect_providers": [
+    {
+      "id": "shop",
+      "login_url": "http://127.0.0.1:8900/login",
+      "session_check": {
+        "method": "GET",
+        "url": "{{base_url}}/api/me",
+        "expect": {
+          "status": [
+            200
+          ],
+          "content_type": "json",
+          "paths": [
+            "$.user"
+          ]
+        }
+      },
+      "logged_out_signals": [
+        "status:401",
+        "redirect:/login"
+      ]
+    }
+  ],
+  "defaults": {
+    "tier": "http",
+    "auth_provider": null,
+    "headers": {
+      "accept": "application/json"
+    },
+    "timeout_ms": 2000,
+    "cache_ttl_s": 60,
+    "rate_limit_per_min": 60
+  },
+  "actions": [
+    {
+      "name": "search_products",
+      "description": "Search the shop's products by keyword. Returns id, sku, name and price; 5 per page.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "search text",
+          "example": "lamp"
+        },
+        "page": {
+          "type": "integer",
+          "required": false,
+          "default": 1,
+          "description": "1-based page number"
+        }
+      },
+      "steps": [
+        {
+          "id": "search",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/products",
+            "query": {
+              "q": "{{params.query}}",
+              "start": "{{params.page | offset:5}}",
+              "count": "5"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.results"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.results[*]"
+            },
+            "total": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.total"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.search.items",
+        "fields": {
+          "id": "$.id",
+          "sku": "$.sku",
+          "name": "$.name",
+          "price": "$.price",
+          "colour": "$.colour"
+        },
+        "limit": 5,
+        "next_params": {
+          "param": "page",
+          "increment": 1,
+          "page_size": 5,
+          "until": "steps.search.total"
+        }
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "query": "lamp"
+          },
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "get_product",
+      "description": "Look up one product by its SKU (e.g. SKU-001).",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "sku": {
+          "type": "string",
+          "required": true,
+          "description": "product SKU",
+          "example": "SKU-001"
+        }
+      },
+      "steps": [
+        {
+          "id": "lookup",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/lookup",
+            "query": {
+              "sku": "{{params.sku}}"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.matches"
+            ]
+          },
+          "extract": {
+            "id": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.matches[*].id"
+            }
+          }
+        },
+        {
+          "id": "product",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/products/{{steps.lookup.id | urlencode}}",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.product"
+            ]
+          },
+          "extract": {
+            "item": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.product"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.product.item",
+        "fields": {
+          "id": "$.id",
+          "sku": "$.sku",
+          "name": "$.name",
+          "price": "$.price",
+          "colour": "$.colour"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "sku": "SKU-001"
+          },
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "get_item",
+      "description": "Fetch a product by its internal id (e.g. p1).",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "id": {
+          "type": "string",
+          "required": true,
+          "description": "internal product id",
+          "example": "p1"
+        }
+      },
+      "steps": [
+        {
+          "id": "item",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/items/{{params.id | urlencode}}",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.item"
+            ]
+          },
+          "extract": {
+            "item": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.item"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.item.item",
+        "fields": {
+          "id": "$.id",
+          "sku": "$.sku",
+          "name": "$.name",
+          "price": "$.price",
+          "colour": "$.colour"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "id": "p1"
+          },
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "legacy_search",
+      "description": "Search via the old persisted GraphQL query (now retired).",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {},
+      "steps": [
+        {
+          "id": "gql",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/gql",
+            "query": {
+              "queryId": "retired"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.data.items"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.data.items[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.gql.items",
+        "fields": {
+          "name": "$.name"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "list_orders",
+      "description": "List the signed-in user's orders.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {},
+      "steps": [
+        {
+          "id": "orders",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/account/orders",
+            "query": {},
+            "headers": {
+              "x-csrf": "{{session.cookies.csrftoken}}"
+            },
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.orders"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.orders[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.orders.items",
+        "fields": {
+          "id": "$.id",
+          "total": "$.total"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ],
+      "auth_provider": "shop"
+    },
+    {
+      "name": "private_report",
+      "description": "A report that always answers 401 (no login is configured for it).",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {},
+      "steps": [
+        {
+          "id": "report",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/private",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.report"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.report[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.report.items",
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "rate_limited",
+      "description": "An endpoint that always answers 429.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {},
+      "steps": [
+        {
+          "id": "limited",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/limited",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.items"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.items[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.limited.items",
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "forbidden",
+      "description": "An endpoint that always answers 403 (a blocked_signals status).",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {},
+      "steps": [
+        {
+          "id": "forbidden",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/forbidden",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.items"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.items[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.forbidden.items",
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "flaky_status",
+      "description": "Answers 500 for the first `fail` calls with a key, then succeeds.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "key": {
+          "type": "string",
+          "required": true,
+          "description": "counter key",
+          "example": "k1"
+        },
+        "fail": {
+          "type": "integer",
+          "required": false,
+          "default": 1,
+          "description": "how many 500s before success"
+        }
+      },
+      "steps": [
+        {
+          "id": "flaky",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/flaky",
+            "query": {
+              "key": "{{params.key}}",
+              "fail": "{{params.fail}}"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.status"
+            ]
+          },
+          "extract": {
+            "status": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.status"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.flaky.status",
+        "fields": {
+          "ok": "$.ok",
+          "attempt": "$.attempt"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "key": "example",
+            "fail": 0
+          },
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "slow_status",
+      "description": "Sleeps for `ms` milliseconds before answering. The step times out after 300 ms.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "ms": {
+          "type": "integer",
+          "required": false,
+          "default": 1000,
+          "description": "server delay"
+        }
+      },
+      "steps": [
+        {
+          "id": "slow",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/slow",
+            "query": {
+              "ms": "{{params.ms}}"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.status"
+            ]
+          },
+          "extract": {
+            "status": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.status"
+            }
+          },
+          "timeout_ms": 300
+        }
+      ],
+      "output": {
+        "from": "steps.slow.status",
+        "fields": {
+          "ok": "$.ok"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "ms": 0
+          },
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "challenge",
+      "description": "Returns a 200 HTML bot-challenge page.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {},
+      "steps": [
+        {
+          "id": "page",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/challenge",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.items"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.items[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.page.items",
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "changed_structure",
+      "description": "An endpoint whose response no longer matches the mapping.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "mode": {
+          "type": "enum",
+          "values": [
+            "structure",
+            "html",
+            "status"
+          ],
+          "required": false,
+          "default": "structure",
+          "description": "how the response changed"
+        }
+      },
+      "steps": [
+        {
+          "id": "list",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/changed",
+            "query": {
+              "mode": "{{params.mode}}"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.results"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.results[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.list.items",
+        "fields": {
+          "name": "$.name"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "cookie_flow",
+      "description": "Two-step flow: step 1 sets a cookie, step 2 needs it.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {},
+      "steps": [
+        {
+          "id": "start",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/flow/start",
+            "query": {},
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.step"
+            ]
+          },
+          "extract": {
+            "token": {
+              "from": "cookies",
+              "type": "jsonpath",
+              "expr": "$.flow"
+            }
+          }
+        },
+        {
+          "id": "finish",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/flow/finish",
+            "query": {
+              "token": "{{steps.start.token}}"
+            },
+            "headers": {},
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": [
+              "$.result"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.result[*]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.finish.items",
+        "fields": {
+          "order_id": "$.order_id",
+          "status": "$.status"
+        },
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ]
+    },
+    {
+      "name": "add_to_cart",
+      "description": "Add a product to the cart.",
+      "kind": "write",
+      "spends": false,
+      "idempotent": false,
+      "requires_confirmation": true,
+      "params": {
+        "sku": {
+          "type": "string",
+          "required": true,
+          "description": "product SKU",
+          "example": "SKU-001"
+        },
+        "qty": {
+          "type": "integer",
+          "required": false,
+          "default": 1,
+          "description": "quantity"
+        }
+      },
+      "steps": [
+        {
+          "id": "add",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/cart",
+            "query": {},
+            "headers": {
+              "content-type": "application/json"
+            },
+            "body": {
+              "sku": "{{params.sku}}",
+              "qty": "{{params.qty}}"
+            }
+          },
+          "timeout_ms": 500,
+          "expect": {
+            "status": [
+              200,
+              201
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {}
+        }
+      ],
+      "output": {
+        "from": null,
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": {
+        "request": {
+          "method": "GET",
+          "url": "{{base_url}}/api/cart/{{params.sku | urlencode}}",
+          "query": {},
+          "headers": {},
+          "body": null
+        },
+        "expect": {
+          "status": [
+            200
+          ],
+          "content_type": "json",
+          "paths": [
+            "$.in_cart"
+          ]
+        },
+        "assert": {
+          "type": "jsonpath",
+          "expr": "$.in_cart",
+          "equals": true
+        }
+      },
+      "examples": []
+    }
+  ]
+}

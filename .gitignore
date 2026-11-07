@@ -5,6 +5,7 @@ state.json
 *.state.json
 .env
 .env.*
+!.env.example
 
 # python
 __pycache__/
@@ -17,6 +18,8 @@ __pycache__/
 *.sqlite
 *.sqlite3
 *.db
+*.db-wal
+*.db-shm
 
 # os / editor
 .DS_Store

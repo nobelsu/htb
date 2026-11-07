@@ -1,43 +1,52 @@
-[build-system]
-requires = ["setuptools==80.9.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "htb-mapper"
+name = "htb-runtime"
 version = "0.1.0"
-description = "Capture websites and map their internal HTTP calls into agent-callable action cards"
-readme = "README.md"
-requires-python = ">=3.11"
+description = "Website action cards: mapper (capture to card), executor, registry and MCP gateway"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "jsonpath-ng==1.16.0",
+    "pydantic>=2.14,<3",
+    "httpx>=0.28,<0.29",
+    "jsonpath-ng>=1.16,<2",
+    "mcp==2.3.0",
+    "fastapi>=0.162",
+    "uvicorn>=0.54",
+    "python-dotenv>=1.2",
+    # mapper: browser capture
     "playwright==1.64.1",
 ]
 
 [project.optional-dependencies]
-# LLM steps are optional: without ANTHROPIC_API_KEY the pipeline uses deterministic fallbacks.
+# Mapper LLM steps are optional: without ANTHROPIC_API_KEY the pipeline uses deterministic fallbacks.
 llm = ["anthropic==2.6.0"]
+
+[dependency-groups]
 dev = [
-    "pytest==9.2.0",
+    "mypy>=2.4.1",
+    "pytest>=9.2",
+    "pytest-asyncio>=1.4",
     "ruff==0.17.4",
 ]
 
-[tool.setuptools.packages.find]
-include = ["mapper*"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.setuptools.package-data]
-"mapper.capture" = ["*.js"]
+[tool.hatch.build.targets.wheel]
+packages = ["schema", "runtime", "mapper"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# mapper tests import their helpers (fixture_site, synthetic) by bare name
 pythonpath = ["tests/mapper"]
-addopts = ["--import-mode=importlib", "-ra"]
 markers = [
     "browser: needs a Playwright Chromium install (skipped when unavailable)",
 ]
 
 [tool.ruff]
 line-length = 110
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
