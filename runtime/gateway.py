@@ -16,40 +16,46 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
 from typing import Any
+from urllib.parse import urlsplit
 
 import anyio
 import mcp_types as types
-from mcp.server.lowlevel.server import Server
-from mcp.server.auth.routes import build_resource_metadata_url, create_auth_routes, create_protected_resource_routes
+from mcp.server.auth.routes import (
+    build_resource_metadata_url,
+    create_auth_routes,
+    create_protected_resource_routes,
+)
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
+from mcp.server.lowlevel.server import Server
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from pydantic import AnyHttpUrl
 from starlette.routing import BaseRoute
-from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
+from runtime.account_page import routes as account_routes
+from runtime.account_page import session_cookie
 from runtime.browser.pool import BrowserConfig, BrowserPool
-from runtime.catalog import find_actions
 from runtime.browser.tier import BrowserTier
+from runtime.catalog import find_actions
 from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
 from runtime.connect_page import routes as connect_routes
-from runtime.home_page import routes as home_routes
-from runtime.signup_page import routes as signup_routes
-from runtime.account_page import routes as account_routes, session_cookie
-from runtime.neko.manager import NekoConfig, NekoManager
-from runtime.proxy import ProxyConfig
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
+from runtime.home_page import routes as home_routes
 from runtime.keys import ENV_KEY_USER, KeyStore
-from runtime.oauth import OAuth
 from runtime.mapper_remapper import MapperRemapper
+from runtime.neko.manager import NekoConfig, NekoManager
+from runtime.oauth import OAuth
+from runtime.proxy import ProxyConfig
 from runtime.registry import Registry, StoredCard
 from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
 from runtime.sessions import DevEnvSessionStore, SessionStore
-from runtime.tiers import default_tiers
+from runtime.signup_page import routes as signup_routes
 from runtime.state import StateStore
+from runtime.tiers import default_tiers
+from runtime.ui import PRODUCT_NAME
 from schema import load_card
 
 log = logging.getLogger("runtime.gateway")
@@ -458,7 +464,7 @@ class Gateway:
                 revocation_options=RevocationOptions(enabled=True),
             )
             extra += create_protected_resource_routes(
-                resource_url=AnyHttpUrl(f"{public}/mcp"), authorization_servers=[issuer], resource_name="htb"
+                resource_url=AnyHttpUrl(f"{public}/mcp"), authorization_servers=[issuer], resource_name=PRODUCT_NAME
             )
             resolve = BearerAuth(lambda *_: None, api_key, keys=keys)._user_for  # type: ignore[arg-type]
             extra += account_routes(

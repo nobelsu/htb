@@ -11,7 +11,7 @@ from collections.abc import Iterable
 
 from starlette.responses import HTMLResponse
 
-PRODUCT_NAME = os.environ.get("PRODUCT_NAME", "htb")
+PRODUCT_NAME = os.environ.get("PRODUCT_NAME", "spider")
 HEADERS = {"cache-control": "no-store", "referrer-policy": "no-referrer", "x-frame-options": "DENY"}
 
 FONTS = (
