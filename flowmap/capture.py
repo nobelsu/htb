@@ -299,7 +299,8 @@ async def capture_run(
     try:
         await play(page, flow, values, on_step=on_step, timeout_ms=timeout_ms)
         await rec.settle()
-        run.visible = await _visible(page, flow, timeout_ms)
+        # A marker search finds nothing, so don't wait long for results there.
+        run.visible = await _visible(page, flow, timeout_ms if kind == "real" else 500)
         if kind == "real" and flow.next_page is not None and run.visible:
             nxt = resolve(page, flow.next_page)
             if await nxt.count() and await nxt.first.is_visible():  # no next link: one page of results

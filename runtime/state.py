@@ -1,4 +1,4 @@
-"""Runtime learnings and healing records: `action_state`, `heal_jobs`, `heal_candidates`.
+"""Runtime learnings and healing records: `action_state`, `heal_jobs`, `heal_candidates`, `heal_events`.
 
 Lives in the same SQLite file as the registry (separate connection, WAL mode).
 """
@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS heal_candidates (
     status       TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
     created_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS heal_events (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id   TEXT NOT NULL,
+    domain   TEXT NOT NULL,
+    event    TEXT NOT NULL,                 -- remap_start | remap_done | remap_failed | heal_done
+    data     TEXT NOT NULL,                 -- JSON: ms, actions, per-action timings and diffs
+    at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS heal_events_job ON heal_events (job_id);
 """
 
 JobStatus = Literal["queued", "running", "succeeded", "needs_review", "failed", "cancelled"]
@@ -225,6 +234,32 @@ class StateStore:
                 (json.dumps({"error": "runtime restarted while the job was running"}), _now()),
             )
             return cur.rowcount
+
+    # ---- heal_events -------------------------------------------------------
+
+    def add_event(self, job_id: str, domain: str, event: str, data: dict[str, Any]) -> None:
+        """One step of a heal job, with timings (DECISIONS M4): what the heal benchmark reads."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO heal_events (job_id, domain, event, data, at) VALUES (?, ?, ?, ?, ?)",
+                (job_id, domain, event, json.dumps(data), _now()),
+            )
+
+    def events(self, job_id: str | None = None, domain: str | None = None) -> list[dict[str, Any]]:
+        where, args = [], []
+        if job_id is not None:
+            where.append("job_id = ?")
+            args.append(job_id)
+        if domain is not None:
+            where.append("domain = ?")
+            args.append(domain)
+        filters = " WHERE " + " AND ".join(where) if where else ""
+        sql = f"SELECT * FROM heal_events{filters} ORDER BY id"
+        return [
+            {"job_id": r["job_id"], "domain": r["domain"], "event": r["event"], "data": json.loads(r["data"]),
+             "at": r["at"]}
+            for r in self._conn.execute(sql, args).fetchall()
+        ]
 
     # ---- heal_candidates ---------------------------------------------------
 

@@ -199,7 +199,10 @@ async def book_page(request: Request, book_id: str) -> HTMLResponse:
 async def _search(request: Request) -> Response:
     if not _csrf_ok(request):
         return JSONResponse({"error": "csrf"}, status_code=403)
-    q = request.query_params.get(_shape()["param"], "").strip().lower()
+    param = _shape()["param"]
+    if param not in request.query_params:  # like real sites: a missing required parameter is a 400
+        return JSONResponse({"error": f"missing parameter {param!r}"}, status_code=400)
+    q = request.query_params[param].strip().lower()
     sort = request.query_params.get("sort", "relevance")
     start = int(request.query_params.get("start", "0"))
     count = min(int(request.query_params.get("count", str(PAGE_SIZE))), 50)

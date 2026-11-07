@@ -650,13 +650,19 @@ def load_into_registry(registry: Registry, path: Path) -> int | None:
 def load_remapper(
     spec: str | None, sessions: SessionStore | None = None, captures_dir: str | Path = "captures"
 ) -> Remapper | None:
-    """`mapper` -> the heal adapter (WeiWei's mapper); `module.path:Name` -> an instance of Name (or Name itself
-    if it is already an instance)."""
+    """`mapper` -> the heal adapter (WeiWei's mapper); `flowmap` -> flowmap's flow replay (FLOWS_DIR, default
+    flows/); `module.path:Name` -> an instance of Name (or Name itself if it is already an instance)."""
     if not spec:
         return None
     if spec == "mapper":
         log.info("using the mapper to heal (recordings in %s)", captures_dir)
         return MapperRemapper(captures_dir, sessions=sessions)
+    if spec == "flowmap":
+        from flowmap.heal import FlowRemapper
+
+        flows_dir = os.environ.get("FLOWS_DIR", "flows")
+        log.info("using flowmap to heal (flows in %s, captures in %s)", flows_dir, captures_dir)
+        return FlowRemapper(flows_dir, captures_dir, sessions=sessions)
     module_name, _, attr = spec.partition(":")
     obj = getattr(importlib.import_module(module_name), attr)
     remapper: Remapper = obj() if isinstance(obj, type) else obj
