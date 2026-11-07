@@ -283,3 +283,14 @@ async def test_play_runs_every_step(tmp_path: Path) -> None:
         with pytest.raises(FlowError, match=r"step 2 \(click\) failed"):
             await play(page, bad, {"query": "x", "sort": "a"}, timeout_ms=300)
         await browser.close()
+
+
+def test_committed_bookshop_flows_match_the_tests() -> None:
+    """flows/bookshop.test/ is what `python -m flowmap map bookshop.test` uses with the shop on port 8910."""
+    from tests.flowmap.conftest import book_flow, cart_flow, search_flow
+
+    root = Path(__file__).resolve().parents[2] / "flows"
+    for make in (search_flow, book_flow, cart_flow):
+        expected = make("http://127.0.0.1:8910")
+        saved = load_flow(flow_path(root, "bookshop.test", expected.action))
+        assert saved.model_copy(update={"kind": None}) == expected

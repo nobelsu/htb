@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "domain": "bookshop.test",
+  "action": "add_to_cart",
+  "kind": "write",
+  "inputs": {
+    "book_id": {
+      "marker": true,
+      "examples": [
+        "b002",
+        "b003"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "op": "goto",
+      "url": "http://127.0.0.1:8910/book/{{book_id}}"
+    },
+    {
+      "op": "wait_for",
+      "target": "#title:not(:empty)",
+      "timeout_ms": 10000
+    },
+    {
+      "op": "click",
+      "target": [
+        {
+          "method": "get_by_role",
+          "args": [
+            "button"
+          ],
+          "kwargs": {
+            "name": "Add to cart"
+          }
+        }
+      ]
+    },
+    {
+      "op": "wait_for",
+      "target": "#cart:not(:empty)",
+      "timeout_ms": 10000
+    }
+  ]
+}
