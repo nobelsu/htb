@@ -32,7 +32,6 @@ from runtime.browser.tier import BrowserTier
 from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
 from runtime.connect_page import routes as connect_routes
-from runtime.extension import manifest_extension_id
 from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
@@ -68,7 +67,11 @@ INSTRUCTIONS = (
     "When you talk to the user, describe outcomes in plain terms (\"You're signed out of linkedin.com\", "
     "\"Sign in here: <link>\", \"The site changed; I'll retry in a moment\"). Don't mention tool names, status "
     "codes, sessions, cookies, browser profiles, cards or other internals unless the user asks how it works. "
-    "Results about signing in include a `user_message`; use it."
+    "Results about signing in include a `user_message`; use it.\n"
+    "The user cannot see tool results. When start_connection gives you a sign-in link, write its user_message "
+    "(a markdown link) exactly as given in your reply before you call poll_connection, or they will have nothing "
+    "to click. (Apps that support "
+    "it show the link to the user themselves; then start_connection simply returns once they've signed in.)"
 )
 
 
@@ -107,13 +110,16 @@ CONNECTION_TOOLS = {
         _domain_tool(
             "start_connection",
             "Get a sign-in link for a site, after a tool result says the user needs to sign in (AUTH_REQUIRED or "
-            "AUTH_EXPIRED). Show the user the result's user_message (it contains the link); they sign in to the site "
-            "themselves on that page. Then call poll_connection.",
+            "AUTH_EXPIRED). The user can't see tool results: write the result's user_message (it contains the link) "
+            "in your reply to them first. Then call poll_connection: it waits until they've signed in.",
             {"provider": {"type": "string", "description": "optional connect provider id, if the site has several"}},
         ),
         _domain_tool(
             "poll_connection",
-            "Check whether the user has finished signing in. When status is 'connected', retry the original tool.",
+            "Wait for the user to finish signing in. Holds for up to wait_seconds (default 25, max 45) and returns "
+            "the moment they're signed in. If status is still 'pending', call it again; when 'connected', retry the "
+            "original tool.",
+            {"wait_seconds": {"type": "number", "minimum": 0, "maximum": 45, "description": "how long to wait (default 25)"}},
         ),
         _domain_tool(
             "connection_status",
@@ -155,7 +161,6 @@ class Gateway:
         connections: ConnectionManager | None = None,
         pool: BrowserPool | None = None,
         keepalive_s: float = 0.0,
-        extension_id: str | None = None,
     ) -> None:
         self.registry = registry
         self.executor = executor
@@ -163,11 +168,11 @@ class Gateway:
         self.connections = connections
         self.pool = pool
         self.keepalive_s = keepalive_s
-        self.extension_id = extension_id or manifest_extension_id()
         self.poll_interval_s = poll_interval_s
         self.bus = InMemorySubscriptionBus()  # 2026-07-28 clients: subscriptions/listen
         self._legacy_connections: weakref.WeakSet[Connection] = weakref.WeakSet()  # handshake-era clients
         self._tools: dict[str, ToolEntry] = {}
+        self._seen_clients: set[tuple[object, object, object]] = set()
         self._dirty = threading.Event()
         self.server = _Server(
             "htb-runtime",
@@ -237,8 +242,31 @@ class Gateway:
     async def _on_initialized(self, ctx: Any, params: types.NotificationParams) -> None:
         self._track(ctx)
 
+    def _log_client(self, ctx: Any) -> None:
+        """Log each client's identity and elicitation support once (decides how sign-in links are shown)."""
+        session = getattr(ctx, "session", None)
+        if session is None:
+            return
+        try:
+            caps = session.client_capabilities
+            params = session.client_params
+            info = getattr(params, "client_info", None) if params is not None else None
+            key = (getattr(info, "name", None), getattr(info, "version", None), session.protocol_version)
+        except Exception:
+            return
+        if key in self._seen_clients:
+            return
+        self._seen_clients.add(key)
+        elicitation = getattr(caps, "elicitation", None) if caps is not None else None
+        log.info(
+            "client %s %s (protocol %s), elicitation: %s",
+            key[0], key[1], key[2],
+            elicitation.model_dump(exclude_none=True) if elicitation is not None else None,
+        )
+
     async def _list_tools(self, ctx: Any, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
         self._track(ctx)
+        self._log_client(ctx)
         tools = [e.tool for e in self._tools.values()]
         if self.healer is not None:
             tools.append(HEAL_STATUS_TOOL)
@@ -246,10 +274,12 @@ class Gateway:
             tools.extend(CONNECTION_TOOLS.values())
         return types.ListToolsResult(tools=tools)
 
-    async def _call_tool(self, ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
+    async def _call_tool(
+        self, ctx: Any, params: types.CallToolRequestParams
+    ) -> types.CallToolResult | types.InputRequiredResult:
         self._track(ctx)
         if params.name in CONNECTION_TOOLS and self.connections is not None:
-            return await self._connection_tool(params.name, dict(params.arguments or {}))
+            return await self._connection_tool(params.name, dict(params.arguments or {}), ctx, params)
         if params.name == HEAL_STATUS_TOOL.name and self.healer is not None:
             return self._heal_status(dict(params.arguments or {}))
         entry = self._tools.get(params.name)
@@ -280,16 +310,37 @@ class Gateway:
             content=[types.TextContent(type="text", text=json.dumps(status))], structured_content=status
         )
 
-    async def _connection_tool(self, name: str, args: dict[str, Any]) -> types.CallToolResult:
+    async def _connection_tool(
+        self, name: str, args: dict[str, Any], ctx: Any = None, params: types.CallToolRequestParams | None = None
+    ) -> types.CallToolResult | types.InputRequiredResult:
         assert self.connections is not None
         domain = args.get("domain")
         if not isinstance(domain, str) or not domain:
             return _error_result("domain (string) is required")
+        if name == "start_connection" and params is not None and params.request_state:
+            return await self._finish_url_sign_in(params)
         if name == "start_connection":
             provider = args.get("provider")
             out = self.connections.start(DEFAULT_USER, domain, provider if isinstance(provider, str) else None)
+            if out.get("status") == "pending" and "url" in out and _supports_url_elicitation(ctx):
+                # Let the client itself show the link (MCP URL elicitation), so it never depends on the model
+                # copying it into its reply. The client retries this call once the user has responded.
+                token = str(out["url"]).rsplit("/", 1)[1]
+                request = types.ElicitRequest(
+                    params=types.ElicitRequestURLParams(
+                        mode="url",
+                        message=f"Sign in to {domain} to continue. You sign in on {domain}'s own page; "
+                        "your password isn't shared with the assistant.",
+                        url=str(out["url"]),
+                        elicitation_id=token,
+                    )
+                )
+                log.info("start_connection: asking the client to show the sign-in link (URL elicitation)")
+                return types.InputRequiredResult(input_requests={SIGN_IN_REQUEST: request}, request_state=token)
         elif name == "poll_connection":
-            out = self.connections.poll(DEFAULT_USER, domain)
+            wait = args.get("wait_seconds", 25)
+            wait_s = float(wait) if isinstance(wait, (int, float)) and not isinstance(wait, bool) else 25.0
+            out = await self.connections.poll(DEFAULT_USER, domain, wait_s)
         elif name == "disconnect":
             provider = args.get("provider")
             out = await self.connections.disconnect(
@@ -300,6 +351,35 @@ class Gateway:
         if "error" in out:
             return _error_result(str(out["error"]))
         return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(out))], structured_content=out)
+
+    async def _finish_url_sign_in(self, params: types.CallToolRequestParams) -> types.CallToolResult:
+        """The client's retry after showing the sign-in link: wait for the sign-in, then report."""
+        assert self.connections is not None
+        log.info("start_connection: client retried after the sign-in prompt: %s",
+                 {k: getattr(v, "action", type(v).__name__) for k, v in (params.input_responses or {}).items()})
+        conn = self.connections.by_token(params.request_state or "")
+        if conn is None:
+            return _error_result("unknown or expired sign-in; call start_connection again")
+        response = (params.input_responses or {}).get(SIGN_IN_REQUEST)
+        action = getattr(response, "action", None)
+        if action == "decline":  # the user said no
+            out = await self.connections.poll(conn.user, conn.domain)
+            out.pop("url", None)
+            out["user_message"] = f"Signing in to {conn.domain} was cancelled."
+            out["hint"] = "the user declined to open the sign-in page; ask whether they want to sign in"
+            return _json_result(out)
+        if action != "accept":
+            # "cancel" (or anything else): the app couldn't show the prompt (some clients cancel URL requests
+            # automatically). Fall back to the agent showing the link and waiting in the same turn.
+            out = await self.connections.poll(conn.user, conn.domain)
+            out["hint"] = (
+                "Your app couldn't show the sign-in link to the user. In this same reply, write the user_message "
+                "exactly as given (a markdown link), then immediately call poll_connection; don't end your turn, it "
+                "waits for them to sign in."
+            )
+            return _json_result(out)
+        out = await self.connections.poll(conn.user, conn.domain, wait_s=40, opened=True)
+        return _json_result(out)
 
     @asynccontextmanager
     async def _lifespan(self, _server: Server[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
@@ -341,9 +421,30 @@ class Gateway:
     # ---- HTTP --------------------------------------------------------------
 
     def asgi_app(self, api_key: str, host: str = "127.0.0.1") -> ASGIApp:
-        extra = connect_routes(self.connections, self.extension_id) if self.connections is not None else []
+        extra = connect_routes(self.connections) if self.connections is not None else []
         inner = self.server.streamable_http_app(host=host, custom_starlette_routes=extra)  # type: ignore[arg-type]
         return BearerAuth(inner, api_key, exempt_prefixes=("/connect/", "/neko/"))
+
+
+SIGN_IN_REQUEST = "sign_in"
+
+
+def _supports_url_elicitation(ctx: Any) -> bool:
+    """A 2026-07-28 client that declared URL elicitation (Claude Code does)."""
+    session = getattr(ctx, "session", None)
+    if session is None:
+        return False
+    try:
+        caps = session.client_capabilities
+        modern = session.protocol_version in MODERN_PROTOCOL_VERSIONS
+    except Exception:
+        return False
+    elicitation = getattr(caps, "elicitation", None) if caps is not None else None
+    return bool(modern and elicitation is not None and getattr(elicitation, "url", None) is not None)
+
+
+def _json_result(out: dict[str, Any]) -> types.CallToolResult:
+    return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(out))], structured_content=out)
 
 
 def _error_result(message: str) -> types.CallToolResult:

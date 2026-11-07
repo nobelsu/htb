@@ -222,3 +222,4 @@ def test_instructions_ask_for_plain_language() -> None:
 
     assert "plain terms" in INSTRUCTIONS and "user_message" in INSTRUCTIONS
     assert "Don't mention tool names, status codes, sessions, cookies, browser profiles" in INSTRUCTIONS
+    assert "The user cannot see tool results" in INSTRUCTIONS and "before you call poll_connection" in INSTRUCTIONS

@@ -134,7 +134,7 @@ async def test_log_in_here_with_neko(neko_gateway: tuple[str, Path], site_url: s
             await page.keyboard.type(LOGIN_PASSWORD, delay=40)
             await click_in_stream(page, *spots["#submit"])
 
-            await page.wait_for_selector("#status.connected", timeout=30_000)
+            await page.wait_for_selector("#done-panel", state="visible", timeout=30_000)
             await browser.close()
         print(f"{engine}: stream {stream_size[0]}x{stream_size[1]}, playback {fps}x")
 
