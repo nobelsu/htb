@@ -221,6 +221,9 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   link-in-the-result flow above. Caveat found in testing: Claude Code declares URL elicitation but its desktop app
   and `claude -p` answer "cancel" instantly without showing anything, so "cancel" is treated as "the app couldn't
   show it": the result carries the link and tells the agent to write it and call poll_connection in the same turn. The gateway logs each client's name and elicitation support once.
+  Still, agents sometimes summarised the JSON's user_message as "use the link" and dropped the URL (the unopened-link
+  safety net then recovered ~30 s later). So while a link is waiting, sign-in results lead with a plain text line,
+  "Show this to the user now..." followed by the link itself, before the JSON.
 - **L6 Instant "decline" means the app answered (judgement call).** Since Claude Code 2.1.318 the desktop app
   answers URL prompts with "decline" instead of "cancel", still within ~10 ms and without showing anything, so the
   agent was told "cancelled" and stopped waiting. No person answers in under 2 s (`HUMAN_REPLY_MIN_S`), so a decline

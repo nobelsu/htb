@@ -345,7 +345,7 @@ class Gateway:
             out = self.connections.status(user, domain)
         if "error" in out:
             return _error_result(str(out["error"]))
-        return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(out))], structured_content=out)
+        return _connection_result(out)
 
     async def _finish_url_sign_in(self, params: types.CallToolRequestParams, user: str) -> types.CallToolResult:
         """The client's retry after showing the sign-in link: wait for the sign-in, then report."""
@@ -368,7 +368,7 @@ class Gateway:
             out.pop("url", None)
             out["user_message"] = f"Signing in to {conn.domain} was cancelled."
             out["hint"] = "the user declined to open the sign-in page; ask whether they want to sign in"
-            return _json_result(out)
+            return _connection_result(out)
         if action != "accept":
             # "cancel" (or anything else): the app couldn't show the prompt (some clients cancel URL requests
             # automatically). Fall back to the agent showing the link and waiting in the same turn.
@@ -378,9 +378,9 @@ class Gateway:
                 "exactly as given (a markdown link), then immediately call poll_connection; don't end your turn, it "
                 "waits for them to sign in."
             )
-            return _json_result(out)
+            return _connection_result(out)
         out = await self.connections.poll(conn.user, conn.domain, wait_s=40, opened=True)
-        return _json_result(out)
+        return _connection_result(out)
 
     @asynccontextmanager
     async def _lifespan(self, _server: Server[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
@@ -462,6 +462,27 @@ def _supports_url_elicitation(ctx: Any) -> bool:
 
 def _json_result(out: dict[str, Any]) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(out))], structured_content=out)
+
+
+SHOW_LINK = (
+    "Show this to the user now. They can't see tool results, so unless your reply contains this exact line, "
+    "link included, they have nothing to click. Then call poll_connection in the same turn.\n\n"
+)
+
+
+def _connection_result(out: dict[str, Any]) -> types.CallToolResult:
+    """Sign-in results. While a link is waiting to be used, the result leads with a plain line holding the link (not
+    buried in JSON, where agents tend to summarise it as "use the link" and drop the URL)."""
+    message = out.get("user_message")
+    if out.get("status") != "pending" or not isinstance(message, str) or "](" not in message:
+        return _json_result(out)
+    return types.CallToolResult(
+        content=[
+            types.TextContent(type="text", text=SHOW_LINK + message),
+            types.TextContent(type="text", text=json.dumps(out)),
+        ],
+        structured_content=out,
+    )
 
 
 def _error_result(message: str) -> types.CallToolResult:
