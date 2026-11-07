@@ -12,6 +12,7 @@ from playwright.async_api import BrowserContext, Page
 from playwright.async_api import Error as PlaywrightError
 
 from runtime.browser.pool import BrowserPool
+from runtime.identity import DEFAULT_IDENTITY, BrowserIdentity
 from runtime.template import BuiltRequest
 from runtime.tiers import HttpResponse, ProfileKey, Session, TransportError, TransportTimeout
 from schema.card import Tier
@@ -39,7 +40,15 @@ def _origin(url: str) -> str:
 
 
 class BrowserSession:
-    def __init__(self, pool: BrowserPool, key: ProfileKey, base_url: str, seed_cookies: dict[str, str]) -> None:
+    def __init__(
+        self,
+        pool: BrowserPool,
+        key: ProfileKey,
+        base_url: str,
+        seed_cookies: dict[str, str],
+        identity: BrowserIdentity | None = None,
+    ) -> None:
+        self._identity = identity or DEFAULT_IDENTITY
         self._pool = pool
         self._key = key
         self._base_url = base_url
@@ -68,6 +77,11 @@ class BrowserSession:
         if missing:
             await self._context.add_cookies(missing)  # type: ignore[arg-type]
         self._page = await self._context.new_page()
+        # Present the sign-in's device identity: headers, client hints and navigator, for this tab's requests.
+        cdp = await self._context.new_cdp_session(self._page)
+        await cdp.send("Network.setUserAgentOverride", self._identity.cdp_override())
+        # Playwright applies its own Accept-Language over the DevTools one; its per-tab header setting wins.
+        await self._page.set_extra_http_headers({"accept-language": self._identity.accept_language})
         await self._goto(self._base_url)
         await self._read_cookies()
 
@@ -130,6 +144,12 @@ class BrowserTier:
     def __init__(self, pool: BrowserPool) -> None:
         self.pool = pool
 
-    def open(self, base_url: str, seed_cookies: dict[str, str], profile: ProfileKey | None = None) -> Session:
+    def open(
+        self,
+        base_url: str,
+        seed_cookies: dict[str, str],
+        profile: ProfileKey | None = None,
+        identity: BrowserIdentity | None = None,
+    ) -> Session:
         key = profile or ProfileKey("_shared", urlsplit(base_url).hostname or "site", None)
-        return BrowserSession(self.pool, key, base_url, seed_cookies)
+        return BrowserSession(self.pool, key, base_url, seed_cookies, identity)

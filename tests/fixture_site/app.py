@@ -1,7 +1,8 @@
 """A small shop used as the executor's test target. Every result code has an endpoint that reaches it.
 
 Run standalone:  uv run uvicorn tests.fixture_site.app:app --port 8900
-Admin:  POST /_admin/break (renames /api/items -> /api/v2/items), POST /_admin/reset, GET /_admin/hits
+Admin:  POST /_admin/break (renames /api/items -> /api/v2/items), POST /_admin/reset, GET /_admin/hits,
+        GET /_admin/browsers (which browser identity each path last saw)
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ class State:
     flaky: Counter[str] = field(default_factory=Counter)
     cart: dict[str, int] = field(default_factory=dict)
     rotations: int = 0
+    last_headers: dict[str, dict[str, str]] = field(default_factory=dict)  # "GET /path" -> the latest request's
 
     def reset(self) -> None:
         self.broken = False
@@ -50,6 +52,7 @@ class State:
         self.flaky.clear()
         self.cart.clear()
         self.rotations = 0
+        self.last_headers.clear()
 
 
 state = State()
@@ -60,6 +63,7 @@ app = FastAPI(title="fixture shop")
 async def count_hits(request: Request, call_next: Any) -> Response:
     if not request.url.path.startswith("/_admin"):
         state.hits[f"{request.method} {request.url.path}"] += 1
+        state.last_headers[f"{request.method} {request.url.path}"] = dict(request.headers)
     return await call_next(request)
 
 
@@ -81,6 +85,15 @@ def admin_reset() -> dict[str, bool]:
 @app.get("/_admin/hits")
 def admin_hits() -> dict[str, int]:
     return dict(state.hits)
+
+
+IDENTITY_HEADERS = ("user-agent", "sec-ch-ua", "sec-ch-ua-platform", "accept-language")
+
+
+@app.get("/_admin/browsers")
+def admin_browsers() -> dict[str, dict[str, str]]:
+    """The browser identity each path last saw (no cookies or other headers)."""
+    return {path: {h: seen[h] for h in IDENTITY_HEADERS if h in seen} for path, seen in state.last_headers.items()}
 
 
 # ---- reads -----------------------------------------------------------------
@@ -266,11 +279,13 @@ async def slow(ms: int = 1000) -> dict[str, Any]:
 
 
 # ---- bot-guarded endpoints (for the impersonate tier) ------------------------
-# A real site would check the TLS fingerprint; here a Chrome User-Agent plus client-hint headers stand in.
+# A real site checks the TLS/HTTP2 fingerprint, which the plain http tier can't fake even though it sends a Chrome
+# user-agent and client hints (device identity). Here the sec-fetch-* headers that only a browser's own network stack
+# adds (real Chrome, and curl_cffi's Chrome profile) stand in for that fingerprint.
 
 
 def looks_like_browser(request: Request) -> bool:
-    return "Chrome/" in request.headers.get("user-agent", "") and "sec-ch-ua" in request.headers
+    return "Chrome/" in request.headers.get("user-agent", "") and "sec-fetch-mode" in request.headers
 
 
 CHALLENGE_HTML = "<html><title>Just a moment...</title><div id='cf-challenge'></div></html>"
