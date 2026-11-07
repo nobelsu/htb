@@ -240,6 +240,13 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   session, closes and deletes the user's server-side browser profile for that site, and cancels a pending login
   link (stopping its Neko browser). It is idempotent and marked destructive in MCP (`destructiveHint`); its
   description tells agents to call it only when the user asks. It does not log the user out on the site itself.
+- **Generic tools (asked; spec changed).** By default the gateway exposes a fixed set of tools instead of one per
+  action: `find_actions(query?, site?)` and `run_action(site, action, params, confirmation_id?)`, plus the sign-in
+  tools and `heal_status`. Reasons: Claude Code defers loading large tool sets ("Loaded tools" round trips cost
+  seconds per call), and a fixed set scales to any number of sites; new cards appear through `find_actions` without
+  a tool-list change. Search is a simple keyword score over each action's name (weighted), site, description and
+  parameter names, top 10. `run_action`'s `confirmation_id` maps to the card's `_confirmation_id`. The per-action
+  mode stays available (`TOOLS_MODE=per_action`); list-changed notifications are only sent in that mode.
 - **Plain language for users (asked).** What the agent tells the user should describe outcomes, not internals.
   The MCP server instructions ask agents not to mention tool names, status codes, sessions, cookies, browser
   profiles or cards unless the user asks how it works. The sign-in tools (`start_connection`, `poll_connection`,

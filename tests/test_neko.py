@@ -47,7 +47,7 @@ def neko_gateway(tmp_path: Path, fixture_card: dict[str, Any], neko_image: None)
     executor = Executor(store, Confirmer("s"))
     neko = NekoManager(NekoConfig(udp_ports=(52100, 52109)))
     manager = ConnectionManager(registry, store, executor, "http://placeholder", neko=neko, check_every_s=0.5)
-    gateway = Gateway(registry, executor, poll_interval_s=0.05, connections=manager)
+    gateway = Gateway(registry, executor, poll_interval_s=0.05, tools_mode="per_action", connections=manager)
     with LiveServer(gateway.asgi_app(API_KEY)) as server:
         manager.public_base_url = server.url
         yield server.url, db

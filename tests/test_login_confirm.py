@@ -144,7 +144,7 @@ async def test_confirm_needs_a_started_browser(tmp_path: Path, fixture_card: dic
 def weak_gateway(tmp_path: Path, fixture_card: dict[str, Any]) -> Iterator[tuple[str, FakeNeko]]:
     neko = FakeNeko()
     manager, registry = make_manager(tmp_path, weak_card(fixture_card), neko)
-    gateway = Gateway(registry, manager.executor, poll_interval_s=0.05, connections=manager)
+    gateway = Gateway(registry, manager.executor, poll_interval_s=0.05, tools_mode="per_action", connections=manager)
     with LiveServer(gateway.asgi_app(API_KEY)) as server:
         manager.public_base_url = server.url
         yield server.url, neko
@@ -241,7 +241,7 @@ async def test_poll_does_not_hang_when_the_link_was_never_opened(
 def strong_gateway(tmp_path: Path, fixture_card: dict[str, Any]) -> Iterator[tuple[str, FakeNeko]]:
     neko = FakeNeko()
     manager, registry = make_manager(tmp_path, fixture_card, neko)
-    gateway = Gateway(registry, manager.executor, poll_interval_s=0.05, connections=manager)
+    gateway = Gateway(registry, manager.executor, poll_interval_s=0.05, tools_mode="per_action", connections=manager)
     with LiveServer(gateway.asgi_app(API_KEY)) as server:
         manager.public_base_url = server.url
         yield server.url, neko

@@ -28,6 +28,7 @@ from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, Too
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from runtime.browser.pool import BrowserConfig, BrowserPool
+from runtime.catalog import find_actions
 from runtime.browser.tier import BrowserTier
 from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
@@ -35,7 +36,7 @@ from runtime.connect_page import routes as connect_routes
 from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
-from runtime.registry import Registry
+from runtime.registry import Registry, StoredCard
 from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
 from runtime.sessions import DevEnvSessionStore
 from runtime.tiers import default_tiers
@@ -62,8 +63,9 @@ class ToolEntry:
 
 
 INSTRUCTIONS = (
-    "Tools that act on websites for the user. Every tool returns JSON; check its `status` field (SUCCESS, EMPTY, "
-    "NEEDS_CONFIRMATION, AUTH_REQUIRED, ...) to decide what to do next.\n"
+    "Tools that act on websites for the user. Use find_actions to discover what a site can do, then run_action "
+    "to do it. Every tool returns JSON; check its `status` field (SUCCESS, EMPTY, NEEDS_CONFIRMATION, "
+    "AUTH_REQUIRED, ...) to decide what to do next.\n"
     "When you talk to the user, describe outcomes in plain terms (\"You're signed out of linkedin.com\", "
     "\"Sign in here: <link>\", \"The site changed; I'll retry in a moment\"). Don't mention tool names, status "
     "codes, sessions, cookies, browser profiles, cards or other internals unless the user asks how it works. "
@@ -74,6 +76,46 @@ INSTRUCTIONS = (
     "it show the link to the user themselves; then start_connection simply returns once they've signed in.)"
 )
 
+
+TOOLS_MODES = ("generic", "per_action")
+
+FIND_ACTIONS_TOOL = types.Tool(
+    name="find_actions",
+    description="Find what you can do on websites for the user. Give a short description of the task (query), a "
+    "site (its domain, e.g. linkedin.com), or both. Returns matching actions with their parameters; then call "
+    "run_action. With no arguments it lists the available sites.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "what you want to do, e.g. 'search companies'"},
+            "site": {"type": "string", "description": "a site's domain, e.g. linkedin.com"},
+        },
+        "additionalProperties": False,
+    },
+    annotations=types.ToolAnnotations(read_only_hint=True),
+)
+
+RUN_ACTION_TOOL = types.Tool(
+    name="run_action",
+    description="Run an action from find_actions. Pass its params as an object. Returns JSON with a `status` "
+    "(SUCCESS, EMPTY, NEEDS_CONFIRMATION, AUTH_REQUIRED, ...) and the data. Actions that need confirmation first "
+    "return NEEDS_CONFIRMATION with a summary: show it to the user and, only after their explicit approval, call "
+    "again with identical params plus confirmation_id.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "site": {"type": "string", "description": "the site's domain, from find_actions"},
+            "action": {"type": "string", "description": "the action's name, from find_actions"},
+            "params": {"type": "object", "description": "the action's parameters, as described by find_actions"},
+            "confirmation_id": {
+                "type": "string",
+                "description": "from a NEEDS_CONFIRMATION result, only after the user explicitly approved it",
+            },
+        },
+        "required": ["site", "action"],
+        "additionalProperties": False,
+    },
+)
 
 HEAL_STATUS_TOOL = types.Tool(
     name="heal_status",
@@ -161,13 +203,17 @@ class Gateway:
         connections: ConnectionManager | None = None,
         pool: BrowserPool | None = None,
         keepalive_s: float = 0.0,
+        tools_mode: str = "generic",
     ) -> None:
+        if tools_mode not in TOOLS_MODES:
+            raise ValueError(f"tools_mode must be one of {TOOLS_MODES}")
         self.registry = registry
         self.executor = executor
         self.healer = healer
         self.connections = connections
         self.pool = pool
         self.keepalive_s = keepalive_s
+        self.tools_mode = tools_mode
         self.poll_interval_s = poll_interval_s
         self.bus = InMemorySubscriptionBus()  # 2026-07-28 clients: subscriptions/listen
         self._legacy_connections: weakref.WeakSet[Connection] = weakref.WeakSet()  # handshake-era clients
@@ -193,6 +239,11 @@ class Gateway:
 
     def rebuild(self) -> None:
         tools: dict[str, ToolEntry] = {}
+        if self.tools_mode == "generic":
+            # Actions are reached through find_actions / run_action; the tool list doesn't depend on the cards.
+            self._tools = tools
+            log.info("serving generic tools over %d sites", len(self.registry.active_cards()))
+            return
         for domain, stored in sorted(self.registry.active_cards().items()):
             card = stored.card
             for action in card.actions:
@@ -219,7 +270,8 @@ class Gateway:
             return False
         self._dirty.clear()
         self.rebuild()
-        await self.notify_tools_changed()
+        if self.tools_mode == "per_action":  # generic tools don't change when cards do
+            await self.notify_tools_changed()
         return True
 
     async def notify_tools_changed(self) -> None:
@@ -268,6 +320,8 @@ class Gateway:
         self._track(ctx)
         self._log_client(ctx)
         tools = [e.tool for e in self._tools.values()]
+        if self.tools_mode == "generic":
+            tools = [FIND_ACTIONS_TOOL, RUN_ACTION_TOOL]
         if self.healer is not None:
             tools.append(HEAL_STATUS_TOOL)
         if self.connections is not None:
@@ -282,15 +336,50 @@ class Gateway:
             return await self._connection_tool(params.name, dict(params.arguments or {}), ctx, params)
         if params.name == HEAL_STATUS_TOOL.name and self.healer is not None:
             return self._heal_status(dict(params.arguments or {}))
+        if self.tools_mode == "generic" and params.name == FIND_ACTIONS_TOOL.name:
+            return self._find_actions(dict(params.arguments or {}))
+        if self.tools_mode == "generic" and params.name == RUN_ACTION_TOOL.name:
+            return await self._run_action(dict(params.arguments or {}))
         entry = self._tools.get(params.name)
         stored = self.registry.get(entry.domain) if entry else None
         if entry is None or stored is None or stored.card.action(entry.action) is None:
             return _error_result(f"unknown tool {params.name!r}")
+        return await self._execute(stored, entry.action, dict(params.arguments or {}), params.name)
+
+    def _find_actions(self, args: dict[str, Any]) -> types.CallToolResult:
+        query, site = args.get("query"), args.get("site")
+        if (query is not None and not isinstance(query, str)) or (site is not None and not isinstance(site, str)):
+            return _error_result("query and site must be strings")
+        out = find_actions(self.registry.active_cards(), query or None, site or None)
+        if "error" in out:
+            return _error_result(str(out["error"]))
+        return _json_result(out)
+
+    async def _run_action(self, args: dict[str, Any]) -> types.CallToolResult:
+        site, action, params = args.get("site"), args.get("action"), args.get("params", {})
+        if not isinstance(site, str) or not isinstance(action, str):
+            return _error_result("site and action (strings) are required; use find_actions to look them up")
+        if not isinstance(params, dict):
+            return _error_result("params must be an object")
+        stored = self.registry.get(site)
+        if stored is None:
+            return _error_result(f"unknown site {site!r}; use find_actions to see the available sites")
+        if stored.card.action(action) is None:
+            return _error_result(f"{site} has no action {action!r}; use find_actions(site={site!r}) to list them")
+        call_args = dict(params)
+        confirmation_id = args.get("confirmation_id")
+        if confirmation_id is not None:
+            call_args["_confirmation_id"] = confirmation_id
+        return await self._execute(stored, action, call_args, f"{site}/{action}")
+
+    async def _execute(
+        self, stored: StoredCard, action: str, args: dict[str, Any], label: str
+    ) -> types.CallToolResult:
         try:
-            env = await self.executor.run(stored, entry.action, dict(params.arguments or {}), user=DEFAULT_USER)
+            env = await self.executor.run(stored, action, args, user=DEFAULT_USER)
         except Exception:
-            log.exception("executor crashed on %s", params.name)
-            return _error_result(f"internal error running {params.name}")
+            log.exception("executor crashed on %s", label)
+            return _error_result(f"internal error running {label}")
         payload = env.model_dump(mode="json")
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=json.dumps(payload))],
@@ -583,6 +672,7 @@ def main() -> None:
     gateway = Gateway(
         registry, executor, healer=healer, connections=connections, pool=pool,
         keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")),
+        tools_mode=os.environ.get("TOOLS_MODE", "generic"),
     )
     app = gateway.asgi_app(os.environ.get("GATEWAY_API_KEY", ""), host=args.host)
     uvicorn.run(app, host=args.host, port=args.port, access_log=False)

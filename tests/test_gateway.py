@@ -35,7 +35,7 @@ def registry(tmp_path: Path, fixture_card: dict[str, Any]) -> Iterator[Registry]
 
 @pytest.fixture
 def gateway(registry: Registry) -> Gateway:
-    return Gateway(registry, Executor(InMemorySessionStore(), Confirmer("s")), poll_interval_s=0.05)
+    return Gateway(registry, Executor(InMemorySessionStore(), Confirmer("s")), poll_interval_s=0.05, tools_mode="per_action")
 
 
 @pytest.fixture
@@ -196,7 +196,7 @@ async def test_break_and_heal_over_mcp(registry: Registry, tmp_path: Path, site_
 
     executor = Executor(InMemorySessionStore(), Confirmer("s"))
     healer = HealManager(registry, StateStore(tmp_path / "gw.db"), executor, FixtureRemapper(), HealConfig(poll_s=0.05))
-    gw = Gateway(registry, executor, poll_interval_s=0.05, healer=healer)
+    gw = Gateway(registry, executor, poll_interval_s=0.05, tools_mode="per_action", healer=healer)
     with LiveServer(gw.asgi_app(API_KEY)) as server:
         async with connect(f"{server.url}/mcp", "auto") as client:
             assert "heal_status" in {t.name for t in (await client.list_tools()).tools}

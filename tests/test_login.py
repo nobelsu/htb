@@ -145,7 +145,7 @@ def login_gateway(
     tiers["browser"] = BrowserTier(pool)
     executor = Executor(store, Confirmer("s"), tiers=tiers)
     manager = ConnectionManager(registry, store, executor, "http://placeholder", pool=pool)
-    gateway = Gateway(registry, executor, poll_interval_s=0.05, connections=manager, pool=pool)
+    gateway = Gateway(registry, executor, poll_interval_s=0.05, tools_mode="per_action", connections=manager, pool=pool)
     with LiveServer(gateway.asgi_app(API_KEY)) as server:
         manager.public_base_url = server.url
         yield server.url, db, store
