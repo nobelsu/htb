@@ -1,7 +1,8 @@
 """A small shop used as the executor's test target. Every result code has an endpoint that reaches it.
 
 Run standalone:  uv run uvicorn tests.fixture_site.app:app --port 8900
-Admin:  POST /_admin/break (renames /api/items -> /api/v2/items), POST /_admin/reset, GET /_admin/hits
+Admin:  POST /_admin/break (renames /api/items -> /api/v2/items), POST /_admin/reset, GET /_admin/hits,
+        GET /_admin/browsers (which browser identity each path last saw)
 """
 
 from __future__ import annotations
@@ -84,6 +85,15 @@ def admin_reset() -> dict[str, bool]:
 @app.get("/_admin/hits")
 def admin_hits() -> dict[str, int]:
     return dict(state.hits)
+
+
+IDENTITY_HEADERS = ("user-agent", "sec-ch-ua", "sec-ch-ua-platform", "accept-language")
+
+
+@app.get("/_admin/browsers")
+def admin_browsers() -> dict[str, dict[str, str]]:
+    """The browser identity each path last saw (no cookies or other headers)."""
+    return {path: {h: seen[h] for h in IDENTITY_HEADERS if h in seen} for path, seen in state.last_headers.items()}
 
 
 # ---- reads -----------------------------------------------------------------
