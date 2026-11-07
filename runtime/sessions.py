@@ -25,6 +25,14 @@ class InMemorySessionStore:
         found = self._data.get((user, domain, provider_id))
         return dict(found) if found is not None else None
 
+    def refresh(self, user: str, domain: str, provider_id: str, before: Cookies, after: Cookies) -> bool:
+        """Cookie rotation: replace the cookies only if they are still `before`. Returns whether it did."""
+        key = (user, domain, provider_id)
+        if self._data.get(key) != before:
+            return False
+        self._data[key] = dict(after)
+        return True
+
 
 class DevEnvSessionStore(InMemorySessionStore):
     """Local dev only: cookies pasted into DEV_SESSION_COOKIES, for every user.
@@ -47,6 +55,9 @@ class DevEnvSessionStore(InMemorySessionStore):
             return own
         shared = self._shared.get((domain, provider_id))
         return dict(shared) if shared is not None else None
+
+    def refresh(self, user: str, domain: str, provider_id: str, before: Cookies, after: Cookies) -> bool:
+        return False  # sign-ins pasted into .env stay as written (DECISIONS.md, cookie rotation)
 
 
 # TODO(login): a persistent store filled by start_connection / poll_connection (remote browser login),

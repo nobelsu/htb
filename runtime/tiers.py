@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from http.cookiejar import Cookie
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -11,6 +13,17 @@ import httpx
 
 from runtime.template import BuiltRequest
 from schema.card import Tier
+
+
+def site_cookies(jar: Iterable[Cookie], host: str) -> dict[str, str]:
+    """Cookies in `jar` that `host` itself gets: its own and its parent domains', not ones set for other sites
+    during cross-site redirects."""
+    out: dict[str, str] = {}
+    for cookie in jar:
+        domain = (cookie.domain or "").lstrip(".").lower()
+        if not domain or host == domain or host.endswith("." + domain):
+            out[cookie.name] = cookie.value or ""
+    return out
 
 
 class TransportTimeout(Exception):
@@ -47,6 +60,11 @@ class Session(Protocol):
     @property
     def cookies(self) -> dict[str, str]: ...
 
+    @property
+    def site_cookies(self) -> dict[str, str]:
+        """The cookies the site's own host would get now: what rotation saves back to the user's sign-in."""
+        ...
+
     async def prepare(self) -> None:
         """Called once after `open`, before `cookies` is read or anything is sent."""
         ...
@@ -70,10 +88,15 @@ class HttpSession:
             jar.set(name, value, domain=host)
         # httpx follows redirects and keeps every hop in response.history; the jar spans all steps.
         self._client = httpx.AsyncClient(cookies=jar, follow_redirects=True, timeout=None)
+        self._host = host
 
     @property
     def cookies(self) -> dict[str, str]:
         return {c.name: c.value or "" for c in self._client.cookies.jar}
+
+    @property
+    def site_cookies(self) -> dict[str, str]:
+        return site_cookies(self._client.cookies.jar, self._host)
 
     async def send(self, req: BuiltRequest, timeout_s: float) -> HttpResponse:
         kwargs: dict[str, object] = {"headers": req.headers}
@@ -136,6 +159,10 @@ class ImpersonateSession:
     @property
     def cookies(self) -> dict[str, str]:
         return {c.name: c.value or "" for c in self._client.cookies.jar}
+
+    @property
+    def site_cookies(self) -> dict[str, str]:
+        return site_cookies(self._client.cookies.jar, self._host)
 
     async def send(self, req: BuiltRequest, timeout_s: float) -> HttpResponse:
         from curl_cffi.requests import exceptions as cx

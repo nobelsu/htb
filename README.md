@@ -75,6 +75,8 @@ short-lived Neko container, streamed over WebRTC. We watch the browser's cookies
 calls `poll_connection` straight after showing the link: it waits (up to 45 s per call) and returns as soon as the
 user is signed in, so the agent carries on by itself. `connection_status` reports the state; `disconnect` deletes
 the stored sign-in and the server-side browser profile; a keep-alive marks sessions that have expired.
+Cookies the site refreshes (after successful actions and passing keep-alive checks) are saved back to the encrypted
+sign-in, so sites that rotate their login cookie stay signed in.
 
 Setup:
 - Neko: Docker running, and `docker pull ghcr.io/m1k1o/neko/chromium:latest` (about 2.2 GB). Hosted: set
