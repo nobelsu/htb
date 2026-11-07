@@ -16,11 +16,13 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Any
 
 import anyio
 import mcp_types as types
 from mcp.server.lowlevel.server import Server
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from runtime.browser.pool import BrowserConfig, BrowserPool
@@ -423,17 +425,40 @@ class Gateway:
     # ---- HTTP --------------------------------------------------------------
 
     def asgi_app(
-        self, api_key: str, host: str = "127.0.0.1", keys: KeyStore | None = None, signup_code: str = ""
+        self,
+        api_key: str,
+        host: str = "127.0.0.1",
+        keys: KeyStore | None = None,
+        signup_code: str = "",
+        public_base_url: str | None = None,
     ) -> ASGIApp:
         extra = connect_routes(self.connections) if self.connections is not None else []
         if keys is not None:
             connections = self.connections
             extra += signup_routes(keys, signup_code, lambda: connections.public_base_url if connections else None)
-        inner = self.server.streamable_http_app(host=host, custom_starlette_routes=extra)  # type: ignore[arg-type]
+        inner = self.server.streamable_http_app(
+            host=host,
+            custom_starlette_routes=extra,  # type: ignore[arg-type]
+            transport_security=host_check(host, public_base_url),
+        )
         return BearerAuth(inner, api_key, exempt_prefixes=("/connect/", "/neko/", "/signup"), keys=keys)
 
 
 SIGN_IN_REQUEST = "sign_in"
+
+
+def host_check(host: str, public_base_url: str | None) -> TransportSecuritySettings | None:
+    """MCP's DNS-rebinding protection: on a localhost bind the SDK only accepts localhost Host/Origin headers. Behind
+    a tunnel or reverse proxy (ngrok, Caddy) requests carry PUBLIC_BASE_URL's host, so allow exactly that one too."""
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        return None  # the SDK's own default for other binds
+    hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+    public = urlsplit(public_base_url) if public_base_url else None
+    if public is not None and public.hostname and public.hostname not in ("127.0.0.1", "localhost", "::1"):
+        hosts.append(public.netloc)
+        origins.append(f"{public.scheme}://{public.netloc}")
+    return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
 
 
 def caller(ctx: Any) -> str:
@@ -658,7 +683,11 @@ def main() -> None:
     )
     signup_code = os.environ.get("SIGNUP_CODE", "")
     app = gateway.asgi_app(
-        os.environ.get("GATEWAY_API_KEY", ""), host=args.host, keys=KeyStore(db_path), signup_code=signup_code
+        os.environ.get("GATEWAY_API_KEY", ""),
+        host=args.host,
+        keys=KeyStore(db_path),
+        signup_code=signup_code,
+        public_base_url=public_url,
     )
     log.info("sign-up page: %s", f"{public_url}/signup" if signup_code else "off (set SIGNUP_CODE to turn it on)")
     uvicorn.run(app, host=args.host, port=args.port, access_log=False)

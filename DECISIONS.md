@@ -355,6 +355,11 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   - The browser tier's warm profile browser gets the proxy when it starts (Playwright's proxy option).
   - Credentials are never logged: `ProxySpec`'s repr and every log line show `scheme://***@host:port (session ...)`.
   - Not covered: the mapper's own capture/replay browser (heal adapter) doesn't use the proxy.
+- **Sharing through a tunnel (ngrok).** The MCP SDK's DNS-rebinding protection only accepts localhost `Host` and
+  `Origin` headers when the gateway listens on 127.0.0.1, so through a tunnel every MCP request got 421. The gateway
+  now also allows exactly `PUBLIC_BASE_URL`'s host and origin; any other host is still refused. ngrok was chosen
+  over Cloudflare quick tunnels (those don't support server-sent events, which MCP streaming uses) and gives a
+  fixed free domain. The video relay for the login browser is metered's free TURN (`NEKO_ICE_SERVERS`).
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
 - **Not handled yet:** per-user quotas (L9); the mapper's own browser doesn't use the residential proxy (L10).
