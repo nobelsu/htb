@@ -3,9 +3,8 @@ gateway's Bearer check skips /connect/ and /neko/.
 
 GET  /connect/{token}          the page the user opens
 GET  /connect/{token}/status   JSON status, polled by the page
-POST /connect/{token}/browser  start the "log in here" browser; returns the viewer URL
+POST /connect/{token}/browser  start the login browser; returns the viewer URL
 POST /connect/{token}/done     the user clicked "I've signed in"
-POST /connect/{token}/cookies  called by the extension with the captured cookies
 *    /neko/{token}/...         reverse proxy to that login's Neko container (HTTP + its signalling WebSocket)
 """
 
@@ -13,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import html
-import json
 import logging
 
 import httpx
@@ -23,11 +21,10 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Re
 from starlette.routing import BaseRoute, Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from runtime.connect import Connection, ConnectionManager, CookieImportError
+from runtime.connect import Connection, ConnectError, ConnectionManager
 from runtime.neko.manager import NekoSession
 
 log = logging.getLogger("runtime.connect_page")
-MAX_BODY = 512_000
 NO_STORE = {"cache-control": "no-store", "referrer-policy": "no-referrer"}
 HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
@@ -36,12 +33,12 @@ HOP_BY_HOP = {
 
 PAGE_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connect __DOMAIN__</title>
+<title>Sign in to __DOMAIN__</title>
 <style>
   :root { color-scheme: light dark; --bg:#f7f7f5; --fg:#1c1c1a; --muted:#66665f; --line:#d9d9d4; --accent:#2f5fb3;
-          --ok:#1f7a4d; --bad:#b3261e; }
+          --ok:#1f7a4d; --ok-bg:#e6f3ec; --bad:#b3261e; }
   @media (prefers-color-scheme: dark) { :root { --bg:#171716; --fg:#ececea; --muted:#a0a09a; --line:#33332f;
-          --accent:#7aa2e8; --ok:#5fc48f; --bad:#f2827a; } }
+          --accent:#7aa2e8; --ok:#5fc48f; --ok-bg:#1b2e24; --bad:#f2827a; } }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif; }
   main { max-width:1280px; margin:32px auto; padding:0 16px; }
@@ -49,58 +46,48 @@ PAGE_HTML = """<!doctype html>
   h1 { font-size:22px; margin:0 0 4px; }
   p { margin:0 0 12px; } .muted { color:var(--muted); }
   button { font:inherit; padding:10px 18px; border-radius:6px; border:0; background:var(--accent); color:#fff; cursor:pointer; }
-  button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
   button:disabled { opacity:.5; cursor:default; }
-  .actions { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin:20px 0; }
-  #viewer { display:none; margin-top:16px; }
+  .actions { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin:16px 0; }
+  #viewer { display:none; margin-top:8px; }
   #viewer iframe { width:100%; aspect-ratio:__W__/__H__; border:1px solid var(--line); border-radius:8px; background:#000; display:block; }
-  #status { min-height:1.5em; margin-top:12px; }
-  #status.connected { color:var(--ok); font-weight:600; } #status.expired, #status.bad { color:var(--bad); }
+  #status { min-height:1.5em; margin-top:8px; }
+  #status.bad, #status.expired { color:var(--bad); }
   .hint { color:var(--muted); font-size:14px; }
-  code { font-size:14px; }
+  #done-panel { display:none; margin-top:24px; padding:28px 24px; border-radius:12px; background:var(--ok-bg);
+                border:1px solid color-mix(in srgb, var(--ok) 35%, transparent); max-width:640px; }
+  #done-panel .check { font-size:40px; line-height:1; color:var(--ok); }
+  #done-panel h2 { margin:12px 0 6px; font-size:22px; color:var(--ok); }
 </style></head>
 <body><main>
-<div class="intro">
-  <h1>Connect __DOMAIN__</h1>
-  <p class="muted">Your agent needs your __DOMAIN__ login. You sign in yourself; your password is never shared with
-  the agent or with us. We keep only the site's login session, encrypted.</p>
-  <div class="actions">
-    <button id="browser" type="button">Log in to __DOMAIN__</button>
-    <button id="connect" type="button" class="secondary" hidden>Use my existing login (extension)</button>
-  </div>
-  <p id="ext-hint" class="hint" hidden>Already logged in to __DOMAIN__ in this browser? The <strong>HTB Connect</strong>
-  extension can reuse that login.</p>
+<div class="intro" id="intro">
+  <h1>Sign in to __DOMAIN__</h1>
+  <p class="muted">Your agent needs your __DOMAIN__ account. You sign in yourself, in a private browser below; your
+  password is never shared with the agent or with us. We only keep the site's sign-in, encrypted.</p>
+  <div class="actions"><button id="browser" type="button">Log in to __DOMAIN__</button></div>
   <p id="status" role="status"></p>
 </div>
-<div id="viewer"><iframe id="frame" title="Secure browser for logging in to __DOMAIN__"
+<div id="viewer"><iframe id="frame" title="Private browser for signing in to __DOMAIN__"
   allow="autoplay; fullscreen; clipboard-read; clipboard-write"></iframe>
   <div class="actions"><button id="done" type="button">I've signed in</button>
   <span id="done-hint" class="hint"></span></div>
-  <p class="hint">This is a private browser running on our server, just for this login. It closes once you're
-  signed in.</p></div>
+  <p class="hint">This browser runs on our server, just for this sign-in, and closes once you're signed in.</p></div>
+<div id="done-panel" role="status" aria-live="polite">
+  <div class="check" aria-hidden="true">&#10003;</div>
+  <h2>You're signed in to __DOMAIN__</h2>
+  <p>You can close this tab and go back to your agent. It will carry on by itself.</p>
+</div>
 </main>
 <script>
-const CFG = __CONFIG__;
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
-const LABELS = {pending: "", connected: "Connected. You can close this tab and go back to your agent.",
-                expired: "This link has expired. Ask your agent for a new one."};
-function setStatus(s, text) { statusEl.className = s; statusEl.textContent = text ?? LABELS[s] ?? s; }
-function ask(msg) {
-  return new Promise((resolve) => {
-    if (!(window.chrome && chrome.runtime && chrome.runtime.sendMessage)) return resolve(null);
-    try { chrome.runtime.sendMessage(CFG.extensionId, msg, (r) => resolve(chrome.runtime.lastError ? null : r)); }
-    catch (e) { resolve(null); }
-  });
+function setStatus(s, text) { statusEl.className = s; statusEl.textContent = text || ""; }
+function showSignedIn() {
+  $("viewer").style.display = "none"; $("frame").src = "about:blank"; $("intro").style.display = "none";
+  $("done-panel").style.display = "block"; document.title = "Signed in to __DOMAIN__";
 }
-ask({type: "ping"}).then((r) => { if (r && r.ok) { $("connect").hidden = false; $("ext-hint").hidden = false; } });
-$("connect").addEventListener("click", async () => {
-  const r = await ask({type: "connect", token: CFG.token, domain: CFG.domain, baseUrl: CFG.baseUrl, origins: CFG.origins});
-  setStatus("pending", r && r.ok ? "Approve the request in the tab the extension opened…" : "The extension didn't respond. Reload and try again.");
-});
 $("browser").addEventListener("click", async () => {
   $("browser").disabled = true;
-  setStatus("pending", "Starting a secure browser…");
+  setStatus("pending", "Starting a private browser…");
   try {
     const resp = await fetch(location.pathname + "/browser", {method: "POST"});
     const body = await resp.json();
@@ -110,7 +97,7 @@ $("browser").addEventListener("click", async () => {
     $("done-hint").textContent = body.confirm
       ? "Click this once you've finished signing in."
       : "We'll notice when you're signed in, or click this to check now.";
-    setStatus("pending", "Sign in to " + CFG.domain + " below. Click inside the browser to start.");
+    setStatus("pending", "Sign in to __DOMAIN__ below. Click inside the browser to start.");
     $("viewer").scrollIntoView({behavior: "smooth", block: "start"});
   } catch (e) {
     setStatus("bad", "Couldn't start the browser: " + e.message);
@@ -122,7 +109,7 @@ $("done").addEventListener("click", async () => {
   try {
     const resp = await fetch(location.pathname + "/done", {method: "POST"});
     const body = await resp.json();
-    if (resp.ok) setStatus("connected");
+    if (resp.ok) showSignedIn();
     else setStatus("bad", body.error || ("HTTP " + resp.status));
   } catch (e) {
     setStatus("bad", "Couldn't check: " + e.message);
@@ -132,10 +119,10 @@ $("done").addEventListener("click", async () => {
 async function poll() {
   try {
     const s = await (await fetch(location.pathname + "/status", {cache: "no-store"})).json();
-    if (s.status !== "pending") {
-      setStatus(s.status); $("browser").disabled = true; $("connect").disabled = true;
-      if (s.status === "connected") { $("viewer").style.display = "none"; $("frame").src = "about:blank"; }
-      return;
+    if (s.status === "connected") { showSignedIn(); return; }
+    if (s.status === "expired") {
+      $("viewer").style.display = "none"; $("browser").disabled = true;
+      setStatus("expired", "This link has expired. Ask your agent for a new one."); return;
     }
   } catch (e) {}
   setTimeout(poll, 1000);
@@ -144,24 +131,15 @@ poll();
 </script></body></html>"""
 
 
-def render_page(conn: Connection, extension_id: str, width: int = 1280, height: int = 800) -> str:
-    config = {
-        "token": conn.token,
-        "domain": conn.domain,
-        "baseUrl": conn.base_url,
-        "origins": conn.cookie_origins(conn.domain),
-        "extensionId": extension_id,
-    }
-    safe_config = json.dumps(config).replace("<", "\\u003c")
+def render_page(conn: Connection, width: int = 1280, height: int = 800) -> str:
     return (
         PAGE_HTML.replace("__DOMAIN__", html.escape(conn.domain))
         .replace("__W__", str(width))
         .replace("__H__", str(height))
-        .replace("__CONFIG__", safe_config)
     )
 
 
-def routes(manager: ConnectionManager, extension_id: str) -> list[BaseRoute]:
+def routes(manager: ConnectionManager) -> list[BaseRoute]:
     http = httpx.AsyncClient(timeout=30, follow_redirects=False)
     size = (manager.neko.config.width, manager.neko.config.height) if manager.neko else (1280, 800)
 
@@ -169,7 +147,7 @@ def routes(manager: ConnectionManager, extension_id: str) -> list[BaseRoute]:
         conn = manager.by_token(request.path_params["token"])
         if conn is None:
             return HTMLResponse("<p>Unknown login link.</p>", status_code=404, headers=NO_STORE)
-        return HTMLResponse(render_page(conn, extension_id, *size), headers=NO_STORE)
+        return HTMLResponse(render_page(conn, *size), headers=NO_STORE)
 
     async def status(request: Request) -> Response:
         conn = manager.by_token(request.path_params["token"])
@@ -180,32 +158,17 @@ def routes(manager: ConnectionManager, extension_id: str) -> list[BaseRoute]:
     async def browser(request: Request) -> Response:
         try:
             started = await manager.start_browser_login(request.path_params["token"])
-        except CookieImportError as e:
+        except ConnectError as e:
             return JSONResponse({"error": str(e)}, status_code=400, headers=NO_STORE)
         return JSONResponse(started, headers=NO_STORE)
 
     async def done(request: Request) -> Response:
         try:
             conn = await manager.confirm_browser_login(request.path_params["token"])
-        except CookieImportError as e:
+        except ConnectError as e:
             return JSONResponse({"error": str(e)}, status_code=400, headers=NO_STORE)
         return JSONResponse({"status": conn.status, "message": conn.message}, headers=NO_STORE)
 
-    async def cookies(request: Request) -> Response:
-        body = await request.body()
-        if len(body) > MAX_BODY:
-            return JSONResponse({"error": "request too large"}, status_code=413)
-        try:
-            payload = json.loads(body)
-        except ValueError:
-            return JSONResponse({"error": "body must be JSON"}, status_code=400)
-        try:
-            conn = await manager.import_cookies(
-                request.path_params["token"], payload.get("cookies") if isinstance(payload, dict) else None
-            )
-        except CookieImportError as e:
-            return JSONResponse({"error": str(e)}, status_code=400)
-        return JSONResponse({"status": conn.status, "message": conn.message})
 
     def session_for(token: str) -> NekoSession | None:
         conn = manager.by_token(token)
@@ -285,7 +248,6 @@ def routes(manager: ConnectionManager, extension_id: str) -> list[BaseRoute]:
         Route("/connect/{token}/status", status),
         Route("/connect/{token}/browser", browser, methods=["POST"]),
         Route("/connect/{token}/done", done, methods=["POST"]),
-        Route("/connect/{token}/cookies", cookies, methods=["POST"]),
         Route("/neko/{token}", neko_root),
         WebSocketRoute("/neko/{token}/api/ws", neko_ws),
         Route("/neko/{token}/{path:path}", neko_http, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]),

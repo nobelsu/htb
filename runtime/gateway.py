@@ -32,7 +32,6 @@ from runtime.browser.tier import BrowserTier
 from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
 from runtime.connect_page import routes as connect_routes
-from runtime.extension import manifest_extension_id
 from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
@@ -108,12 +107,15 @@ CONNECTION_TOOLS = {
             "start_connection",
             "Get a sign-in link for a site, after a tool result says the user needs to sign in (AUTH_REQUIRED or "
             "AUTH_EXPIRED). Show the user the result's user_message (it contains the link); they sign in to the site "
-            "themselves on that page. Then call poll_connection.",
+            "themselves on that page. Then call poll_connection straight away: it waits for them.",
             {"provider": {"type": "string", "description": "optional connect provider id, if the site has several"}},
         ),
         _domain_tool(
             "poll_connection",
-            "Check whether the user has finished signing in. When status is 'connected', retry the original tool.",
+            "Wait for the user to finish signing in. Holds for up to wait_seconds (default 25, max 45) and returns "
+            "the moment they're signed in. If status is still 'pending', call it again; when 'connected', retry the "
+            "original tool.",
+            {"wait_seconds": {"type": "number", "minimum": 0, "maximum": 45, "description": "how long to wait (default 25)"}},
         ),
         _domain_tool(
             "connection_status",
@@ -155,7 +157,6 @@ class Gateway:
         connections: ConnectionManager | None = None,
         pool: BrowserPool | None = None,
         keepalive_s: float = 0.0,
-        extension_id: str | None = None,
     ) -> None:
         self.registry = registry
         self.executor = executor
@@ -163,7 +164,6 @@ class Gateway:
         self.connections = connections
         self.pool = pool
         self.keepalive_s = keepalive_s
-        self.extension_id = extension_id or manifest_extension_id()
         self.poll_interval_s = poll_interval_s
         self.bus = InMemorySubscriptionBus()  # 2026-07-28 clients: subscriptions/listen
         self._legacy_connections: weakref.WeakSet[Connection] = weakref.WeakSet()  # handshake-era clients
@@ -289,7 +289,9 @@ class Gateway:
             provider = args.get("provider")
             out = self.connections.start(DEFAULT_USER, domain, provider if isinstance(provider, str) else None)
         elif name == "poll_connection":
-            out = self.connections.poll(DEFAULT_USER, domain)
+            wait = args.get("wait_seconds", 25)
+            wait_s = float(wait) if isinstance(wait, (int, float)) and not isinstance(wait, bool) else 25.0
+            out = await self.connections.poll(DEFAULT_USER, domain, wait_s)
         elif name == "disconnect":
             provider = args.get("provider")
             out = await self.connections.disconnect(
@@ -341,7 +343,7 @@ class Gateway:
     # ---- HTTP --------------------------------------------------------------
 
     def asgi_app(self, api_key: str, host: str = "127.0.0.1") -> ASGIApp:
-        extra = connect_routes(self.connections, self.extension_id) if self.connections is not None else []
+        extra = connect_routes(self.connections) if self.connections is not None else []
         inner = self.server.streamable_http_app(host=host, custom_starlette_routes=extra)  # type: ignore[arg-type]
         return BearerAuth(inner, api_key, exempt_prefixes=("/connect/", "/neko/"))
 

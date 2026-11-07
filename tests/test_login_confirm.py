@@ -12,7 +12,7 @@ import pytest
 from playwright.async_api import async_playwright
 
 from runtime.confirm import Confirmer
-from runtime.connect import ConnectionManager, CookieImportError
+from runtime.connect import ConnectError, ConnectionManager
 from runtime.executor import Executor
 from runtime.gateway import Gateway
 from runtime.neko.manager import NekoConfig
@@ -96,12 +96,12 @@ async def test_weak_check_waits_for_the_user(tmp_path: Path, fixture_card: dict[
 
     neko.cookies_now = {"anon": "1"}
     await asyncio.sleep(0.2)  # the watcher records the first cookies
-    with pytest.raises(CookieImportError, match="doesn't look like you've signed in"):
+    with pytest.raises(ConnectError, match="doesn't look like you've signed in"):
         await manager.confirm_browser_login(token)  # nothing changed yet
 
     neko.cookies_now = {"anon": "1", **SIGNED_IN}
     await asyncio.sleep(0.2)
-    assert manager.poll("u", DOMAIN)["status"] == "pending"  # never auto-connects on a weak check
+    assert (await manager.poll("u", DOMAIN))["status"] == "pending"  # never auto-connects on a weak check
     conn = await manager.confirm_browser_login(token)
     assert conn.status == "connected"
     assert manager.store.get("u", DOMAIN, "shop") == {"anon": "1", **SIGNED_IN}
@@ -118,24 +118,24 @@ async def test_strong_check_auto_connects_and_confirm_verifies(
     assert (await manager.start_browser_login(token))["confirm"] is False
 
     neko.cookies_now = {"sid": "sid-revoked"}
-    with pytest.raises(CookieImportError, match="doesn't look like you've signed in"):
+    with pytest.raises(ConnectError, match="doesn't look like you've signed in"):
         await manager.confirm_browser_login(token)  # the real check rejects it
 
     neko.cookies_now = dict(SIGNED_IN)
     for _ in range(40):  # the watcher notices by itself
-        if manager.poll("u", DOMAIN)["status"] == "connected":
+        if (await manager.poll("u", DOMAIN))["status"] == "connected":
             break
         await asyncio.sleep(0.05)
-    assert manager.poll("u", DOMAIN)["status"] == "connected"
+    assert (await manager.poll("u", DOMAIN))["status"] == "connected"
     registry.close()
 
 
 async def test_confirm_needs_a_started_browser(tmp_path: Path, fixture_card: dict[str, Any]) -> None:
     manager, registry = make_manager(tmp_path, fixture_card, FakeNeko())
     token = manager.start("u", DOMAIN)["url"].rsplit("/", 1)[1]
-    with pytest.raises(CookieImportError, match="start the sign-in first"):
+    with pytest.raises(ConnectError, match="start the sign-in first"):
         await manager.confirm_browser_login(token)
-    with pytest.raises(CookieImportError, match="unknown login link"):
+    with pytest.raises(ConnectError, match="unknown login link"):
         await manager.confirm_browser_login("nope")
     registry.close()
 
@@ -173,7 +173,37 @@ async def test_signed_in_button_on_the_page(weak_gateway: tuple[str, FakeNeko], 
 
             neko.cookies_now = {"anon": "1", **SIGNED_IN}
             await page.click("#done")
-            await page.wait_for_selector("#status.connected")
+            await page.wait_for_selector("#done-panel", state="visible")
+            assert "You're signed in to fixture.test" in await page.inner_text("#done-panel")
+            assert await page.is_hidden("#viewer")
             await browser.close()
         assert envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "connected"
         assert envelope(await client.call_tool("shop_list_orders", {}))["status"] == "SUCCESS"
+
+
+async def test_poll_waits_for_the_sign_in(tmp_path: Path, fixture_card: dict[str, Any], site_url: str) -> None:
+    neko = FakeNeko()
+    manager, registry = make_manager(tmp_path, fixture_card, neko)
+    token = manager.start("u", DOMAIN)["url"].rsplit("/", 1)[1]
+    await manager.start_browser_login(token)
+    quick = await manager.poll("u", DOMAIN)  # no wait: answers straight away
+    assert quick["status"] == "pending"
+
+    async def sign_in_later() -> None:
+        await asyncio.sleep(0.6)
+        neko.cookies_now = dict(SIGNED_IN)
+
+    loop = asyncio.get_running_loop()
+    task = asyncio.create_task(sign_in_later())
+    started = loop.time()
+    waited = await manager.poll("u", DOMAIN, wait_s=10)
+    took = loop.time() - started
+    await task
+    assert waited["status"] == "connected" and waited["user_message"] == "You're signed in to fixture.test."
+    assert 0.5 < took < 3  # returned as soon as the sign-in landed, not after the full wait
+
+    timeout_started = loop.time()
+    manager.start("v", DOMAIN)
+    still = await manager.poll("v", DOMAIN, wait_s=0.5)
+    assert still["status"] == "pending" and 0.4 < loop.time() - timeout_started < 2
+    registry.close()

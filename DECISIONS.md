@@ -195,12 +195,13 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   starts from the card's tier.
 
 ## Login flow and browser tier
-- **L1 How the user logs in (asked; changed twice).** The connect page offers two ways in:
-  1. **"Log in here" (default, no install):** a real Chromium in a short-lived [Neko](https://github.com/m1k1o/neko)
-     container, streamed to the user over **WebRTC** (asked: option A). This replaced the first version's
-     screenshot-over-WebSocket stream (blurry, laggy).
-  2. **"Use my existing login" (HTB Connect extension):** shown only when the extension is installed. The user's
-     own browser session is captured (`chrome.cookies.getAll`, httpOnly included) and posted back.
+- **L1 How the user logs in (asked; changed three times).** Only the **Neko login browser**: on the connect page the
+  user clicks "Log in" and signs in to the real site in a real Chromium in a short-lived container, streamed over
+  WebRTC. History: a screenshot-over-WebSocket stream (blurry, laggy) was replaced by Neko; a cookie-capturing
+  browser extension was added as an alternative and then **removed** (asked: we won't ship an extension).
+- **Agents continue by themselves.** `poll_connection` waits server-side (default 25 s, max 45 s, like AgentWeb's) and
+  returns the moment the sign-in lands; agents are told to call it right after showing the link and again while
+  it says `pending`. The page replaces the browser with a clear "You're signed in" panel when done.
 - **Neko details.** One container per login link (`ghcr.io/m1k1o/neko/chromium`, Neko 3.2), started when the user
   clicks "Log in", removed once connected or expired; leftovers are removed at startup (label `htb.neko`).
   Chromium runs in kiosk mode on the provider's `login_url`, at 1920x1200 with device scale 1.5 (sites lay out at
@@ -210,7 +211,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   container over one published port per login (`NEKO_UDP_PORTS`), on UDP and, as a fallback, TCP (Neko's TCP mux:
   some browsers, VPNs and office networks won't do WebRTC over UDP). The advertised address (`NEKO_PUBLIC_IP`)
   defaults to `auto`, the machine's network IP detected per login: advertising `127.0.0.1` broke Firefox, which
-  refuses WebRTC to loopback (`media.peerconnection.ice.loopback` is off by default), advertised as `NEKO_PUBLIC_IP`; a TURN
+  refuses WebRTC to loopback (`media.peerconnection.ice.loopback` is off by default). A TURN
   server can be set with `NEKO_ICE_SERVERS` for users behind strict networks.
 - **Reading the login.** Every 2 s the watcher reads the browser's cookies with one browser-level DevTools command
   (`Storage.getCookies` over Chrome's WebSocket, exposed through a small in-container forwarder because Chrome binds
@@ -223,8 +224,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   with no cookies. If it passes, it can't tell signed-in from signed-out (e.g. the mapper's placeholder picked a
   public endpoint), so that login never auto-connects: the page asks the user to click **I've signed in**, and we
   accept only if the browser's cookies changed since the login page first loaded. Otherwise auto-detection is
-  unchanged, and the button just runs the real `session_check` immediately. The extension path is unchanged
-  (the user already confirms explicitly there).
+  unchanged, and the button just runs the real `session_check` immediately.
 - **Disconnect.** `disconnect(domain, provider?)` (all of the site's providers by default) deletes the encrypted
   session, closes and deletes the user's server-side browser profile for that site, and cancels a pending login
   link (stopping its Neko browser). It is idempotent and marked destructive in MCP (`destructiveHint`); its
@@ -236,17 +236,10 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   under `details`. Tool descriptions avoid internal vocabulary. The result envelope is unchanged (it is for agents).
 - **No URL-level request logs.** The gateway runs uvicorn without its access log, filters uvicorn's WebSocket
   handshake lines and keeps httpx at WARNING: those lines would record login tokens, the login browser's per-container password and users' query parameters.
-- **Verification before storing.** The gateway runs the provider's `session_check` with the posted cookies (card's
-  default tier). Only if it passes are they stored; otherwise the link stays pending and the user can log in and
-  retry. Links are single-use and expire (`CONNECT_TIMEOUT_S`, default 10 min). One pending link per (user, site).
-- **Extension security.** Only gateway origins listed in the manifest (`externally_connectable`) can message the
-  extension; it trusts the browser-reported sender origin, never the message body, for where cookies go. It
-  shows the destination host on its approval page. Site access is an *optional* permission requested at connect
-  time for just that site (`scheme://host/*`, plus `scheme://*.domain/*` when the site's host is a subdomain of the
-  card's domain), via a user click, so the install prompt asks for no site access.
-- **Pinned extension ID.** The manifest has a public `key`, so the ID is fixed and the connect page knows whom to
-  message (`runtime/extension.py`). No private key is in the repo (not needed to load unpacked). Hosted gateway
-  origins are added with `uv run python -m runtime.extension --origin https://...`.
+- **Verification before storing.** Cookies from the login browser are stored only once the provider's
+  `session_check` passes with them (or, for a weak check, the user confirms and the cookies changed). Links are
+  single-use and expire (`CONNECT_TIMEOUT_S`, default 10 min); one pending link per (user, site), so calling
+  `start_connection` again returns the same link.
 - **Only name/value are stored.** Cookie domain/path are dropped (as before); the browser tier seeds the user's
   server-side profile with them for the site's `base_url`.
 - **L2 Browser (asked).** The server-side browser tier uses real Google Chrome (`BROWSER_CHANNEL=chrome`),
@@ -261,6 +254,6 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   URL is visible, so `redirect:` signals see the final path only.
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
-- **Not handled yet:** sites that bind sessions to the device/IP may reject the imported cookies (they fail the
-  session check, so the user sees a clear error); Chrome Web Store publishing (load unpacked for now); browsers
-  other than Chromium-based ones; per-user API keys (everything is user `default`).
+- **Not handled yet:** sites that bind sessions to a device or IP may notice the switch from the login browser to
+  server requests (planned: reuse the login browser's identity, and residential proxies); per-user API keys
+  (everything is user `default`).

@@ -64,24 +64,18 @@ watch `heal_status`, call again.
 
 ## Login (connect a site) and the browser tier
 
-Sites with `connect_providers` need the user's login once. The agent calls `start_connection(domain)` and gets a
-link. The page offers:
-- **Log in to the site** (default, nothing to install): a real Chromium in a short-lived Neko container, streamed
-  over WebRTC into the page. The user signs in there; we watch the browser's cookies and stop the container once
-  the login works.
-- **Use my existing login** (if the **HTB Connect** extension in `extension/` is installed): sends the site's
-  cookies from the user's own browser.
-
-Either way the cookies are checked with the provider's `session_check` and stored encrypted (`SESSION_KEY`); the
-password never reaches us or the agent. `poll_connection` / `connection_status` report progress; a keep-alive marks
-sessions that have expired; `disconnect` deletes the stored session and the server-side browser profile.
+Sites with `connect_providers` need the user's login once. The agent calls `start_connection(domain)` and shows the
+user a link. On that page the user clicks **Log in** and signs in to the real site inside a private Chromium in a
+short-lived Neko container, streamed over WebRTC. We watch the browser's cookies, check them with the provider's
+`session_check` and store them encrypted (`SESSION_KEY`); the password never reaches us or the agent. The agent
+calls `poll_connection` straight after showing the link: it waits (up to 45 s per call) and returns as soon as the
+user is signed in, so the agent carries on by itself. `connection_status` reports the state; `disconnect` deletes
+the stored sign-in and the server-side browser profile; a keep-alive marks sessions that have expired.
 
 Setup:
 - Neko: Docker running, and `docker pull ghcr.io/m1k1o/neko/chromium:latest` (about 2.2 GB). Hosted: set
-  `NEKO_PUBLIC_IP` to the server's public IP, open the `NEKO_UDP_PORTS` range (UDP and TCP), and for users behind strict
-  networks add a TURN server via `NEKO_ICE_SERVERS`. `NEKO_ENABLED=0` turns it off.
-- Extension (optional): `chrome://extensions` → Developer mode → Load unpacked → `extension/`. For a hosted gateway,
-  first run `uv run python -m runtime.extension --origin https://your.gateway`.
+  `NEKO_PUBLIC_IP` to the server's public IP, open the `NEKO_UDP_PORTS` range (UDP and TCP), and for users behind
+  strict networks add a TURN server via `NEKO_ICE_SERVERS`. `NEKO_ENABLED=0` turns it off.
 - Browser tier: install Chrome on the server (`uv run playwright install --with-deps chrome`); keep `PROFILES_DIR` and
   the SQLite file on persistent storage; serve over HTTPS and set `PUBLIC_BASE_URL`.
 
