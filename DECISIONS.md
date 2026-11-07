@@ -40,7 +40,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - `save(..., activate=False)` stores an inactive version (for later use by heal candidates / review).
 - The in-memory active copy is refreshed after every local write, and by `refresh()`, which notices writes from
   other processes (the mapper) via `PRAGMA data_version`. The gateway polls `refresh()`.
-- Cards are stored as canonical JSON (sorted keys) of only the fields the mapper set, so inheritance
+- Cards are stored as compact JSON of only the fields the mapper set, in the mapper's key order (so
+  `output.fields` order is the envelope's field order), and so inheritance
   (explicit `auth_provider: null` vs absent) survives the round trip.
 
 ## Template resolver
@@ -102,3 +103,23 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   Envelopes never include headers or cookies.
 - **Out of scope stubs.** `NoHealQueue` (PAGE_CHANGED → `heal: null`), and TODOs for cache, rate limits,
   EMPTY tracking, ladder escalation and the impersonate/browser tiers.
+
+## Gateway (mcp SDK 2.3.0)
+- **Low-level `Server`** with `on_list_tools` / `on_call_tool`; input schemas come from `schema.params.input_schema`
+  (`additionalProperties: false`; actions with `requires_confirmation` also get an optional `_confirmation_id`).
+- **Both protocol eras are served.** 2026-07-28 clients get list-changed through `subscriptions/listen`
+  (`ListenHandler` + `InMemorySubscriptionBus`). Handshake-era clients get `notifications/tools/list_changed` on their
+  standalone stream; `tools.listChanged` is advertised by overriding `create_initialization_options`.
+- **Private SDK attribute.** To reach handshake-era clients outside a request, the gateway keeps each client's
+  `Connection`, which 2.3.0 only exposes as `ServerSession._connection` (the session object is a per-request proxy).
+  Isolated in `Gateway._track`; revisit when upgrading the SDK.
+- **Reload.** A background task polls `registry.refresh()` every second (catching writes from the mapper process),
+  rebuilds the tool table on any active-card change and notifies clients. Tool-name clashes across cards: first
+  domain (alphabetical) wins; the other is skipped with a warning.
+- **Result shape.** The envelope is returned as JSON text content and as `structuredContent`. `isError` is `false`
+  for every envelope (its `status` carries the outcome); `true` only for an unknown tool or an executor crash.
+- **Auth.** A plain ASGI middleware checks `Authorization: Bearer $GATEWAY_API_KEY` (constant-time compare) on every
+  HTTP request, 401 otherwise. The SDK's OAuth `AuthSettings` path was not used (it needs an issuer, scopes etc.).
+- **Runtime tools** (`connection_status`, `start_connection`, `poll_connection`, `heal_status`) are not exposed yet:
+  sessions/login and healing are out of scope. `AUTH_REQUIRED`'s hint still names `start_connection` per the spec.
+- `--load card.json` saves the card on startup only if it differs from the active version.

@@ -96,7 +96,8 @@ class Registry:
         """
         raw = card_data.to_json_dict() if isinstance(card_data, Card) else card_data
         card = load_card(raw)
-        map_json = json.dumps(card.to_json_dict(), separators=(",", ":"), sort_keys=True)
+        # Key order is kept: it is meaningful (e.g. output.fields order = envelope field order).
+        map_json = json.dumps(card.to_json_dict(), separators=(",", ":"))
         with self._lock:
             with self._tx() as cur:
                 row = cur.execute(

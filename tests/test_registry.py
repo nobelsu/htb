@@ -146,3 +146,10 @@ def test_round_trip_keeps_explicitly_set_fields(reg: Registry) -> None:
     assert stored is not None
     follow = stored.card.action("follow_company")
     assert follow is not None and "auth_provider" in follow.model_fields_set
+
+
+def test_key_order_preserved(reg: Registry) -> None:
+    reg.save(EXAMPLE)
+    stored = reg.get("linkedin.com")
+    assert stored is not None
+    assert list(stored.card.actions[0].output.fields) == ["name", "subtitle", "url"]
