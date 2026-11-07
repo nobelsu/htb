@@ -7,7 +7,10 @@ import json
 
 STYLE = "body{font-family:sans-serif;max-width:40rem;margin:2rem auto}li{margin:.3rem 0}"
 
-NAV = '<nav><a href="/">Home</a> · <a href="/search">Search</a> · <a href="/compose">New note</a></nav>'
+NAV = (
+    '<nav><a href="/">Home</a> · <a href="/search">Search</a> · <a href="/compose">New note</a>'
+    ' · <a href="/logout">Log out</a></nav>'
+)
 
 
 def _page(title: str, body: str, head: str = "") -> str:

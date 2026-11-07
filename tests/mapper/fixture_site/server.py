@@ -121,6 +121,7 @@ class Handler(BaseHTTPRequestHandler):
         route = {
             "/": self._home,
             "/login": self._login_page,
+            "/logout": self._logout,
             "/search": self._search_page,
             "/compose": self._compose_page,
             "/api/session": self._api_session,
@@ -155,6 +156,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _login_page(self, query) -> None:
         self._html(200, pages.login(query.get("next", "/")))
+
+    def _logout(self, _query) -> None:
+        """Ends the session server-side: an explorer that clicks this would lose its login."""
+        sid = _parse_cookies(self.headers.get("Cookie")).get("sid")
+        with self.state.lock:
+            self.state.sessions.pop(sid or "", None)
+        self._redirect("/login")
 
     def _login_submit(self) -> None:
         form = self._form()

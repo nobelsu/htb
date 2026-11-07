@@ -54,6 +54,8 @@
     return parts.join(" > ");
   }
 
+  window.__mapperSelectorFor = selectorFor; // reused by the explorer's page snapshots
+
   const isSecret = (el) =>
     el.type === "password" || /pass|secret|otp|cvv|cvc/i.test(el.name || "") ||
     (el.autocomplete || "").includes("password");

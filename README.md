@@ -39,6 +39,7 @@ The mapper imports `schema` (`validate_card`, `Card`, `Envelope`) and saves thro
 ## Mapper
 
 ```bash
+uv run python -m mapper explore <start_url> --state login.state.json --save   # LLM picks tasks, scripts, records, maps
 uv run python -m mapper capture <start_url> --task NAME --run m1|m2|real|page2 [--marker query=zqxv8841]
 uv run python -m mapper map captures/<domain>/
 uv run python -m mapper validate path/to/card.json

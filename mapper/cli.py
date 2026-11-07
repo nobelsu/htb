@@ -88,6 +88,27 @@ def build_parser() -> argparse.ArgumentParser:
     hl.add_argument("--out", help="output directory for card.json/report (default: the captures dir)")
     hl.set_defaults(handler=_cmd_heal)
 
+    ex = sub.add_parser(
+        "explore", help="let an LLM pick the site's main tasks, script and record them, then map the card"
+    )
+    ex.add_argument("start_url", help="page to start from (logged in, via --state)")
+    ex.add_argument("--state", help="logged-in Playwright storage_state to explore with")
+    ex.add_argument("--tasks", nargs="*", help='only these tasks, in plain English (e.g. "search companies")')
+    ex.add_argument("--max-tasks", type=int, default=6, help="most tasks to pick (default 6)")
+    ex.add_argument(
+        "--include-writes",
+        action="store_true",
+        help="also explore tasks that change things (really performs them)",
+    )
+    ex.add_argument("--headed", action="store_true", help="show the browser")
+    ex.add_argument("--out", default="captures", help="captures root (default: captures)")
+    ex.add_argument(
+        "--live", action="store_true", help="run read examples through the executor after mapping"
+    )
+    ex.add_argument("--save", action="store_true", help="save the card to the registry if it is valid")
+    ex.add_argument("--db", help="registry SQLite file (default: $REGISTRY_DB or ./runtime.db)")
+    ex.set_defaults(handler=_cmd_explore)
+
     rc = sub.add_parser("recon", help="guess what a captured site is built with (informational)")
     rc.add_argument("captures_dir", help="captures/<domain>/")
     rc.set_defaults(handler=_cmd_recon)
@@ -126,6 +147,12 @@ def _cmd_heal(args: argparse.Namespace) -> int:
     from mapper import pipeline
 
     return pipeline.heal_main(args)
+
+
+def _cmd_explore(args: argparse.Namespace) -> int:
+    from mapper.explore import explorer
+
+    return explorer.main(args)
 
 
 def _cmd_recon(args: argparse.Namespace) -> int:

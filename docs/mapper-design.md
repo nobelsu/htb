@@ -168,16 +168,38 @@ by replaying every saved recording (`actions.jsonl` → driver script; fresh mar
 inputs, each bundle's own `state.json` as the session unless `--state` is given), re-maps every action,
 validates, and saves the new card as the active version. Old bundles are kept in `<domain>.prev/`.
 
-This deliberately overrides `CARD_SPEC.md` "Healing" points 4–5 for this project: the whole site is
-re-mapped (not only the broken action) and the new card replaces the old one whole, **write actions
-included, with no human approval step**. The per-call `requires_confirmation` prompt is unchanged.
+The whole site is re-mapped (not only the broken action) and the new card replaces the old one whole,
+**write actions included, with no human approval step** (`CARD_SPEC.md` "Healing" and Nobel's
+`runtime/healing.py` were changed to match, DECISIONS.md H4). The per-call `requires_confirmation`
+prompt is unchanged.
+
+## Explorer: no human in the loop
+
+`python -m mapper explore <start_url> --state login.state.json [--tasks "search companies" ...]
+[--include-writes] [--save]` replaces the human operator:
+
+1. **Survey.** Open the start page logged in, plus up to 4 same-site pages it links to (never log-out,
+   delete or similar links), and take a text snapshot of each: headings, links, fields and buttons with
+   their CSS selectors. Snapshots never contain field values.
+2. **Pick tasks (LLM).** From the snapshots the LLM lists the 3–6 tasks people come to *this* site for
+   (search people/companies on a network, search products/add to cart on a shop), each with a start page,
+   the inputs a user would type (with a realistic example), read/write, and whether results paginate.
+   `--tasks` names the tasks instead, in plain English.
+3. **Write the script (LLM), dry-run it.** For each task the LLM writes a driver script (the same JSON steps
+   the capture tool runs, with `{{params.NAME}}` for inputs and a `mark` after the performing click). It is
+   dry-run in the browser; if a step fails, or no request carried the typed input, the error and a snapshot
+   of the page at that point go back to the LLM (up to 3 attempts). For paginated reads the LLM then picks
+   the next-page control from the results page.
+4. **Record + map.** The capture tool records m1/m2 (fresh markers), real (the example) and page2 with the
+   script; each recording must contain a goal request; then `map` builds the card as usual.
+
+Write tasks are skipped unless `--include-writes` is given: exploring one performs it for real, four
+times (dry run + m1 + m2 + real), e.g. four follows or connection requests. The LLM is Claude Sonnet 5.5;
+`explore` needs `ANTHROPIC_API_KEY` (the rest of the pipeline still runs offline). Everything the LLM
+decided is saved in `captures/<domain>/explore.json` and summarised in the mapping report.
 
 ## Open items for Nobel
 
-- **Healing differs from the spec (decided by WeiWei).** The mapper's `heal` re-maps the whole site and
-  saves the result as the active version, write actions included, with no approval step. Nobel's
-  `runtime/healing.py` still holds healed write actions back (`heal_candidates`, "writes are never
-  auto-activated", around line 239); per this decision that hold-back should go.
 - **Next (mapper): `Remapper` adapter.** Wire `mapper heal` in as the runtime's `runtime.healing.Remapper`
   (`async remap(card, actions, reason) -> card`), so a `PAGE_CHANGED` heal job re-records and re-maps the
   site automatically. Until then, run `python -m mapper heal captures/<domain>/ --save` by hand.

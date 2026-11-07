@@ -172,6 +172,25 @@ def _section_task(tr: TaskResult, secrets: set[str]) -> list[str]:
     return out
 
 
+def _section_explore(captures_dir) -> list[str]:
+    """What the explorer's LLM decided to map (when the captures came from `mapper explore`)."""
+    from pathlib import Path
+
+    path = Path(captures_dir) / "explore.json"
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text())
+    out = ["## Explorer (tasks chosen by the LLM)", ""]
+    out.append(f"Started from `{data['start_url']}`; surveyed {len(data.get('pages', []))} page(s).")
+    out.append("")
+    out += ["| Task | Kind | Status | Attempts | Note |", "|---|---|---|---|---|"]
+    for t in data["tasks"]:
+        note = _cell(t.get("reason") or t["description"], 80)
+        out.append(f"| `{t['name']}` | {t['kind']} | {t['status']} | {len(t.get('attempts', []))} | {note} |")
+    out.append("")
+    return out
+
+
 def _section_recon(r) -> list[str]:
     out = ["## Site recon (M0, informational)", ""]
     if not r.platforms and not r.json_ld_types and not r.embedded:
@@ -254,6 +273,7 @@ def render(result: DomainResult) -> str:
         out.append("- live validation not run (pass `--live` to run examples through the executor)")
     out.append("")
 
+    out += _section_explore(result.captures_dir)
     if result.recon is not None:
         out += _section_recon(result.recon)
     for tr in result.tasks:

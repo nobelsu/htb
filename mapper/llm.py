@@ -46,7 +46,7 @@ class LLM:
         if self.enabled and self.client is None and not sdk_available():
             self.enabled = False
 
-    def _json(self, purpose: str, prompt: str, schema: dict, max_tokens: int = 4000) -> dict | None:
+    def ask_json(self, purpose: str, prompt: str, schema: dict, max_tokens: int = 4000) -> dict | None:
         if not self.enabled:
             return None
         try:
@@ -91,7 +91,7 @@ class LLM:
             f"A person performed the task {task!r} on a website. These requests all carried their input. "
             f"Which one actually performs the task (not autocomplete, logging or prefetch)?\n{listing}"
         )
-        data = self._json("goal tie-break", prompt, schema, max_tokens=1000)
+        data = self.ask_json("goal tie-break", prompt, schema, max_tokens=1000)
         if data is None or not 0 <= int(data.get("index", -1)) < len(candidates):
             return None
         return int(data["index"])
@@ -110,7 +110,7 @@ class LLM:
             "Pick 3 to 8 of these JSONPaths (relative to the item) that an AI agent would want back: "
             f"names, titles, identifiers, URLs, short descriptive fields. Candidates: {candidates}"
         )
-        data = self._json("output fields", prompt, schema)
+        data = self.ask_json("output fields", prompt, schema)
         if data is None:
             return None
         picked = [p for p in data.get("paths", []) if p in candidates]
@@ -144,7 +144,7 @@ class LLM:
             "Write an MCP tool description (one or two sentences) for an AI agent, and a short description "
             f"for each parameter. {safety}\n{json.dumps(summary, indent=1)}"
         )
-        data = self._json("descriptions", prompt, schema)
+        data = self.ask_json("descriptions", prompt, schema)
         if data is None or not isinstance(data.get("description"), str):
             return None
         params = {p["name"]: p["description"] for p in data.get("params", []) if isinstance(p, dict)}
