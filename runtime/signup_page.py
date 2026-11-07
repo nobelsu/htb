@@ -8,6 +8,7 @@ POST /signup   create the user; shows their key once
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import html
 import logging
@@ -56,11 +57,11 @@ STYLE = """
 
 FORM = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Get an API key</title><style>__STYLE__</style></head>
+<title>Create an account</title><style>__STYLE__</style></head>
 <body><main>
-<h1>Get an API key</h1>
-<p class="muted">Your key lets your AI agent use websites through this server, as you: your own sign-ins, kept
-separate from everyone else's.</p>
+<h1>Create an account</h1>
+<p class="muted">Your account lets your AI agent use websites through this server, as you: your own sign-ins, kept
+separate from everyone else's. Already have one? <a href="/account/login">Sign in</a>.</p>
 __ERROR__
 <form method="post" action="/signup" autocomplete="off">
   <label>Invite code <span>from whoever runs this server</span>
@@ -69,7 +70,9 @@ __ERROR__
     <input name="name" required minlength="2" maxlength="32" pattern="[a-z0-9][a-z0-9_-]{1,31}" value="__NAME__"></label>
   <label>Email
     <input name="email" type="email" required maxlength="254" value="__EMAIL__"></label>
-  <button type="submit">Get my key</button>
+  <label>Password <span>at least 8 characters; you sign in to your account page and to apps with it</span>
+    <input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+  <button type="submit">Create account</button>
 </form>
 </main></body></html>"""
 
@@ -84,6 +87,13 @@ DONE = """<!doctype html>
   <pre id="key">__KEY__</pre>
   <button class="copy" type="button" data-copy="key">Copy key</button>
 </div>
+<h2 style="font-size:18px;margin-top:28px">Connect regular Claude (web, desktop, phone)</h2>
+<ol>
+  <li>In Claude: Customize &rarr; Connectors &rarr; Add custom connector, with this URL:
+    <pre id="url">__URL__</pre>
+    <button class="copy" type="button" data-copy="url">Copy URL</button></li>
+  <li>Click Connect and sign in with your name and password.</li>
+</ol>
 <h2 style="font-size:18px;margin-top:28px">Connect Claude Code</h2>
 <ol>
   <li>Run this in a terminal:
@@ -92,6 +102,7 @@ DONE = """<!doctype html>
   <li>Start a new Claude Code session.</li>
   <li>Ask it what it can do, for example "what sites can you use?"</li>
 </ol>
+<p><a href="/account">Open your account page</a>: sign-ins your agent is waiting for show up there.</p>
 </main>
 <script>
 for (const b of document.querySelectorAll("button[data-copy]")) {
@@ -113,8 +124,8 @@ def _form(error: str = "", name: str = "", email: str = "") -> str:
     )
 
 
-class _WrongCodes:
-    """Wrong invite codes per client address, so the code can't be guessed."""
+class AttemptLimiter:
+    """Failed attempts (invite codes, passwords, keys) per client address, so they can't be guessed."""
 
     def __init__(self) -> None:
         self._seen: dict[str, deque[float]] = {}
@@ -133,8 +144,13 @@ class _WrongCodes:
         self._recent(addr).append(time.monotonic())
 
 
-def routes(keys: KeyStore, code: str, public_url: Callable[[], str | None]) -> list[BaseRoute]:
-    wrong = _WrongCodes()
+def routes(
+    keys: KeyStore,
+    code: str,
+    public_url: Callable[[], str | None],
+    start_session: Callable[[Response, str], Response] | None = None,
+) -> list[BaseRoute]:
+    wrong = AttemptLimiter()
 
     def page(body: str, status: int = 200) -> Response:
         return HTMLResponse(body, status_code=status, headers=HEADERS)
@@ -162,9 +178,9 @@ def routes(keys: KeyStore, code: str, public_url: Callable[[], str | None]) -> l
         try:
             check_name(name)
             check_email(email)
-            key = keys.create(name, email)
+            key = await asyncio.to_thread(keys.create, name, email, fields.get("password", ""))
         except KeyStoreError as e:
-            status = 409 if "taken" in str(e) else 400
+            status = 409 if "taken" in str(e) or "already" in str(e) else 400
             return page(_form(str(e)[:1].upper() + str(e)[1:] + ".", name, email), status)
         log.info("new user signed up: %s", name)  # never the key, the code or the email
         base = public_url() or str(request.base_url)
@@ -173,7 +189,9 @@ def routes(keys: KeyStore, code: str, public_url: Callable[[], str | None]) -> l
             .replace("__NAME__", html.escape(name))
             .replace("__KEY__", html.escape(key))
             .replace("__CMD__", html.escape(mcp_add_command(base, key)))
+            .replace("__URL__", html.escape(base.rstrip("/") + "/mcp"))
         )
-        return page(done)
+        response = page(done)
+        return start_session(response, name) if start_session is not None else response
 
     return [Route("/signup", show, methods=["GET"]), Route("/signup", submit, methods=["POST"])]

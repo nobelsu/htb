@@ -33,6 +33,13 @@ uv run python -m runtime.gateway --load tests/fixture_site.json
 
 The MCP endpoint is `http://127.0.0.1:8765/mcp` (Streamable HTTP, `Authorization: Bearer <key>`).
 
+### Regular Claude (web, desktop, phone)
+
+In Claude: Customize → Connectors → Add custom connector, URL `<PUBLIC_BASE_URL>/mcp`, then Connect. Claude registers
+itself and opens our sign-in page (password, an API key, or a new account with the invite code). Your account page
+is `<PUBLIC_BASE_URL>/account`: sign-ins your agent is waiting for, your sites, connected apps, and your API key.
+`PUBLIC_BASE_URL` must be the https address people reach (e.g. the ngrok domain).
+
 ### Users and API keys
 
 Every key belongs to one user, and every tool call acts as that user: their own sign-ins, browser profiles, login

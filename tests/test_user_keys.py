@@ -150,8 +150,10 @@ async def test_unknown_and_revoked_keys_are_refused(multi_gateway: tuple[str, Ke
 # ---- the sign-up page ---------------------------------------------------------------------------------------
 
 
-def _form(code: str = CODE, name: str = "dave", email: str = "dave@example.com") -> dict[str, str]:
-    return {"code": code, "name": name, "email": email}
+def _form(
+    code: str = CODE, name: str = "dave", email: str = "dave@example.com", password: str = "dave-password1"
+) -> dict[str, str]:
+    return {"code": code, "name": name, "email": email, "password": password}
 
 
 async def test_sign_up_page_gives_a_working_key(
@@ -160,7 +162,7 @@ async def test_sign_up_page_gives_a_working_key(
     base, keys, _ = multi_gateway
     async with httpx.AsyncClient() as http:
         page = await http.get(f"{base}/signup")
-        assert page.status_code == 200 and "invite code" in page.text.lower()
+        assert page.status_code == 200 and "invite code" in page.text.lower() and 'name="password"' in page.text
         assert page.headers["cache-control"] == "no-store"
         with caplog.at_level(logging.DEBUG):
             done = await http.post(f"{base}/signup", data=_form())
@@ -169,10 +171,10 @@ async def test_sign_up_page_gives_a_working_key(
     assert match is not None
     key = match.group(0)
     assert f"claude mcp add --transport http htb {base}/mcp --header" in done.text.replace("&quot;", '"')
-    assert keys.user_for(key) == "dave"
+    assert keys.user_for(key) == "dave" and keys.check_login("dave", "dave-password1") == "dave"
     async with connect_as(base, key) as client:
         assert envelope(await client.call_tool("find_actions", {}))["sites"][0]["site"] == DOMAIN
-    for secret in (key, CODE, "dave@example.com"):
+    for secret in (key, CODE, "dave@example.com", "dave-password1"):
         assert secret not in caplog.text
 
 
@@ -182,6 +184,7 @@ async def test_sign_up_page_gives_a_working_key(
         (_form(code="wrong"), 403, "invite code"),
         (_form(name="Not OK"), 400, "name"),
         (_form(email="nope"), 400, "email"),
+        (_form(password="short"), 400, "password"),
     ],
 )
 async def test_sign_up_rejects_bad_input(
