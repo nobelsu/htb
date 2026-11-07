@@ -74,7 +74,7 @@ link. The page offers:
 
 Either way the cookies are checked with the provider's `session_check` and stored encrypted (`SESSION_KEY`); the
 password never reaches us or the agent. `poll_connection` / `connection_status` report progress; a keep-alive marks
-sessions that have expired.
+sessions that have expired; `disconnect` deletes the stored session and the server-side browser profile.
 
 Setup:
 - Neko: Docker running, and `docker pull ghcr.io/m1k1o/neko/chromium:latest` (about 2.2 GB). Hosted: set

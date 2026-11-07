@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -127,6 +128,22 @@ class BrowserPool:
             if entry is not None:
                 await entry.context.close()
         return idle
+
+    async def delete_profile(self, key: ProfileKey) -> bool:
+        """Close the profile's browser (even mid-use) and delete its folder. Returns whether a folder existed."""
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            entry = self._entries.pop(key, None)
+            if entry is not None:
+                try:
+                    await entry.context.close()
+                except Exception:
+                    pass
+            path = self.profile_dir(key)
+            if not path.exists():
+                return False
+            await asyncio.to_thread(shutil.rmtree, path, True)
+            return True
 
     async def reap_forever(self, every_s: float = 30.0) -> None:
         while True:

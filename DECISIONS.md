@@ -219,6 +219,10 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **Local development.** If the site is on the Docker host's loopback (the fixture shop), the forwarder maps the
   container's `127.0.0.1:<port>` to `host.docker.internal:<port>`.
 - **Typing.** Click into a field before typing: Neko's client keeps the Tab key for its own page.
+- **Disconnect.** `disconnect(domain, provider?)` (all of the site's providers by default) deletes the encrypted
+  session, closes and deletes the user's server-side browser profile for that site, and cancels a pending login
+  link (stopping its Neko browser). It is idempotent and marked destructive in MCP (`destructiveHint`); its
+  description tells agents to call it only when the user asks. It does not log the user out on the site itself.
 - **No URL-level request logs.** The gateway runs uvicorn without its access log, filters uvicorn's WebSocket
   handshake lines and keeps httpx at WARNING: those lines would record login tokens, the login browser's per-container password and users' query parameters.
 - **Verification before storing.** The gateway runs the provider's `session_check` with the posted cookies (card's

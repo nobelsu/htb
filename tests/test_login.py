@@ -311,3 +311,64 @@ async def test_link_routes_and_auth_boundaries(login_gateway: tuple[str, Path]) 
     assert httpx.post(f"{link}/browser").status_code == 400  # this gateway has no Neko
     assert manifest_extension_id() in page.text
     assert httpx.get(link + "/status").json()["status"] == "pending"
+
+
+# ---- disconnect -------------------------------------------------------------
+
+
+async def test_disconnect_forgets_session_and_cancels_link(manager: ConnectionManager, site_url: str) -> None:
+    manager.store.put("u", DOMAIN, "shop", {"sid": VALID_SID, "csrftoken": CSRF})
+    started = manager.start("u", DOMAIN)
+    out = await manager.disconnect("u", DOMAIN)
+    assert out["disconnected"] is True
+    assert out["providers"] == [
+        {"provider": "shop", "was_connected": True, "session_deleted": True, "browser_profile_deleted": False}
+    ]
+    assert manager.store.get("u", DOMAIN, "shop") is None
+    assert manager.status("u", DOMAIN)["providers"][0]["status"] == "not_connected"
+    conn = manager.by_token(started["url"].rsplit("/", 1)[1])
+    assert conn is not None and conn.status == "expired" and "disconnected" in conn.message
+    stored = manager.registry.get(DOMAIN)
+    assert stored is not None
+    env = await manager.executor.run(stored, "list_orders", {}, user="u")
+    assert env.status == R.AUTH_REQUIRED
+    again = await manager.disconnect("u", DOMAIN)  # idempotent
+    assert again["providers"][0]["was_connected"] is False and again["providers"][0]["session_deleted"] is False
+
+
+async def test_disconnect_errors(manager: ConnectionManager) -> None:
+    assert "unknown domain" in (await manager.disconnect("u", "nope.test"))["error"]
+    assert "no provider" in (await manager.disconnect("u", DOMAIN, "github"))["error"]
+
+
+async def test_pool_delete_profile(pool: BrowserPool) -> None:
+    key = ProfileKey("u", DOMAIN, "shop")
+    async with pool.lease(key):
+        pass
+    assert pool.is_warm(key) and pool.profile_dir(key).exists()
+    assert await pool.delete_profile(key) is True
+    assert not pool.is_warm(key) and not pool.profile_dir(key).exists()
+    assert await pool.delete_profile(key) is False
+
+
+async def test_disconnect_over_mcp(login_gateway: tuple[str, Path], site_url: str) -> None:
+    base, db = login_gateway
+    async with connect(f"{base}/mcp", "auto") as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+        assert tools["disconnect"].annotations is not None and tools["disconnect"].annotations.destructive_hint
+        store_rows = sqlite3.connect(db).execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        assert store_rows == 0
+        # Connect by importing cookies through the real endpoint, then use the session.
+        link = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))["url"]
+        imported = httpx.post(f"{link}/cookies", json={"cookies": [{"name": "sid", "value": VALID_SID},
+                                                                  {"name": "csrftoken", "value": CSRF}]})
+        assert imported.status_code == 200, imported.text
+        assert envelope(await client.call_tool("shop_browser_orders", {}))["status"] == "SUCCESS"  # warms the profile
+
+        out = envelope(await client.call_tool("disconnect", {"domain": DOMAIN}))
+        assert out["providers"][0]["was_connected"] is True
+        assert out["providers"][0]["browser_profile_deleted"] is True
+        assert sqlite3.connect(db).execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+        assert envelope(await client.call_tool("shop_list_orders", {}))["status"] == "AUTH_REQUIRED"
+        status = envelope(await client.call_tool("connection_status", {"domain": DOMAIN}))
+        assert status["providers"][0]["status"] == "not_connected" and not status["providers"][0]["browser_warm"]
