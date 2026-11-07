@@ -1,6 +1,7 @@
 """Step 6: a full card for the fixture site from real captures (m1, m2, real) + mapping_report.md."""
 
 import json
+import shutil
 import subprocess
 import sys
 
@@ -10,10 +11,12 @@ from mapper.pipeline import map_domain, write_outputs
 
 
 @pytest.fixture(scope="module")
-def domain_dir(fixture_captures):
+def domain_dir(fixture_captures, tmp_path_factory):
+    """Only m1/m2/real (no page2): the step-6 card is unpaginated whatever ran before."""
+    root = tmp_path_factory.mktemp("step6") / "127.0.0.1" / "search"
     for run in ("m1", "m2", "real"):
-        fixture_captures("search", run)
-    return fixture_captures.root / "127.0.0.1"
+        shutil.copytree(fixture_captures("search", run), root / run)
+    return root.parent
 
 
 @pytest.fixture(scope="module")

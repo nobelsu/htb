@@ -131,6 +131,12 @@ Steps, requests and the rest of the card follow `action_map.example.json` exactl
 **Pagination** (`page2` run): diff the goal request against `real`. A numeric field that changed by N
 → template `{{params.page | offset:N}}`, `page_size: N`, `next_params.param: "page"`. If a total-count
 field exists in the response, use it as `until` (an extract on the goal step).
+In practice the page-1 and page-2 requests are both taken from the `page2` run (same session and query;
+`real` is the fallback). Only a field that goes `0 → N` is an offset. A field that goes `1 → 2` is a page
+number: `{{params.page}}` with no filter (`offset:N` would send 0 for page 1), and `page_size` = items on
+page 1. `page` is an optional integer param, default 1, and `output.limit` = `page_size`. A total must
+have a total-like name (`total` first, then `totalCount`/`numFound`/…, then `count`), be equal on both
+pages and be at least the page's item count.
 
 **Examples:** from the `real` run → `{"params": real_inputs, "min_items": 1}`.
 

@@ -11,10 +11,18 @@ from pathlib import Path
 
 from mapper import checks
 from mapper.llm import LLM
-from mapper.pipeline.m3_goal import Goal, GoalNotFound, counterpart, endpoint_key, find_goal
+from mapper.pipeline import pagination
+from mapper.pipeline.m3_goal import (
+    Goal,
+    GoalNotFound,
+    counterpart,
+    endpoint_key,
+    find_goal,
+    find_read_goal,
+)
 from mapper.pipeline.m4_provenance import Provenance, trace
 from mapper.pipeline.m5_steps import StepPlan, plan_steps
-from mapper.pipeline.m6_output import OutputPlan, expect_for, plan_output
+from mapper.pipeline.m6_output import OutputPlan, expect_for, find_result_list, plan_output
 from mapper.pipeline.m7_annotate import Annotation, annotate
 from mapper.pipeline.m8_assemble import MappedAction, assemble
 from mapper.pipeline.runs import Bundle, load_task
@@ -68,6 +76,29 @@ def _summary(e) -> str:
     return f"{e.method} {e.path}?{query} → {keys}"
 
 
+def _pagination(page2: Bundle, goal: Goal, m1: Bundle, real_goal: Goal | None):
+    """Page 1 vs page 2 of the goal endpoint: both from the page2 run (same session and query) when it
+    has both, else page 1 from the real run. Returns (Pagination | None, warnings)."""
+    key = endpoint_key(goal.entry, m1.values)
+    same = [e for e in page2.entries if endpoint_key(e, page2.values) == key]
+    try:
+        last = find_read_goal(page2, mark_index=-1).entry
+        if endpoint_key(last, page2.values) != key:
+            last = same[-1] if same else None
+    except GoalNotFound:
+        last = same[-1] if same else None
+    if last is None:
+        return None, ["page2 run: the goal endpoint was not requested"]
+    first = next((e for e in same if e is not last and e.started < last.started), None)
+    if first is None and real_goal is not None:
+        first = real_goal.entry
+    if first is None:
+        return None, ["page2 run: no page-1 request to compare with"]
+    items_path = find_result_list(goal.entry.response_json, first.response_json)
+    # Bundle.fields() only normalizes the entry it is given, so page2's bundle serves both pages.
+    return pagination.infer(page2, first, page2, last, items_path)
+
+
 def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     """M3–M7 for one task (one card action)."""
     llm = llm or LLM()
@@ -92,12 +123,29 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     real_goal = _matching_goal(real, goal, m1, kind)
 
     prov = trace(m1, goal.entry, m2, m2_goal.entry if m2_goal else None)
+    is_read = goal.entry.method in ("GET", "HEAD")
+    pag = None
+    if is_read and runs.get("page2") is not None:
+        pag, pag_warnings = _pagination(runs["page2"], goal, m1, real_goal)
+        warnings += pag_warnings
+        if pag is not None and not pagination.apply(prov, pag):
+            warnings.append(f"page2 run: paging field {pag.address} is not on m1's goal request; ignored")
+            pag = None
     plans = plan_steps(prov, m1)
     goal_plan = next(p for p in plans if p.draft.is_goal)
-    if goal.entry.method in ("GET", "HEAD"):
+    if is_read:
         output = plan_output(goal_plan, goal.entry, real_goal.entry if real_goal else None, task, llm)
     else:
         output = OutputPlan(dict(NO_OUTPUT), source="none")
+    if pag is not None and output.output["from"] is not None:
+        next_params: dict = {"param": pagination.PAGE_PARAM, "increment": 1, "page_size": pag.page_size}
+        if pag.until_path:
+            goal_plan.extract["total"] = {"from": "body", "type": "jsonpath", "expr": pag.until_path}
+            next_params["until"] = f"steps.{goal_plan.id}.total"
+        else:
+            warnings.append("page2 run: no total-count field found; next page = a full page came back")
+        output.output["limit"] = pag.page_size
+        output.output["next_params"] = next_params
     for p in plans:
         p.expect = expect_for(p)
         warnings += p.warnings
@@ -121,6 +169,8 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     )
     warnings += ann.warnings
     fields = dict(ann.fields)
+    if pag is not None:
+        fields["params"][pagination.PAGE_PARAM] = dict(pagination.PAGE_PARAM_SPEC)
     examples = fields.pop("examples")
     action = {
         "name": task,

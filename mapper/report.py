@@ -43,6 +43,8 @@ def redacted_value(lab: Label, secrets: set[str]) -> str:
 
 def evidence(lab: Label, step_ids: dict[int, str]) -> str:
     notes = f" ({'; '.join(lab.notes)})" if lab.notes else ""
+    if lab.provenance == "param" and any(n.startswith("pagination:") for n in lab.notes):
+        return f"{'; '.join(lab.notes)} → filter `{lab.filter}`" if lab.filter else "; ".join(lab.notes)
     if lab.provenance == "param":
         filt = f"`{lab.filter}`" if lab.filter else "none"
         return (
