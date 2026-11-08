@@ -6728,6 +6728,148 @@
       "verify": null,
       "examples": [],
       "tier": "browser"
+    },
+    {
+      "name": "start_conversation",
+      "description": "LinkedIn: send a message to a person, by their profile slug (the <slug> in linkedin.com/in/<slug>/, e.g. from search_people's profile_url). Starts a new conversation, or posts into the existing one with them. REAL SEND: confirm with the user first. Works for 1st-degree connections; others need InMail (Premium). Takes vanity_name and text.",
+      "kind": "write",
+      "spends": false,
+      "idempotent": false,
+      "requires_confirmation": true,
+      "params": {
+        "vanity_name": {
+          "type": "string",
+          "required": true,
+          "description": "The target member's LinkedIn vanity name, which is the slug after /in/ in their profile URL (e.g. 'jane-doe-123')."
+        },
+        "text": {
+          "type": "string",
+          "required": true,
+          "description": "The body of the first message to send to open the conversation. Plain text; show the exact wording to the user for approval before sending."
+        }
+      },
+      "steps": [
+        {
+          "id": "me",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/graphql",
+            "query": {
+              "includeWebMetadata": "true",
+              "variables": "()",
+              "queryId": "voyagerFeedDashGlobalNavs.a618d03c522276ae43e2ecc891d11cf2"
+            },
+            "headers": {
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
+              "x-restli-protocol-version": "2.0.0",
+              "x-li-lang": "en_US",
+              "accept": "application/vnd.linkedin.normalized+json+2.1"
+            },
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": [
+              "$.data.data.feedDashGlobalNavs.primaryItems"
+            ]
+          },
+          "extract": {
+            "profile": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.data.data.feedDashGlobalNavs.primaryItems[5].meMenu['*profile']"
+            }
+          }
+        },
+        {
+          "id": "who",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/graphql",
+            "query": {
+              "includeWebMetadata": "true",
+              "variables": "(memberIdentity:{{params.vanity_name | escape_restli}})",
+              "queryId": "voyagerIdentityDashProfiles.273a499c117721535e6da078bee17e9c"
+            },
+            "headers": {
+              "accept": "application/vnd.linkedin.normalized+json+2.1",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
+              "x-li-lang": "en_US",
+              "x-restli-protocol-version": "2.0.0"
+            },
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": [
+              "$.data.data.identityDashProfilesByMemberIdentity['*elements']"
+            ]
+          },
+          "extract": {
+            "elements": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.data.data.identityDashProfilesByMemberIdentity['*elements'][0]"
+            }
+          }
+        },
+        {
+          "id": "send",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/voyager/api/voyagerMessagingDashMessengerMessages",
+            "query": {
+              "action": "createMessage"
+            },
+            "headers": {
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
+              "x-restli-protocol-version": "2.0.0",
+              "x-li-lang": "en_US",
+              "accept": "application/json",
+              "content-type": "text/plain;charset=UTF-8",
+              "origin": "{{base_url}}"
+            },
+            "body": {
+              "message": {
+                "body": {
+                  "attributes": [],
+                  "text": "{{params.text}}"
+                },
+                "renderContentUnions": [],
+                "originToken": "ec5c93ba-b591-405c-8453-f4744211fa82"
+              },
+              "mailboxUrn": "{{steps.me.profile}}",
+              "hostRecipientUrns": [
+                "{{steps.who.elements}}"
+              ],
+              "trackingId": "\u00ec\\\u0093\u00ba\u00b5\u0091@\\\u0084S\u00f4tB\u0011\u00fa\u0082",
+              "dedupeByClientGeneratedToken": false
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": []
+          },
+          "extract": {}
+        }
+      ],
+      "output": {
+        "from": null,
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": []
     }
   ]
 }
