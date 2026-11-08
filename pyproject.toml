@@ -27,6 +27,7 @@ dev = [
     "mypy>=2.4.1",
     "pytest>=9.2",
     "pytest-asyncio>=1.4",
+    "pytest-xdist>=3.8.0",
     "ruff==0.17.4",
 ]
 
@@ -40,6 +41,8 @@ packages = ["schema", "runtime", "mapper", "flowmap"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Tests run in parallel (pytest-xdist): about 80 s instead of 5 min. Use -n0 to run in one process.
+addopts = "-n auto"
 asyncio_default_fixture_loop_scope = "function"
 # mapper tests import their helpers (fixture_site, synthetic) by bare name
 pythonpath = ["tests/mapper"]
