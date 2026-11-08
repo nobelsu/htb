@@ -225,6 +225,8 @@ def record(cfg: CaptureConfig) -> Path:
             record_har_content="embed",
             record_har_mode="full",
             storage_state=str(cfg.state) if cfg.state else None,
+            # a service worker's requests would go around the write blocker's route
+            **({"service_workers": "block"} if cfg.block_writes else {}),
         )
         tracker = None
         try:
@@ -234,7 +236,7 @@ def record(cfg: CaptureConfig) -> Path:
             tracker = driver.NetworkTracker(context)
             if cfg.block_writes:
                 tracker.blocker = driver.WriteBlocker(
-                    context, lambda url: same_site(hostname(url), cfg.domain)
+                    context, lambda url: same_site(hostname(url), cfg.domain), cfg.markers.values()
                 )
             page = context.new_page()
             if cfg.step_timeout_ms:
@@ -265,7 +267,7 @@ def record(cfg: CaptureConfig) -> Path:
             context.storage_state(path=str(out / STATE_FILE))
         finally:
             if tracker is not None and tracker.blocker is not None:
-                tracker.blocker.disarm()
+                tracker.blocker.arm()  # closing must not let a queued send out
                 if tracker.blocker.blocked:
                     (out / BLOCKED_FILE).write_text(json.dumps(tracker.blocker.blocked, indent=1) + "\n")
             context.close()  # flushes the HAR

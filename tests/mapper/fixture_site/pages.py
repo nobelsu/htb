@@ -244,11 +244,16 @@ fetch("/api/conversations").then((r) => r.json()).then((d) => {
     list.appendChild(li);
   }
 });
+// Like LinkedIn's messenger: a failed send stays queued and is retried until it gets through, and
+// typing saves a draft (which carries the text) as you go.
+const send = (urn, text, tries) => fetch(path(urn), {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: text }),
+}).catch(() => { if (tries > 0) setTimeout(() => send(urn, text, tries - 1), 100); });
+document.getElementById("msg").addEventListener("input", (e) => {
+  fetch("/api/drafts", { method: "POST", body: JSON.stringify({ text: e.target.value }) }).catch(() => {});
+});
 document.getElementById("send").addEventListener("click", () => {
-  const text = document.getElementById("msg").value;
-  fetch(path(current), {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: text }),
-  });
+  send(current, document.getElementById("msg").value, 100);
 });
 """
 

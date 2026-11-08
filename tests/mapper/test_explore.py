@@ -600,7 +600,8 @@ def test_a_task_list_is_explored_and_mapped(chromium, site, logged_in, tmp_path)
     assert (
         status["list_conversations_next"][0] == "skipped" and "paging" in status["list_conversations_next"][1]
     )
-    assert site.state.sent == []  # exploring the send never sent anything
+    assert site.state.sent == []  # exploring the send never sent anything, retries included
+    assert ("POST", "/api/drafts") not in site.state.requests  # nor the draft that carries the text
     # the picked thread differs in each replay
     meta = {
         r: json.loads((result.domain_dir / "get_conversation_messages" / r / "meta.json").read_text())

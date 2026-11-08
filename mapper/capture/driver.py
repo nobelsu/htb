@@ -86,38 +86,70 @@ NEVER_ENDING = frozenset({"eventsource", "websocket"})
 
 
 class WriteBlocker:
-    """Stops the browser from sending changes to the site while armed: around the final click of a write
-    task (send, post, connect) during exploring, so nothing reaches the site, but the recording still
-    holds the request it would have sent (method, address, headers, body)."""
+    """Stops a write task's changes from reaching the site, while the recording still holds the request
+    the page would have sent (method, address, headers, body). Two guards, both on from the start:
+
+    * any request carrying one of the task's made-up values (the text being sent, typed into a message
+      box): blocked for the whole task, so an Enter that sends early, a draft save or a retry never
+      gets out;
+    * from the final action on (``arm``): every same-site change request, until the browser closes.
+      It is never switched off again, because apps keep a failed send and retry it (LinkedIn's messenger
+      did: the messages went out once the block was lifted 10 s later).
+
+    The browser context must be made with ``service_workers="block"``, or a service worker's requests
+    would go around the route."""
 
     SAFE = ("GET", "HEAD", "OPTIONS")
+    MIN_GUARDED = 6  # shorter values are too likely to appear by chance
 
-    def __init__(self, context, host_is_site: Callable[[str], bool]) -> None:
+    def __init__(
+        self, context, host_is_site: Callable[[str], bool], guarded: Iterable[str] = ()
+    ) -> None:
         self.context, self.host_is_site = context, host_is_site
         self.blocked: list[dict] = []
         self.armed = False
+        self.guarded = _guarded_forms(v for v in guarded if v and len(v) >= self.MIN_GUARDED)
+        context.route("**/*", self._handle)
+
+    def _carries_guarded(self, req) -> bool:
+        if not self.guarded:
+            return False
+        try:
+            body = req.post_data_buffer or b""
+        except Exception:
+            body = b""
+        url = req.url.lower().encode()
+        body = body.lower()
+        return any(f in url or f in body for f in self.guarded)
 
     def _handle(self, route) -> None:
         req = route.request
         try:
-            if req.method.upper() not in self.SAFE and self.host_is_site(req.url):
+            change = req.method.upper() not in self.SAFE and self.host_is_site(req.url)
+            if (self.armed and change) or self._carries_guarded(req):
                 self.blocked.append({"method": req.method.upper(), "url": req.url})
                 route.abort("blockedbyclient")
             else:
                 route.continue_()
         except Exception:  # the page may be gone; never fail the step that is running
-            pass
+            with contextlib.suppress(Exception):
+                route.abort("blockedbyclient")  # when unsure, nothing goes out
 
     def arm(self) -> None:
-        if not self.armed:
-            self.context.route("**/*", self._handle)
-            self.armed = True
+        self.armed = True
 
     def disarm(self) -> None:
-        if self.armed:
-            with contextlib.suppress(Exception):  # the browser may already be closing
-                self.context.unroute("**/*", self._handle)
-            self.armed = False
+        """Kept for callers; does nothing: once armed, the block lasts until the browser closes."""
+
+
+def _guarded_forms(values: Iterable[str]) -> list[bytes]:
+    from urllib.parse import quote, quote_plus
+
+    forms: set[bytes] = set()
+    for v in values:
+        for f in (v, quote(v, safe=""), quote_plus(v), json.dumps(v)[1:-1]):
+            forms.add(f.lower().encode())
+    return sorted(forms)
 
 
 class NetworkTracker:
