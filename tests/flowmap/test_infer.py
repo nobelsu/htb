@@ -612,9 +612,14 @@ def test_a_write_reads_an_id_from_the_page_its_inputs_opened() -> None:
         page = '<html><div data-urn="urn:li:organization:74126343">' + v + "</div></html>"
         b.add(SITE + "/company/" + quote(v) + "/", step=1, body=page, ctype="text/html", rtype="document")
         if kind == "real":  # the follow button exists only on a real company's page
-            ex = b.add(SITE + "/api/followingStates/urn:li:company:74126343", method="POST",
-                       post='{"following": true}', req_ctype="application/json", body={},
-                       headers={"referer": SITE + "/company/" + v + "/"})
+            ex = b.add(
+                SITE + "/api/followingStates/urn:li:company:74126343",
+                method="POST",
+                post='{"following": true}',
+                req_ctype="application/json",
+                body={},
+                headers={"referer": SITE + "/company/" + v + "/"},
+            )
             ex.response_headers.append(("x-flowmap-held", "1"))
 
     steps = [Goto(url=SITE + "/company/{{query}}/"), Click(target="#follow")]
@@ -663,7 +668,9 @@ def test_a_streamed_answer_is_read_with_resolve_rows() -> None:
     from schema.card import Extract
 
     def make(b: Builder, v: str, i: int, kind: str) -> None:
-        b.add(SITE + "/rsc/search?q=" + quote(v), body=stream(names(v, kind)), ctype="application/octet-stream")
+        b.add(
+            SITE + "/rsc/search?q=" + quote(v), body=stream(names(v, kind)), ctype="application/octet-stream"
+        )
 
     out = infer(flow(), runs_with(make))
     items = out.steps[-1]["extract"]["items"]

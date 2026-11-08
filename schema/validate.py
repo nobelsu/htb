@@ -113,7 +113,9 @@ class _Checker:
     def signals(self, signals: list[str], where: str) -> None:
         for s in signals:
             if not is_valid_signal(s):
-                self.err(f"{where}: bad signal {s!r} (expected status:NNN, redirect:/path or body_contains:text)")
+                self.err(
+                    f"{where}: bad signal {s!r} (expected status:NNN, redirect:/path or body_contains:text)"
+                )
 
     def site(self) -> None:
         c = self.card

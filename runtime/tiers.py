@@ -1,4 +1,5 @@
-"""Transport tiers. Only `http` is implemented; `impersonate` and `browser` are TODO."""
+"""Transport tiers: plain `http` and `impersonate` (a real browser's TLS fingerprint) live here; the `browser`
+tier (a real Chrome tab) is in `runtime/browser/`. `LADDER` is the order a run escalates through."""
 
 from __future__ import annotations
 
@@ -105,7 +106,11 @@ class HttpSession:
         headers = (identity or DEFAULT_IDENTITY).headers()
         # httpx follows redirects and keeps every hop in response.history; the jar spans all steps.
         self._client = httpx.AsyncClient(
-            cookies=jar, headers=headers, follow_redirects=True, timeout=None, proxy=proxy.url if proxy else None
+            cookies=jar,
+            headers=headers,
+            follow_redirects=True,
+            timeout=None,
+            proxy=proxy.url if proxy else None,
         )
         self._host = host
 
@@ -168,10 +173,9 @@ class HttpTier:
         return HttpSession(base_url, seed_cookies, identity, proxy)
 
 
-
-
 class ImpersonateSession:
-    """Looks like real Chrome at the network level (TLS/HTTP2 fingerprint and browser headers) via curl_cffi."""
+    """Looks like real Chrome at the network level (TLS/HTTP2 fingerprint and browser headers) via
+    curl_cffi."""
 
     def __init__(
         self,
@@ -184,7 +188,8 @@ class ImpersonateSession:
 
         identity = identity or DEFAULT_IDENTITY
         self._host = urlsplit(base_url).hostname or ""
-        # The closest real Chrome fingerprint (TLS, HTTP/2, header order), with the identity's own header values.
+        # The closest real Chrome fingerprint (TLS, HTTP/2, header order), with the identity's own header
+        # values.
         self.target = identity.impersonate_target()
         self._client: AsyncSession[Any] = AsyncSession(
             impersonate=self.target, headers=identity.headers(), proxy=proxy.url if proxy else None

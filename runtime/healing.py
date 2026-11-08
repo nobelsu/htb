@@ -98,7 +98,11 @@ class HealManager:
         if open_job is not None:
             return Heal(job_id=open_job.id, retry_after_s=self.config.retry_after_s)
         latest = self.state.latest_job_for(domain, action)
-        if latest is not None and latest.status in ("failed", "cancelled", "needs_review") and latest.finished_at:
+        if (
+            latest is not None
+            and latest.status in ("failed", "cancelled", "needs_review")
+            and latest.finished_at
+        ):
             left = self.config.cooldown_s - (time.time() - _ts(latest.finished_at))
             if left > 0:
                 return Heal(job_id=latest.id, retry_after_s=max(1, int(left)))
@@ -236,11 +240,14 @@ class HealManager:
             },
         )
 
-    async def _precheck(self, card: Card, version: int, broken: list[str], user: str) -> dict[str, Any] | None:
+    async def _precheck(
+        self, card: Card, version: int, broken: list[str], user: str
+    ) -> dict[str, Any] | None:
         providers = {
             p
             for name in broken
-            if (a := card.action(name)) is not None and (p := a.effective_auth_provider(card.defaults)) is not None
+            if (a := card.action(name)) is not None
+            and (p := a.effective_auth_provider(card.defaults)) is not None
         }
         for provider in sorted(providers):
             code = await self.executor.check_session(card, provider, user)
@@ -277,9 +284,12 @@ class HealManager:
         # Tentative card: new site-level fields + changed actions + old everything else.
         site = new if site_changed else old
         chosen: dict[str, Action] = {
-            n: (new_actions[n] if n in changed_reads or n in changed_writes else a) for n, a in old_actions.items()
+            n: (new_actions[n] if n in changed_reads or n in changed_writes else a)
+            for n, a in old_actions.items()
         }
-        to_validate = [n for n, a in chosen.items() if a.kind == "read"] if site_changed else list(changed_reads)
+        to_validate = (
+            [n for n, a in chosen.items() if a.kind == "read"] if site_changed else list(changed_reads)
+        )
         tentative = _compose(site, old, chosen)
         failures: dict[str, str] = {}
         for name in to_validate:
@@ -321,7 +331,9 @@ class HealManager:
             return
 
         final = _compose(site, old, chosen, provenance=new)
-        new_version = self.registry.save(final, note=f"heal {job.id}: {', '.join(result['healed']) or 'site-level'}")
+        new_version = self.registry.save(
+            final, note=f"heal {job.id}: {', '.join(result['healed']) or 'site-level'}"
+        )
         self.state.finish_job(job.id, "succeeded", result, new_version=new_version)
         log.info("heal %s succeeded: version %d, %s", job.id, new_version, json.dumps(result))
 
@@ -334,7 +346,9 @@ class HealManager:
             env = await self.executor.run_internal(card, version, name, dict(example.params), user)
             if not example_passes(env, example.min_items):
                 got = len(env.data or [])
-                return f"examples[{i}] returned {env.status.value} with {got} items (need {example.min_items})"
+                return (
+                    f"examples[{i}] returned {env.status.value} with {got} items (need {example.min_items})"
+                )
         return None
 
     def _degrade(self, job: HealJob, actions: list[str], reason: str) -> None:
@@ -351,9 +365,13 @@ class HealManager:
         examples = [e for e in action.examples if e.min_items >= 1]
         if not examples:
             return  # its examples don't normally return items
-        env = await self.executor.run_internal(stored.card, stored.version, action_name, dict(examples[0].params), user)
+        env = await self.executor.run_internal(
+            stored.card, stored.version, action_name, dict(examples[0].params), user
+        )
         if env.status == R.EMPTY:
-            reason = f"{self.config.empty_spike_threshold} EMPTY results in a row, and the example is EMPTY too"
+            reason = (
+                f"{self.config.empty_spike_threshold} EMPTY results in a row, and the example is EMPTY too"
+            )
             self.page_changed(domain, action_name, reason, user, trigger="empty_spike")
 
     async def check_domain(self, domain: str) -> list[str]:
@@ -373,7 +391,9 @@ class HealManager:
             problem = await self._validate_action(card, stored.version, action.name, "default")
             if problem:
                 failed.append(action.name)
-                self.page_changed(domain, action.name, f"health check: {problem}", "default", trigger="health_check")
+                self.page_changed(
+                    domain, action.name, f"health check: {problem}", "default", trigger="health_check"
+                )
         return failed
 
     async def health_checks_forever(self) -> None:
@@ -408,7 +428,9 @@ def _site_level(card: Card) -> str:
 def _compose(site: Card, old: Card, chosen: dict[str, Action], provenance: Card | None = None) -> Card:
     """Site-level fields from `site`, actions in `old`'s order from `chosen`."""
     data = site.to_json_dict()
-    data["actions"] = [chosen[a.name].model_dump(by_alias=True, exclude_unset=True, mode="json") for a in old.actions]
+    data["actions"] = [
+        chosen[a.name].model_dump(by_alias=True, exclude_unset=True, mode="json") for a in old.actions
+    ]
     if provenance is not None:
         data["provenance"] = provenance.provenance.model_dump(mode="json")
     return Card.model_validate(data)

@@ -1,9 +1,8 @@
 """The login flow behind start_connection / poll_connection / connection_status.
-
-start_connection returns a link to our connect page. There the user clicks "Log in" and signs in to the site
-inside a real Chromium in a short-lived Neko container, streamed over WebRTC (runtime/neko). We watch its cookies
-and verify them with the provider's session_check before storing them encrypted. The password never reaches us
-or the agent.
+ start_connection returns a link to our connect page. There the user clicks "Log in" and signs in to the site
+inside a real Chromium in a short-lived Neko container, streamed over WebRTC (runtime/neko). We watch its
+cookies and verify them with the provider's session_check before storing them encrypted. The password never
+reaches us or the agent.
 """
 
 from __future__ import annotations
@@ -69,7 +68,6 @@ class Connection:
         if self.status == "pending":
             out["url"] = f"{base_url}/connect/{self.token}"
         return out
-
 
 
 class ConnectError(ValueError):
@@ -173,11 +171,10 @@ class ConnectionManager:
         out = conn.public(self.public_base_url)
         out["user_message"] = _poll_message(conn, out.get("url"))
         out["instructions"] = (
-            "The user can't see this result. In this same reply: first write the user_message exactly as given (it "
-            "is a markdown link), then immediately call poll_connection (don't end your turn): it waits until they've "
-            "signed in. "
-            "Their password is never shared with you. If it returns 'pending', call it again. Once 'connected', "
-            "retry the original tool."
+            "The user can't see this result. In this same reply: first write the user_message exactly as "
+            "given (it is a markdown link), then immediately call poll_connection (don't end your turn): it "
+            "waits until they've signed in. Their password is never shared with you. If it returns "
+            "'pending', call it again. Once 'connected', retry the original tool."
         )
         return out
 
@@ -209,9 +206,9 @@ class ConnectionManager:
         out["link_opened"] = conn.page_opened
         if conn.status == "pending" and not conn.page_opened:
             out["hint"] = (
-                "The user hasn't opened the sign-in link yet, probably because they haven't seen it: they can't see "
-                "tool results. Write the user_message (with the link) in your reply to them now, then call "
-                "poll_connection again."
+                "The user hasn't opened the sign-in link yet, probably because they haven't seen it: they "
+                "can't see tool results. Write the user_message (with the link) in your reply to them now, "
+                "then call poll_connection again."
             )
         return out
 
@@ -273,11 +270,13 @@ class ConnectionManager:
             conn.refresh()
             if owner != user or conn.status != "pending":
                 continue
-            out.append({
-                "domain": domain,
-                "url": f"{self.public_base_url}/connect/{conn.token}",
-                "minutes_left": max(1, int((conn.expires_at - time.time()) // 60)),
-            })
+            out.append(
+                {
+                    "domain": domain,
+                    "url": f"{self.public_base_url}/connect/{conn.token}",
+                    "minutes_left": max(1, int((conn.expires_at - time.time()) // 60)),
+                }
+            )
         return out
 
     async def _verify(
@@ -286,15 +285,20 @@ class ConnectionManager:
         card = self._card(conn.domain)
         if card is None:
             return R.ERROR
-        return await self.executor.check_session(card, conn.provider, conn.user, cookies=jar, identity=identity)
+        return await self.executor.check_session(
+            card, conn.provider, conn.user, cookies=jar, identity=identity
+        )
 
     async def _login_identity(self, conn: Connection) -> BrowserIdentity | None:
-        """The login browser's device identity, so later requests present the same browser (DECISIONS.md L8)."""
+        """The login browser's device identity, so later requests present the same browser (DECISIONS.md
+        L8)."""
         if self.neko is None:
             return None
         try:
             return await self.neko.identity(conn.token)
-        except Exception as e:  # DevTools briefly unavailable: the sign-in still works, with the default identity
+        except (
+            Exception
+        ) as e:  # DevTools briefly unavailable: the sign-in still works, with the default identity
             log.warning("could not read the login browser's identity: %s", e)
             return None
 
@@ -303,7 +307,9 @@ class ConnectionManager:
     ) -> None:
         self.store.put(conn.user, conn.domain, conn.provider, jar, identity)
         conn.status, conn.message = "connected", f"connected to {conn.domain}"
-        shown = f"Chrome {identity.major} on {identity.platform}" if identity is not None else "default identity"
+        shown = (
+            f"Chrome {identity.major} on {identity.platform}" if identity is not None else "default identity"
+        )
         log.info("%s connected to %s via %s (%d cookies, %s)", conn.user, conn.domain, via, len(jar), shown)
         for hook in self.on_connected:
             try:
@@ -335,7 +341,9 @@ class ConnectionManager:
         if conn.check_is_weak is None:
             conn.check_is_weak = await self._verify(conn, {}) is None
             if conn.check_is_weak:
-                log.info("session_check for %s passes without cookies; asking the user to confirm", conn.domain)
+                log.info(
+                    "session_check for %s passes without cookies; asking the user to confirm", conn.domain
+                )
         if conn.browser_task is None:
             conn.browser_task = asyncio.get_running_loop().create_task(self._watch_browser(conn))
         return {"viewer": session.viewer_path(), "confirm": conn.check_is_weak}
@@ -353,13 +361,14 @@ class ConnectionManager:
             jar = await self.neko.cookies(conn.token, conn.base_url)
         except Exception:
             raise ConnectError("the sign-in browser isn't responding; try again in a moment") from None
-        not_yet = f"It doesn't look like you've signed in to {conn.domain} yet. Finish signing in, then try again."
+        not_yet = (
+            f"It doesn't look like you've signed in to {conn.domain} yet. Finish signing in, then try again."
+        )
         if not jar:
             raise ConnectError(not_yet)
-        if conn.check_is_weak:
-            # The check can't verify the login, so at least require that signing in changed the cookies.
-            if conn.first_cookies is not None and jar == conn.first_cookies:
-                raise ConnectError(not_yet)
+        # A weak check can't verify the login, so at least require that signing in changed the cookies.
+        if conn.check_is_weak and conn.first_cookies is not None and jar == conn.first_cookies:
+            raise ConnectError(not_yet)
         identity = await self._login_identity(conn)
         if not conn.check_is_weak and await self._verify(conn, jar, identity) is not None:
             raise ConnectError(not_yet)
@@ -494,8 +503,6 @@ def _poll_message(conn: Connection, url: str | None) -> str:
         return f"That sign-in link for {conn.domain} has expired. I can get you a new one."
     minutes = max(1, int((conn.expires_at - time.time()) // 60))
     return f"**[Sign in to {conn.domain} →]({url})** (the link works for {minutes} more minutes)"
-
-
 
 
 def _iso(ts: float) -> str:

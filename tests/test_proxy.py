@@ -1,4 +1,5 @@
-"""Residential proxies: a sign-in's requests and its login browser leave through one sticky proxy session; public
+"""Residential proxies: a sign-in's requests and its login browser leave through one sticky proxy session;
+public
 actions go direct; credentials are never logged."""
 
 from __future__ import annotations
@@ -37,7 +38,9 @@ async def proxy() -> AsyncIterator[FakeProxy]:
 
 
 def config(proxy: FakeProxy, template: str | None = None) -> ProxyConfig:
-    return ProxyConfig(template or f"http://cust-session-{{session}}:{SECRET}@127.0.0.1:{proxy.port}", local=True)
+    return ProxyConfig(
+        template or f"http://cust-session-{{session}}:{SECRET}@127.0.0.1:{proxy.port}", local=True
+    )
 
 
 # ---- the configuration ------------------------------------------------------------------------------------
@@ -60,14 +63,18 @@ def test_one_sticky_session_per_sign_in() -> None:
 
 
 def test_credentials_never_show_in_text() -> None:
-    spec = ProxyConfig("http://cust-{session}:pw-SECRET@gate.example.com:7000").for_sign_in("u", "d", "p", "https://d")
+    spec = ProxyConfig("http://cust-{session}:pw-SECRET@gate.example.com:7000").for_sign_in(
+        "u", "d", "p", "https://d"
+    )
     assert spec is not None
     for text in (repr(spec), str(spec), spec.redacted, f"{spec}"):
         assert "pw-SECRET" not in text and "gate.example.com" in text
     assert "pw-SECRET" not in ProxyConfig("http://u:pw-SECRET@g.example.com:1").redacted
 
 
-@pytest.mark.parametrize("bad", ["", "gate.example.com:7000", "ftp://u:p@g.example.com:21", "http://u:p@g.example.com"])
+@pytest.mark.parametrize(
+    "bad", ["", "gate.example.com:7000", "ftp://u:p@g.example.com:21", "http://u:p@g.example.com"]
+)
 def test_bad_templates_are_refused(bad: str) -> None:
     with pytest.raises(ProxyConfigError):
         ProxyConfig(bad)
@@ -97,7 +104,7 @@ async def test_tiers_go_through_the_proxy(session_cls: Any, proxy: FakeProxy, si
     assert "/api/echo" in proxy.paths()[0]
 
 
-# ---- the executor: signed-in requests through the proxy, public ones direct ---------------------------------
+# ---- the executor: signed-in requests through the proxy, public ones direct --------------------------------
 
 
 def stored_card(fixture_card: dict[str, Any]) -> StoredCard:
@@ -113,17 +120,21 @@ async def test_signed_in_requests_use_the_sign_ins_session_and_public_ones_go_di
     executor = Executor(store, Confirmer("s"), proxies=config(proxy))
     with caplog.at_level(logging.DEBUG, logger="runtime"):
         assert (await executor.run(stored, "list_orders", {}, user="alice")).status == R.SUCCESS
-        assert (await executor.run(stored, "search_products", {"query": "lamp"}, user="alice")).status == R.SUCCESS
+        assert (
+            await executor.run(stored, "search_products", {"query": "lamp"}, user="alice")
+        ).status == R.SUCCESS
         assert await executor.check_session(stored.card, "shop", "alice") is None
     expected = f"cust-session-{session_id('alice', DOMAIN, 'shop')}"
-    assert [(p, s.username) for p, s in zip(proxy.paths(), proxy.seen)] == [
+    assert [(p, s.username) for p, s in zip(proxy.paths(), proxy.seen, strict=False)] == [
         ("/api/account/orders", expected),  # signed in: through alice's session
         ("/api/me", expected),  # the sign-in check too
     ]  # the public search never touched the proxy
     assert SECRET not in caplog.text
 
 
-async def test_each_user_gets_their_own_session(proxy: FakeProxy, fixture_card: dict[str, Any], site_url: str) -> None:
+async def test_each_user_gets_their_own_session(
+    proxy: FakeProxy, fixture_card: dict[str, Any], site_url: str
+) -> None:
     stored = stored_card(fixture_card)
     store = InMemorySessionStore()
     for user in ("alice", "bob"):
@@ -136,7 +147,9 @@ async def test_each_user_gets_their_own_session(proxy: FakeProxy, fixture_card: 
     ]
 
 
-async def test_escalation_keeps_the_proxy(proxy: FakeProxy, fixture_card: dict[str, Any], site_url: str) -> None:
+async def test_escalation_keeps_the_proxy(
+    proxy: FakeProxy, fixture_card: dict[str, Any], site_url: str
+) -> None:
     import copy
 
     card = copy.deepcopy(fixture_card)
@@ -144,26 +157,32 @@ async def test_escalation_keeps_the_proxy(proxy: FakeProxy, fixture_card: dict[s
     flow["auth_provider"] = "shop"  # a signed-in flow that escalates from http to impersonate
     store = InMemorySessionStore()
     store.put("alice", DOMAIN, "shop", {"sid": VALID_SID, "csrftoken": CSRF})
-    env = await Executor(store, Confirmer("s"), proxies=config(proxy)).run(stored_card(card), "guarded_flow", {}, user="alice")
+    env = await Executor(store, Confirmer("s"), proxies=config(proxy)).run(
+        stored_card(card), "guarded_flow", {}, user="alice"
+    )
     assert env.status == R.SUCCESS and env.meta.tier == "impersonate"
     assert proxy.paths() == ["/api/flow/start", "/api/guarded/flow-finish", "/api/guarded/flow-finish"]
     assert len({s.username for s in proxy.seen}) == 1
 
 
-# ---- the login browser's helper: adds the credentials Chromium can't send -----------------------------------
+# ---- the login browser's helper: adds the credentials Chromium can't send ----------------------------------
 
 
 async def _helper(proxy: FakeProxy) -> Any:
     from runtime.neko.proxy_auth import serve
 
-    return await serve(0, {"host": "127.0.0.1", "port": proxy.port, "username": "cust-session-abc", "password": SECRET})
+    return await serve(
+        0, {"host": "127.0.0.1", "port": proxy.port, "username": "cust-session-abc", "password": SECRET}
+    )
 
 
 async def test_login_browser_helper_adds_credentials(proxy: FakeProxy, site_url: str) -> None:
     helper = await _helper(proxy)
     port = helper.sockets[0].getsockname()[1]
     try:
-        async with httpx.AsyncClient(proxy=f"http://127.0.0.1:{port}") as client:  # no credentials, like Chromium
+        async with httpx.AsyncClient(
+            proxy=f"http://127.0.0.1:{port}"
+        ) as client:  # no credentials, like Chromium
             for _ in range(2):  # a second request on the same client is authenticated too
                 assert (await client.get(f"{site_url}/api/echo")).status_code == 200
         # A CONNECT tunnel (what https sites use)
@@ -186,19 +205,28 @@ async def test_login_browser_helper_adds_credentials(proxy: FakeProxy, site_url:
 def test_login_browser_is_told_to_use_the_helper(tmp_path: Path) -> None:
     from runtime.neko.manager import NekoConfig, chromium_conf
 
-    spec = ProxyConfig("http://cust-{session}:S3CRET-pw@gate.example.com:7000").for_sign_in("u", "d", "p", "https://d")
+    spec = ProxyConfig("http://cust-{session}:S3CRET-pw@gate.example.com:7000").for_sign_in(
+        "u", "d", "p", "https://d"
+    )
     assert spec is not None
     conf = chromium_conf(NekoConfig(), "https://d/login", ["0.0.0.0:9223=127.0.0.1:9222"], spec, tmp_path)
     assert "--proxy-server=http://127.0.0.1:" in conf and "proxy_auth.py" in conf
     assert "S3CRET-pw" not in conf  # the password is only in the private upstream file
     upstream = json.loads((tmp_path / "upstream.json").read_text())
-    assert upstream == {"host": "gate.example.com", "port": 7000, "username": spec.username, "password": "S3CRET-pw"}
+    assert upstream == {
+        "host": "gate.example.com",
+        "port": 7000,
+        "username": spec.username,
+        "password": "S3CRET-pw",
+    }
     assert (tmp_path / "upstream.json").stat().st_mode & 0o077 == 0
-    plain = chromium_conf(NekoConfig(), "https://d/login", ["0.0.0.0:9223=127.0.0.1:9222"], None, tmp_path / "x")
+    plain = chromium_conf(
+        NekoConfig(), "https://d/login", ["0.0.0.0:9223=127.0.0.1:9222"], None, tmp_path / "x"
+    )
     assert "--proxy-server" not in plain and "proxy_auth" not in plain
 
 
-# ---- the browser tier (real Chrome) and the login browser (real Neko in Docker) ------------------------------
+# ---- the browser tier (real Chrome) and the login browser (real Neko in Docker) ----------------------------
 
 from tests.test_login import chrome  # noqa: E402,F401  (fixture: skips without Chrome)
 from tests.test_neko import neko_image  # noqa: E402,F401  (fixture: skips without Docker and the image)
@@ -222,13 +250,17 @@ async def test_browser_tier_goes_through_the_proxy(
     finally:
         await pool.close()
     assert resp.status == 200
-    signed = [s for s in proxy.seen if s.username is not None]  # Chrome answers the proxy's 407 with credentials
+    signed = [
+        s for s in proxy.seen if s.username is not None
+    ]  # Chrome answers the proxy's 407 with credentials
     assert any(p.endswith("/api/echo") for p in proxy.paths())
     assert signed and all((s.username, s.password) == (spec.username, SECRET) for s in signed)
 
 
 @pytest.mark.xdist_group("docker")  # login-browser containers share a port range
-async def test_login_browser_goes_through_the_proxy(proxy: FakeProxy, site_url: str, neko_image: None) -> None:
+async def test_login_browser_goes_through_the_proxy(
+    proxy: FakeProxy, site_url: str, neko_image: None
+) -> None:
     from runtime.neko.manager import NekoConfig, NekoManager
 
     spec = config(proxy).for_sign_in("alice", DOMAIN, "shop", site_url)
@@ -236,12 +268,16 @@ async def test_login_browser_goes_through_the_proxy(proxy: FakeProxy, site_url: 
     await neko.launch("proxytest01", f"{site_url}/login", [site_url], spec)
     try:
         for _ in range(120):  # Chromium opens the login page at start
-            if any(p.endswith("/login") and s.username for p, s in zip(proxy.paths(), proxy.seen)):
+            if any(
+                p.endswith("/login") and s.username for p, s in zip(proxy.paths(), proxy.seen, strict=False)
+            ):
                 break
             await asyncio.sleep(0.25)
     finally:
         session = neko.get("proxytest01")
         await neko.close()
-    login = [s for p, s in zip(proxy.paths(), proxy.seen) if p.endswith("/login") and s.username]
+    login = [
+        s for p, s in zip(proxy.paths(), proxy.seen, strict=False) if p.endswith("/login") and s.username
+    ]
     assert login and (login[0].username, login[0].password) == (spec.username, SECRET)
     assert session is not None and not session.workdir.exists()  # its credentials file is gone

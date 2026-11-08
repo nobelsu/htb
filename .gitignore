@@ -31,3 +31,7 @@ profiles/
 # tooling
 .ruff_cache/
 .mypy_cache/
+
+# flowmap recordings of real sites can hold personal values; only the bookshop examples are tracked
+flows/*
+!flows/bookshop.test/

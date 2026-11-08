@@ -1,17 +1,17 @@
-"""Residential proxies: every request that belongs to a sign-in, and the login browser itself, leave through the same
-home IP, so a site sees one person in one place.
-
-Configured with one URL template (PROXY_URL) in the provider's own "sticky session" format; `{session}` is replaced
-by a stable id per sign-in (user + site + provider), so the provider keeps handing out the same IP for as long as it
-allows. The shape is roughly as below, but every provider has its own sticky-session syntax and it changes, so copy
-it from your provider's dashboard or docs ("sticky session") and put {session} where their session id goes:
+"""Residential proxies: every request that belongs to a sign-in, and the login browser itself, leave through
+the same home IP, so a site sees one person in one place.
+ Configured with one URL template (PROXY_URL) in the provider's own "sticky session" format; `{session}` is
+replaced by a stable id per sign-in (user + site + provider), so the provider keeps handing out the same IP
+for as long as it allows. The shape is roughly as below, but every provider has its own sticky-session syntax
+and it changes, so copy it from your provider's dashboard or docs ("sticky session") and put {session} where
+their session id goes:
 
     http://USER-session-{session}:PASS@gateway.provider.example:7000
 
-The login browser (Neko) supports http:// proxies only; https:// and socks5:// work for the server's own requests.
-
-Public actions (no sign-in) go direct. Sites on this machine (localhost) never use the proxy, since a provider can't
-reach them, unless `local` is set (tests).
+The login browser (Neko) supports http:// proxies only; https:// and socks5:// work for the server's own
+requests.
+ Public actions (no sign-in) go direct. Sites on this machine (localhost) never use the proxy, since a
+provider can't reach them, unless `local` is set (tests).
 """
 
 from __future__ import annotations
@@ -111,4 +111,6 @@ class ProxyConfig:
     @property
     def redacted(self) -> str:
         parts = urlsplit(self.template.replace(PLACEHOLDER, "x"))
-        return f"{parts.scheme}://***@{parts.hostname}:{parts.port}" + ("" if self.sticky else " (not sticky)")
+        return f"{parts.scheme}://***@{parts.hostname}:{parts.port}" + (
+            "" if self.sticky else " (not sticky)"
+        )

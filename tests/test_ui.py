@@ -15,7 +15,11 @@ from tests.test_oauth import PASSWORD, Env, account_session, env  # noqa: F401  
 async def test_home_page_is_public_but_only_at_the_root(env: Env) -> None:
     async with httpx.AsyncClient(follow_redirects=False) as http:
         home = await http.get(f"{env.base}/")
-        assert home.status_code == 200 and "Websites your agent can call." in home.text and "linkedin_search_companies" in home.text
+        assert (
+            home.status_code == 200
+            and "Websites your agent can call." in home.text
+            and "linkedin_search_companies" in home.text
+        )
         assert 'href="/signup"' in home.text  # sign-up is open in this fixture
         assert (await http.get(f"{env.base}/anything-else")).status_code == 401  # "/" exempts only "/"
         assert (await http.post(f"{env.base}/mcp", json={})).status_code == 401
@@ -23,7 +27,11 @@ async def test_home_page_is_public_but_only_at_the_root(env: Env) -> None:
 
 @pytest.mark.parametrize(
     ("query", "fields"),
-    [("", ["login", "password"]), ("?with=key", ["key"]), ("?with=signup", ["code", "name", "email", "password"])],
+    [
+        ("", ["login", "password"]),
+        ("?with=key", ["key"]),
+        ("?with=signup", ["code", "name", "email", "password"]),
+    ],
 )
 async def test_sign_in_page_switches_how_you_sign_in(env: Env, query: str, fields: list[str]) -> None:
     async with httpx.AsyncClient(follow_redirects=False) as http:
@@ -36,11 +44,15 @@ async def test_change_password(env: Env) -> None:
     async with httpx.AsyncClient(follow_redirects=False) as http:
         await account_session(env, http)
         assert (await http.get(f"{env.base}/account/password")).status_code == 200
-        wrong = await http.post(f"{env.base}/account/password", data={"current": "nope-nope", "new": "brand-new-pw1"})
+        wrong = await http.post(
+            f"{env.base}/account/password", data={"current": "nope-nope", "new": "brand-new-pw1"}
+        )
         assert wrong.status_code == 401 and "current password" in html.unescape(wrong.text)
         short = await http.post(f"{env.base}/account/password", data={"current": PASSWORD, "new": "short"})
         assert short.status_code == 400
-        done = await http.post(f"{env.base}/account/password", data={"current": PASSWORD, "new": "brand-new-pw1"})
+        done = await http.post(
+            f"{env.base}/account/password", data={"current": PASSWORD, "new": "brand-new-pw1"}
+        )
         assert done.status_code == 302 and done.headers["location"] == "/account?changed=password"
         assert "Password changed." in (await http.get(f"{env.base}/account?changed=password")).text
     assert env.keys.check_login("alice", "brand-new-pw1") == "alice"
@@ -48,7 +60,8 @@ async def test_change_password(env: Env) -> None:
 
 
 async def test_pages_follow_the_design_rules(env: Env) -> None:
-    """No emoji or arrow symbols in the copy (icons are SVG); every page has the spider panel and one heading."""
+    """No emoji or arrow symbols in the copy (icons are SVG); every page has the spider panel and one
+    heading."""
     async with httpx.AsyncClient(follow_redirects=False) as http:
         pages = [await http.get(f"{env.base}{path}") for path in ("/", "/signup", "/account/login")]
         await account_session(env, http)
@@ -65,7 +78,7 @@ def test_short_name() -> None:
     assert short_name("www.github.com") == "github" and short_name("fixture.test") == "fixture"
 
 
-# ---- motion ---------------------------------------------------------------------------------------------------
+# ---- motion ------------------------------------------------------------------------------------------------
 
 from tests.test_login import chromium  # noqa: E402,F401  (fixture: skips without Playwright's Chromium)
 
@@ -103,7 +116,7 @@ async def test_disconnect_folds_the_row_then_disconnects(env: Env, chromium: Non
     assert env.store.get("alice", "fixture.test", env.provider) is None
 
 
-# ---- form fixes (asked: invite code, lines, cursor colour, errors) ----------------------------------------------
+# ---- form fixes (asked: invite code, lines, cursor colour, errors) -----------------------------------------
 
 
 async def test_invite_code_is_a_plain_field_password_managers_skip(env: Env) -> None:

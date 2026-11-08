@@ -1,7 +1,7 @@
 # spider: context for the pitch deck
 
 Everything a separate session needs to build the Hack the Burgh 2026 pitch deck. Facts here come from the
-code, `DECISIONS.md`, `CARD_SPEC.md` and the live gateway as of 2026-11-08. Where something isn't proven yet,
+code, `DECISIONS.md`, `CARD_SPEC.md` and the live gateway as of 2026-11-08 (numbers updated at the end of the hackathon). Where something isn't proven yet,
 it says so: the deck must not claim more than this.
 
 ## One line
@@ -69,13 +69,14 @@ agent (Claude) ──MCP──▶ spider gateway ──▶ executor ──▶ th
 ## What's live (numbers to use)
 
 - Gateway running behind a public URL, connected as a custom connector in regular Claude.
-- **linkedin.com:** 6 actions live and working, about 1 second each over plain HTTP:
-  search_companies, search_people, get_profile_experience, search_jobs, list_company_jobs, search_posts.
+- **linkedin.com:** 20 actions live (searches, profiles, company pages, jobs, posts, follow a company,
+  connect, start a conversation), most about 1 second each; signed-in pages use the browser tier.
+- **amazon.co.uk:** search_products (about 20 results in about a second) and get_product_details.
 - **fixture.test** (our own demo shop): 21 actions covering every runtime case (reads, writes needing
   confirmation, rate limits, bot challenges, pages that change, browser-only endpoints).
 - 25 map jobs run on the server today (2026-11-08) against LinkedIn and Amazon; 5 succeeded. Most failures
   were real-site problems that each led to a fix (see "Honest limits").
-- About 19,500 lines of Python; 657 automated tests; 128 commits (Nobel and Wei Wei).
+- About 30,000 lines of Python; 661 automated tests; 135 commits (Nobel and Wei Wei).
 - Model used for mapping and labelling: Claude (Anthropic API).
 
 ## Demo ideas
@@ -106,10 +107,10 @@ agent (Claude) ──MCP──▶ spider gateway ──▶ executor ──▶ th
 
 - Sites that render everything in scripts with no readable request (level 3, browser replay) aren't
   supported.
-- Writes on real sites are early: the safety path is built and tested on our demo shop; on LinkedIn a
-  follow was mapped but not yet saved. On 2026-11-08 a replay bug let one LinkedIn follow through (a
+- Writes on real sites are early: the safety path is built and tested on our demo shop; on LinkedIn,
+  follow_company is saved and connect has worked for real. On 2026-11-08 a replay bug let one LinkedIn follow through (a
   recording clicked Follow twice and the replay only held the last click back); it's fixed and tested.
-- Amazon mapping still fails on some runs.
+- Amazon product pages give only the title so far; actions are set up from one real example.
 - Hosting is a laptop behind ngrok; no always-on server yet. No per-user quotas.
 
 ## Team and ownership

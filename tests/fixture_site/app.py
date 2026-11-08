@@ -20,9 +20,19 @@ PRODUCTS: list[dict[str, Any]] = [
     {"id": f"p{i}", "sku": f"SKU-{i:03d}", "name": name, "price": 10 + i}
     for i, name in enumerate(
         [
-            "Desk lamp", "Floor lamp", "Lamp shade", "Reading lamp", "Lava lamp",
-            "Wall lamp", "Clip lamp", "Table lamp", "Mug", "Teapot",
-            "Lamp oil", "Lamp post", "Kettle",
+            "Desk lamp",
+            "Floor lamp",
+            "Lamp shade",
+            "Reading lamp",
+            "Lava lamp",
+            "Wall lamp",
+            "Clip lamp",
+            "Table lamp",
+            "Mug",
+            "Teapot",
+            "Lamp oil",
+            "Lamp post",
+            "Kettle",
         ],
         start=1,
     )
@@ -44,7 +54,9 @@ class State:
     flaky: Counter[str] = field(default_factory=Counter)
     cart: dict[str, int] = field(default_factory=dict)
     rotations: int = 0
-    last_headers: dict[str, dict[str, str]] = field(default_factory=dict)  # "GET /path" -> the latest request's
+    last_headers: dict[str, dict[str, str]] = field(
+        default_factory=dict
+    )  # "GET /path" -> the latest request's
 
     def reset(self) -> None:
         self.broken = False
@@ -93,7 +105,9 @@ IDENTITY_HEADERS = ("user-agent", "sec-ch-ua", "sec-ch-ua-platform", "accept-lan
 @app.get("/_admin/browsers")
 def admin_browsers() -> dict[str, dict[str, str]]:
     """The browser identity each path last saw (no cookies or other headers)."""
-    return {path: {h: seen[h] for h in IDENTITY_HEADERS if h in seen} for path, seen in state.last_headers.items()}
+    return {
+        path: {h: seen[h] for h in IDENTITY_HEADERS if h in seen} for path, seen in state.last_headers.items()
+    }
 
 
 # ---- reads -----------------------------------------------------------------
@@ -167,11 +181,13 @@ def orders(request: Request, sid: str | None = Cookie(default=None)) -> Response
         return JSONResponse({"error": "unauthenticated"}, status_code=401)
     resp = JSONResponse({"orders": [{"id": "o1", "total": 30}, {"id": "o2", "total": 12}]})
     state.rotations += 1
-    resp.set_cookie("visits", str(state.rotations))  # like real sites: a cookie that changes as you use the site
+    resp.set_cookie(
+        "visits", str(state.rotations)
+    )  # like real sites: a cookie that changes as you use the site
     return resp
 
 
-# ---- a site that rotates its sign-in cookie on every signed-in response -------------------------------------
+# ---- a site that rotates its sign-in cookie on every signed-in response ------------------------------------
 ROTATED_SID = "sid-rotated-"
 
 
@@ -230,7 +246,9 @@ async def login_submit(request: Request) -> Response:
     form = parse_qs((await request.body()).decode())
     user, password = form.get("username", [""])[0], form.get("password", [""])[0]
     if (user, password) != (LOGIN_USER, LOGIN_PASSWORD):
-        return HTMLResponse(LOGIN_FORM.replace("__ERROR__", "<p id='error'>Wrong username or password.</p>"), 401)
+        return HTMLResponse(
+            LOGIN_FORM.replace("__ERROR__", "<p id='error'>Wrong username or password.</p>"), 401
+        )
     resp = RedirectResponse("/account", status_code=303)
     resp.set_cookie("sid", VALID_SID, httponly=True)
     resp.set_cookie("csrftoken", CSRF)
@@ -246,7 +264,8 @@ def account_page(sid: str | None = Cookie(default=None)) -> HTMLResponse:
 
 @app.get("/api/browser-only/orders")
 def browser_only_orders(request: Request, sid: str | None = Cookie(default=None)) -> Response:
-    """Only answers fetch() from a real browser page (sec-fetch-mode: cors); everything else gets a challenge."""
+    """Only answers fetch() from a real browser page (sec-fetch-mode: cors); everything else gets a
+    challenge."""
     if request.headers.get("sec-fetch-mode") != "cors":
         return HTMLResponse(CHALLENGE_HTML, status_code=403)
     if sid != VALID_SID:
@@ -284,10 +303,10 @@ async def slow(ms: int = 1000) -> dict[str, Any]:
     return {"status": {"ok": True}}
 
 
-# ---- bot-guarded endpoints (for the impersonate tier) ------------------------
-# A real site checks the TLS/HTTP2 fingerprint, which the plain http tier can't fake even though it sends a Chrome
-# user-agent and client hints (device identity). Here the sec-fetch-* headers that only a browser's own network stack
-# adds (real Chrome, and curl_cffi's Chrome profile) stand in for that fingerprint.
+# ---- bot-guarded endpoints (for the impersonate tier) ------------------------ A real site checks the
+# TLS/HTTP2 fingerprint, which the plain http tier can't fake even though it sends a Chrome user-agent and
+# client hints (device identity). Here the sec-fetch-* headers that only a browser's own network stack adds
+# (real Chrome, and curl_cffi's Chrome profile) stand in for that fingerprint.
 
 
 def looks_like_browser(request: Request) -> bool:

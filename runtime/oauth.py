@@ -1,10 +1,10 @@
-"""OAuth for apps that can't send our API key (regular Claude: web, desktop, phone). The MCP SDK serves the OAuth
-endpoints (/.well-known/..., /register, /authorize, /token, /revoke); this is the provider behind them.
-
-Flow: Claude registers itself (Dynamic Client Registration), sends the person to /authorize, which we redirect to our
-sign-in page (/oauth/login?request=...). Once they sign in (password, API key, or a new account with the invite
-code), we redirect back to Claude with a one-time code, which Claude exchanges for an access token (1 hour) and a
-refresh token. Refresh tokens rotate on every use and a sign-in lasts 30 days at most (DECISIONS.md L11).
+"""OAuth for apps that can't send our API key (regular Claude: web, desktop, phone). The MCP SDK serves the
+OAuth endpoints (/.well-known/..., /register, /authorize, /token, /revoke); this is the provider behind them.
+ Flow: Claude registers itself (Dynamic Client Registration), sends the person to /authorize, which we
+redirect to our sign-in page (/oauth/login?request=...). Once they sign in (password, API key, or a new
+account with the invite code), we redirect back to Claude with a one-time code, which Claude exchanges for an
+access token (1 hour) and a refresh token. Refresh tokens rotate on every use and a sign-in lasts 30 days at
+most (DECISIONS.md L11).
 
 Tokens, codes and account-page sessions are stored as SHA-256 hashes only.
 """
@@ -107,7 +107,9 @@ class OAuth:
     # ---- clients (Dynamic Client Registration) -------------------------------------------------------
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        row = self._conn.execute("SELECT info FROM oauth_clients WHERE client_id = ?", (client_id,)).fetchone()
+        row = self._conn.execute(
+            "SELECT info FROM oauth_clients WHERE client_id = ?", (client_id,)
+        ).fetchone()
         return OAuthClientInformationFull.model_validate_json(row[0]) if row else None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
@@ -137,8 +139,15 @@ class OAuth:
         code = secrets.token_urlsafe(32)
         with self._lock:
             self._conn.execute(
-                "INSERT INTO oauth_codes (code_hash, client_id, user, params, expires_at) VALUES (?, ?, ?, ?, ?)",
-                (_hash(code), request.client.client_id, user, request.params.model_dump_json(), time.time() + CODE_TTL_S),
+                "INSERT INTO oauth_codes (code_hash, client_id, user, params, expires_at) VALUES (?, ?, ?, "
+                "?, ?)",
+                (
+                    _hash(code),
+                    request.client.client_id,
+                    user,
+                    request.params.model_dump_json(),
+                    time.time() + CODE_TTL_S,
+                ),
             )
         return construct_redirect_uri(str(request.params.redirect_uri), code=code, state=request.params.state)
 
@@ -159,7 +168,8 @@ class OAuth:
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
         row = self._conn.execute(
-            "SELECT client_id, user, params, expires_at FROM oauth_codes WHERE code_hash = ?", (_hash(authorization_code),)
+            "SELECT client_id, user, params, expires_at FROM oauth_codes WHERE code_hash = ?",
+            (_hash(authorization_code),),
         ).fetchone()
         if row is None or row[0] != client.client_id:
             return None
@@ -180,19 +190,32 @@ class OAuth:
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
         with self._lock:
-            cur = self._conn.execute("DELETE FROM oauth_codes WHERE code_hash = ?", (_hash(authorization_code.code),))
+            cur = self._conn.execute(
+                "DELETE FROM oauth_codes WHERE code_hash = ?", (_hash(authorization_code.code),)
+            )
         if cur.rowcount == 0:  # used already (one-time)
             raise TokenError("invalid_grant", "authorization code already used")
         assert authorization_code.subject is not None
         return self._issue(
-            client.client_id, authorization_code.subject, authorization_code.scopes, authorization_code.resource,
-            family=secrets.token_hex(12), signed_in=time.time(),
+            client.client_id,
+            authorization_code.subject,
+            authorization_code.scopes,
+            authorization_code.resource,
+            family=secrets.token_hex(12),
+            signed_in=time.time(),
         )
 
     # ---- tokens ----------------------------------------------------------------------------------------
 
     def _issue(
-        self, client_id: str, user: str, scopes: list[str], resource: str | None, *, family: str, signed_in: float
+        self,
+        client_id: str,
+        user: str,
+        scopes: list[str],
+        resource: str | None,
+        *,
+        family: str,
+        signed_in: float,
     ) -> OAuthToken:
         now = time.time()
         access, refresh = "spat_" + secrets.token_urlsafe(32), "sprt_" + secrets.token_urlsafe(32)
@@ -203,12 +226,26 @@ class OAuth:
         with self._lock:
             for token_hash, kind, expires in rows:
                 self._conn.execute(
-                    "INSERT INTO oauth_tokens (token_hash, kind, client_id, user, scopes, resource, expires_at, family, "
+                    "INSERT INTO oauth_tokens (token_hash, kind, client_id, user, scopes, resource, "
+                    "expires_at, family, "
                     "signed_in) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (token_hash, kind, client_id, user, json.dumps(scopes), resource, expires, family, signed_in),
+                    (
+                        token_hash,
+                        kind,
+                        client_id,
+                        user,
+                        json.dumps(scopes),
+                        resource,
+                        expires,
+                        family,
+                        signed_in,
+                    ),
                 )
         return OAuthToken(
-            access_token=access, expires_in=ACCESS_TTL_S, refresh_token=refresh, scope=" ".join(scopes) or None
+            access_token=access,
+            expires_in=ACCESS_TTL_S,
+            refresh_token=refresh,
+            scope=" ".join(scopes) or None,
         )
 
     def _token(self, token: str, kind: str) -> sqlite3.Row | None:
@@ -220,13 +257,19 @@ class OAuth:
         ).fetchone()
         return row
 
-    async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> RefreshToken | None:
+    async def load_refresh_token(
+        self, client: OAuthClientInformationFull, refresh_token: str
+    ) -> RefreshToken | None:
         row = self._token(refresh_token, "refresh")
         if row is None or row["client_id"] != client.client_id:
             return None
         return RefreshToken(
-            token=refresh_token, client_id=row["client_id"], scopes=json.loads(row["scopes"]),
-            expires_at=int(row["expires_at"]), resource=row["resource"], subject=row["user"],
+            token=refresh_token,
+            client_id=row["client_id"],
+            scopes=json.loads(row["scopes"]),
+            expires_at=int(row["expires_at"]),
+            resource=row["resource"],
+            subject=row["user"],
         )
 
     async def exchange_refresh_token(
@@ -236,10 +279,16 @@ class OAuth:
         if row is None:
             raise TokenError("invalid_grant", "refresh token is no longer valid")
         with self._lock:  # rotate: the old refresh token is spent
-            self._conn.execute("UPDATE oauth_tokens SET revoked = 1 WHERE token_hash = ?", (_hash(refresh_token.token),))
+            self._conn.execute(
+                "UPDATE oauth_tokens SET revoked = 1 WHERE token_hash = ?", (_hash(refresh_token.token),)
+            )
         return self._issue(
-            client.client_id, row["user"], scopes or json.loads(row["scopes"]), row["resource"],
-            family=row["family"], signed_in=float(row["signed_in"]),
+            client.client_id,
+            row["user"],
+            scopes or json.loads(row["scopes"]),
+            row["resource"],
+            family=row["family"],
+            signed_in=float(row["signed_in"]),
         )
 
     async def load_access_token(self, token: str) -> AccessToken | None:
@@ -247,13 +296,19 @@ class OAuth:
         if row is None:
             return None
         return AccessToken(
-            token=token, client_id=row["client_id"], scopes=json.loads(row["scopes"]),
-            expires_at=int(row["expires_at"]), resource=row["resource"], subject=row["user"],
+            token=token,
+            client_id=row["client_id"],
+            scopes=json.loads(row["scopes"]),
+            expires_at=int(row["expires_at"]),
+            resource=row["resource"],
+            subject=row["user"],
         )
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         """Revoking either token ends the whole sign-in (its access and refresh tokens)."""
-        row = self._conn.execute("SELECT family FROM oauth_tokens WHERE token_hash = ?", (_hash(token.token),)).fetchone()
+        row = self._conn.execute(
+            "SELECT family FROM oauth_tokens WHERE token_hash = ?", (_hash(token.token),)
+        ).fetchone()
         if row is not None:
             with self._lock:
                 self._conn.execute("UPDATE oauth_tokens SET revoked = 1 WHERE family = ?", (row[0],))
@@ -272,29 +327,31 @@ class OAuth:
     def apps(self, user: str) -> list[dict[str, Any]]:
         """Apps signed in as this user (a live refresh token), one entry per app."""
         rows = self._conn.execute(
-            "SELECT t.client_id, min(t.signed_in), max(t.expires_at), c.info FROM oauth_tokens t "
-            "LEFT JOIN oauth_clients c ON c.client_id = t.client_id "
-            "WHERE t.user = ? AND t.kind = 'refresh' AND t.revoked = 0 AND t.expires_at > ? GROUP BY t.client_id "
-            "ORDER BY min(t.signed_in) DESC",
+            "SELECT t.client_id, min(t.signed_in), max(t.expires_at), c.info FROM oauth_tokens t LEFT JOIN "
+            "oauth_clients c ON c.client_id = t.client_id WHERE t.user = ? AND t.kind = 'refresh' AND "
+            "t.revoked = 0 AND t.expires_at > ? GROUP BY t.client_id ORDER BY min(t.signed_in) DESC",
             (user, time.time()),
         ).fetchall()
         out = []
         for client_id, signed_in, expires, info in rows:
             client = OAuthClientInformationFull.model_validate_json(info) if info else None
             name = client.client_name if client else None
-            out.append({
-                "client_id": client_id,
-                "name": name or "An app",
-                "where": _where(client),
-                "signed_in": signed_in,
-                "expires_at": expires,
-            })
+            out.append(
+                {
+                    "client_id": client_id,
+                    "name": name or "An app",
+                    "where": _where(client),
+                    "signed_in": signed_in,
+                    "expires_at": expires,
+                }
+            )
         return out
 
     def revoke_app(self, user: str, client_id: str) -> int:
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE oauth_tokens SET revoked = 1 WHERE user = ? AND client_id = ? AND revoked = 0", (user, client_id)
+                "UPDATE oauth_tokens SET revoked = 1 WHERE user = ? AND client_id = ? AND revoked = 0",
+                (user, client_id),
             )
         return cur.rowcount
 
@@ -314,7 +371,8 @@ class OAuth:
         if not token:
             return None
         row = self._conn.execute(
-            "SELECT user FROM account_sessions WHERE token_hash = ? AND expires_at > ?", (_hash(token), time.time())
+            "SELECT user FROM account_sessions WHERE token_hash = ? AND expires_at > ?",
+            (_hash(token), time.time()),
         ).fetchone()
         return str(row[0]) if row else None
 

@@ -1,8 +1,7 @@
 """Sign-in for apps that can't send our API key (regular Claude), and the account page.
-
-Each test walks the flow regular Claude uses: find the sign-in server from the 401, register (Dynamic Client
-Registration), send the person to /authorize -> our sign-in page, swap the one-time code for tokens (PKCE), call
-tools as that person, refresh.
+ Each test walks the flow regular Claude uses: find the sign-in server from the 401, register (Dynamic Client
+Registration), send the person to /authorize -> our sign-in page, swap the one-time code for tokens (PKCE),
+call tools as that person, refresh.
 """
 
 from __future__ import annotations
@@ -97,20 +96,34 @@ async def register(http: httpx.AsyncClient, base: str) -> App:
     assert resource["resource"].rstrip("/") == f"{base}/mcp"
     issuer = resource["authorization_servers"][0].rstrip("/")
     metadata = (await http.get(f"{issuer}/.well-known/oauth-authorization-server")).json()
-    reg = await http.post(metadata["registration_endpoint"], json={
-        "redirect_uris": [CALLBACK], "client_name": "Claude", "token_endpoint_auth_method": "none",
-        "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"],
-    })
+    reg = await http.post(
+        metadata["registration_endpoint"],
+        json={
+            "redirect_uris": [CALLBACK],
+            "client_name": "Claude",
+            "token_endpoint_auth_method": "none",
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+        },
+    )
     assert reg.status_code == 201, reg.text
     return App(reg.json()["client_id"], metadata)
 
 
 async def start(http: httpx.AsyncClient, app: App, challenge: str, base: str) -> str:
     """/authorize -> our sign-in page. Returns the sign-in request id."""
-    resp = await http.get(app.metadata["authorization_endpoint"], params={
-        "response_type": "code", "client_id": app.client_id, "redirect_uri": CALLBACK, "state": "st-1",
-        "code_challenge": challenge, "code_challenge_method": "S256", "resource": f"{base}/mcp",
-    })
+    resp = await http.get(
+        app.metadata["authorization_endpoint"],
+        params={
+            "response_type": "code",
+            "client_id": app.client_id,
+            "redirect_uri": CALLBACK,
+            "state": "st-1",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "resource": f"{base}/mcp",
+        },
+    )
     assert resp.status_code == 302, resp.text
     location = resp.headers["location"]
     assert location.startswith(f"{base}/oauth/login?request=")
@@ -131,10 +144,16 @@ async def code_from(resp: httpx.Response) -> str:
 
 
 async def tokens(http: httpx.AsyncClient, app: App, code: str, verifier: str) -> httpx.Response:
-    return await http.post(app.metadata["token_endpoint"], data={
-        "grant_type": "authorization_code", "code": code, "redirect_uri": CALLBACK,
-        "client_id": app.client_id, "code_verifier": verifier,
-    })
+    return await http.post(
+        app.metadata["token_endpoint"],
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": CALLBACK,
+            "client_id": app.client_id,
+            "code_verifier": verifier,
+        },
+    )
 
 
 async def connect_app(env: Env, http: httpx.AsyncClient, **form: str) -> dict[str, Any]:
@@ -150,15 +169,19 @@ async def connect_app(env: Env, http: httpx.AsyncClient, **form: str) -> dict[st
     return out
 
 
-# ---- the flow -----------------------------------------------------------------------------------------------
+# ---- the flow ----------------------------------------------------------------------------------------------
 
 
-async def test_regular_claude_connects_and_acts_as_the_person(env: Env, caplog: pytest.LogCaptureFixture) -> None:
+async def test_regular_claude_connects_and_acts_as_the_person(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
     async with httpx.AsyncClient(follow_redirects=False) as http:
         with caplog.at_level(logging.DEBUG, logger="runtime"):
             got = await connect_app(env, http, action="password", login="alice", password=PASSWORD)
     assert got["token_type"] == "Bearer" and got["expires_in"] == 3600 and got["refresh_token"]
-    env.store.put("alice", DOMAIN, env.provider, {"sid": VALID_SID, "csrftoken": CSRF})  # only alice is signed in
+    env.store.put(
+        "alice", DOMAIN, env.provider, {"sid": VALID_SID, "csrftoken": CSRF}
+    )  # only alice is signed in
     async with connect_as(env.base, got["access_token"]) as client:
         assert envelope(await client.call_tool(*act("list_orders")))["status"] == "SUCCESS"
     async with connect_as(env.base, API_KEY) as client:  # user default: not alice
@@ -172,7 +195,9 @@ async def test_regular_claude_connects_and_acts_as_the_person(env: Env, caplog: 
 
 async def test_sign_in_with_email_or_an_api_key(env: Env) -> None:
     async with httpx.AsyncClient(follow_redirects=False) as http:
-        by_email = await connect_app(env, http, action="password", login="Alice@Example.com", password=PASSWORD)
+        by_email = await connect_app(
+            env, http, action="password", login="Alice@Example.com", password=PASSWORD
+        )
         by_env_key = await connect_app(env, http, action="key", key=API_KEY)
     assert env.oauth.user_for_access_token(by_email["access_token"]) == "alice"
     assert env.oauth.user_for_access_token(by_env_key["access_token"]) == "default"
@@ -181,7 +206,13 @@ async def test_sign_in_with_email_or_an_api_key(env: Env) -> None:
 async def test_create_an_account_on_the_sign_in_page(env: Env) -> None:
     async with httpx.AsyncClient(follow_redirects=False) as http:
         got = await connect_app(
-            env, http, action="signup", code=CODE, name="bob", email="bob@example.com", password="bob-password1"
+            env,
+            http,
+            action="signup",
+            code=CODE,
+            name="bob",
+            email="bob@example.com",
+            password="bob-password1",
         )
     assert env.oauth.user_for_access_token(got["access_token"]) == "bob"
     assert env.keys.check_login("bob", "bob-password1") == "bob"
@@ -191,17 +222,31 @@ async def test_wrong_details_are_refused_and_guessing_is_slowed_down(env: Env) -
     async with httpx.AsyncClient(follow_redirects=False) as http:
         app = await register(http, env.base)
         request_id = await start(http, app, pkce()[1], env.base)
-        wrong = await sign_in(http, env.base, request_id, action="password", login="alice", password="nope-nope")
+        wrong = await sign_in(
+            http, env.base, request_id, action="password", login="alice", password="nope-nope"
+        )
         assert wrong.status_code == 401 and "don't match" in html.unescape(wrong.text)
         assert "location" not in wrong.headers
         bad_key = await sign_in(http, env.base, request_id, action="key", key="spider_made_up")
         assert bad_key.status_code == 401
-        bad_code = await sign_in(http, env.base, request_id, action="signup", code="x", name="eve",
-                                 email="e@example.com", password="eve-password1")
+        bad_code = await sign_in(
+            http,
+            env.base,
+            request_id,
+            action="signup",
+            code="x",
+            name="eve",
+            email="e@example.com",
+            password="eve-password1",
+        )
         assert bad_code.status_code == 403 and env.keys.find("eve") is None
         for _ in range(7):
-            await sign_in(http, env.base, request_id, action="password", login="alice", password="still-wrong")
-        blocked = await sign_in(http, env.base, request_id, action="password", login="alice", password=PASSWORD)
+            await sign_in(
+                http, env.base, request_id, action="password", login="alice", password="still-wrong"
+            )
+        blocked = await sign_in(
+            http, env.base, request_id, action="password", login="alice", password=PASSWORD
+        )
         assert blocked.status_code == 429  # even the right password, for a while
 
 
@@ -218,8 +263,9 @@ async def test_codes_are_single_use_and_bound_to_the_verifier(env: Env) -> None:
         app = await register(http, env.base)
         verifier, challenge = pkce()
         request_id = await start(http, app, challenge, env.base)
-        code = await code_from(await sign_in(http, env.base, request_id, action="password", login="alice",
-                                             password=PASSWORD))
+        code = await code_from(
+            await sign_in(http, env.base, request_id, action="password", login="alice", password=PASSWORD)
+        )
         assert (await tokens(http, app, code, "a-different-verifier-" + "x" * 30)).status_code == 400
         assert (await tokens(http, app, code, verifier)).status_code == 200
         assert (await tokens(http, app, code, verifier)).status_code == 400  # used
@@ -232,8 +278,10 @@ async def test_refresh_rotates_and_a_sign_in_lasts_30_days(env: Env, monkeypatch
         got = await connect_app(env, http, action="password", login="alice", password=PASSWORD)
 
         async def refresh(token: str) -> httpx.Response:
-            return await http.post(got["metadata"]["token_endpoint"], data={
-                "grant_type": "refresh_token", "refresh_token": token, "client_id": got["client_id"]})
+            return await http.post(
+                got["metadata"]["token_endpoint"],
+                data={"grant_type": "refresh_token", "refresh_token": token, "client_id": got["client_id"]},
+            )
 
         renewed = await refresh(got["refresh_token"])
         assert renewed.status_code == 200, renewed.text
@@ -242,16 +290,19 @@ async def test_refresh_rotates_and_a_sign_in_lasts_30_days(env: Env, monkeypatch
 
         real = oauth_module.time.time
         monkeypatch.setattr(oauth_module.time, "time", lambda: real() + 31 * 86400)
-        assert (await refresh(renewed.json()["refresh_token"])).status_code == 400  # signed in over 30 days ago
+        assert (
+            await refresh(renewed.json()["refresh_token"])
+        ).status_code == 400  # signed in over 30 days ago
         assert env.oauth.user_for_access_token(renewed.json()["access_token"]) is None
 
 
-# ---- the account page ---------------------------------------------------------------------------------------
+# ---- the account page --------------------------------------------------------------------------------------
 
 
 async def account_session(env: Env, http: httpx.AsyncClient) -> None:
-    resp = await http.post(f"{env.base}/account/login", data={"action": "password", "login": "alice",
-                                                               "password": PASSWORD})
+    resp = await http.post(
+        f"{env.base}/account/login", data={"action": "password", "login": "alice", "password": PASSWORD}
+    )
     assert resp.status_code == 302 and resp.headers["location"] == "/account"
 
 
@@ -305,6 +356,9 @@ async def test_other_sites_cant_post_to_the_account_page(env: Env) -> None:
     env.store.put("alice", DOMAIN, env.provider, {"sid": VALID_SID})
     async with httpx.AsyncClient(follow_redirects=False) as http:
         await account_session(env, http)
-        evil = await http.post(f"{env.base}/account/disconnect", data={"domain": DOMAIN},
-                               headers={"origin": "https://evil.example"})
+        evil = await http.post(
+            f"{env.base}/account/disconnect",
+            data={"domain": DOMAIN},
+            headers={"origin": "https://evil.example"},
+        )
     assert evil.status_code == 403 and env.store.get("alice", DOMAIN, env.provider) is not None

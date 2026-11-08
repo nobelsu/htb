@@ -43,7 +43,10 @@ def form_page(error: str = "", name: str = "", email: str = "", status: int = 20
         + "</form>"
     )
     return page(
-        title="Create account", spine="Join", body=body, status=status,
+        title="Create account",
+        spine="Join",
+        body=body,
+        status=status,
         nav=['<a href="/account/login">Sign in</a>'],
     )
 
@@ -53,7 +56,8 @@ def copy_row(title: str, shown: str, value: str, label: str) -> str:
         f'<div class="row"><span class="big">{esc(title)}</span>'
         f'<span style="display:flex;align-items:center;gap:16px;min-width:0;max-width:440px">'
         f'<code class="mono">{esc(shown)}</code>'
-        f'<button class="sq" type="button" data-copy="{esc(value)}" aria-label="{esc(label)}">{icon("copy", 22)}</button>'
+        f'<button class="sq" type="button" data-copy="{esc(value)}" '
+        f'aria-label="{esc(label)}">{icon("copy", 22)}</button>'
         "</span></div>"
     )
 
@@ -64,7 +68,9 @@ def done_page(name: str, base: str, key: str) -> Response:
     body = (
         f'<h1 class="title">{esc(name)}</h1><div class="rule"></div>'
         + copy_row("Claude", url.split("://", 1)[-1], url, "Copy the connector URL")
-        + copy_row("Claude Code", "claude mcp add", command, "Copy the Claude Code command, which holds your key")
+        + copy_row(
+            "Claude Code", "claude mcp add", command, "Copy the Claude Code command, which holds your key"
+        )
         + bar_link("Go to your account", "/account")
     )
     return page(title="Account created", spine="Ready", body=body, script=COPY_SCRIPT)

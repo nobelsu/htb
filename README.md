@@ -1,121 +1,211 @@
 # spider
 
-Hack the Burgh 2026: turn websites into agent-callable actions ("cards").
-Spec: `CARD_SPEC.md` (v0.4, frozen). Runtime judgement calls: `DECISIONS.md`.
-Mapper design: `docs/mapper-design.md`.
+spider turns websites into actions an AI agent can call directly, without driving a browser.
+
+A site's own pages already call the site's own internal endpoints. spider watches a task being done once in a
+real browser, works out which of those requests is the action, and writes it down as a **card**: the request to
+send, where the inputs go, and where the results are in the answer. Agents then call
+`run_action("linkedin.com", "search_companies", {"query": "robotics"})` over MCP and get clean JSON back in
+about a second, signed in as their user.
+
+Built for Hack the Burgh 2026 by Nobel Suhendra and Wei Wei.
+
+## How it works
+
+```
+agent (Claude) --MCP--> gateway --> executor --> the site's own HTTP endpoints
+                          |            |
+                          |            +-- the user's sign-in (encrypted), their browser identity,
+                          |                residential proxy, tiers: plain HTTP, browser fingerprint, real Chrome
+                          |
+                          +-- registry: cards, versioned per site (SQLite)
+                          +-- map jobs: flowmap records with Claude, replays, infers, checks, saves
+                          +-- heal jobs: broken action, replay its recording, re-map, new version
+```
+
+1. **Map.** Claude (or a person) does the task once in a browser. flowmap replays it with planted marker values,
+   sees which request carries the input and which response carries the results, and confirms it by replaying
+   with that request blocked. The model only does the task and names things; which request is the action is
+   decided from the evidence.
+2. **Save.** One card per site (`CARD_SPEC.md`), shared by every user. Example values and fixed request values
+   are checked for personal data before a card is saved.
+3. **Run.** Agents find actions with `find_actions` and call them with `run_action`. Each call uses the user's
+   own sign-in, and climbs from plain HTTP to a real Chrome tab only when the site needs it.
+4. **Heal.** When a site changes and an action breaks, spider replays that action's recording, re-maps it and
+   saves a new card version while the call waits or retries.
+5. **Writes are held back while mapping.** When a write (follow, send, add to cart) is mapped, the committing
+   request is held in the browser so the site never gets it. Saved writes always need the user's confirmation.
+
+## Repository
 
 | Path | What | Owner |
 |---|---|---|
-| `CARD_SPEC.md`, `action_map.example.json` | Frozen card spec and its example card | shared |
-| `schema/` | Card and envelope models, `validate_card()` | Nobel |
-| `runtime/` | Executor, registry, MCP gateway | Nobel |
+| `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card | shared |
+| `schema/` | Card and result models, `validate_card()`, placeholders | Nobel |
+| `runtime/` | Executor, registry, MCP gateway, sign-in, healing, map jobs, web pages | Nobel |
+| `runtime/browser/` | The browser tier (real Chrome tabs, one profile per sign-in) | Nobel |
+| `runtime/neko/` | Remote sign-in browsers (Neko in Docker, streamed over WebRTC) | Nobel |
+| `flowmap/` | The mapper the product runs: record, replay, infer, assemble, heal, explore | Nobel |
+| `mapper/` | Wei Wei's mapper: capture pipeline and explorer | Wei Wei |
 | `tools/check_card.py` | Standalone card checker | Nobel |
-| `tests/` (except `tests/mapper/`) | Runtime tests and the fixture shop | Nobel |
-| `mapper/`, `tests/mapper/`, `docs/mapper-design.md` | Capture and capture → card pipeline, its tests and fixture site | WeiWei |
+| `tests/` | Tests; `tests/fixture_site/` is the demo shop, `tests/flowmap/site.py` the bookshop | both |
+| `flows/bookshop.test/` | Example flowmap recordings | Nobel |
+| `docs/` | Mapper designs and the pitch context | both |
 
-## Setup
+`DECISIONS.md` records every judgement call made while building (L-series runtime and sign-in, M-series mapper).
+
+## Quick start
+
+Needs Python 3.12 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync
-uv run playwright install chromium   # browser for mapper captures
-uv run pytest
-cp .env.example .env   # then set GATEWAY_API_KEY and CONFIRMATION_SECRET
+uv sync --extra llm
+uv run playwright install chromium
+cp .env.example .env
 ```
 
-## Runtime
-
-Run the fixture shop and the gateway (two terminals):
+Set `GATEWAY_API_KEY` and `CONFIRMATION_SECRET` in `.env`, and `SESSION_KEY`
+(`uv run python -m runtime.session_store` prints one). Then run the demo shop and the gateway, in two terminals:
 
 ```bash
 uv run uvicorn tests.fixture_site.app:app --port 8900
+```
+
+```bash
 uv run python -m runtime.gateway --load tests/fixture_site.json
 ```
 
-The MCP endpoint is `http://127.0.0.1:8765/mcp` (Streamable HTTP, `Authorization: Bearer <key>`).
-
-### Pages
-
-The gateway serves its own pages in one design (`runtime/ui.py`): home `/`, sign-up `/signup`, sign-in
-`/account/login`, the account page `/account` (and `/account/password`), Claude's sign-in `/oauth/login`, and the
-website sign-in `/connect/<token>`. `PRODUCT_NAME` sets the name shown on them.
-
-### Regular Claude (web, desktop, phone)
-
-In Claude: Customize → Connectors → Add custom connector, URL `<PUBLIC_BASE_URL>/mcp`, then Connect. Claude registers
-itself and opens our sign-in page (password, an API key, or a new account with the invite code). Your account page
-is `<PUBLIC_BASE_URL>/account`: sign-ins your agent is waiting for, your sites, connected apps, and your API key.
-`PUBLIC_BASE_URL` must be the https address people reach (e.g. the ngrok domain).
-
-### Users and API keys
-
-Every key belongs to one user, and every tool call acts as that user: their own sign-ins, browser profiles, login
-links and device identities. `GATEWAY_API_KEY` from `.env` is user `default`. Everyone else gets their own key:
-
-- **Sign-up page:** set `SIGNUP_CODE` in `.env` and share it; people open `<PUBLIC_BASE_URL>/signup`, enter the code,
-  a name and an email, and get their key once with the `claude mcp add ...` line to paste. Wrong codes are rate
-  limited (10 per 10 minutes per address). Empty `SIGNUP_CODE` = no sign-up page.
-- **Command line:** `uv run python -m runtime.keys add alice --email alice@example.com` (also `list`, `reissue`,
-  `revoke`). Keys are shown once; only their SHA-256 is stored (`api_users` table in `runtime.db`).
-`POST http://127.0.0.1:8900/_admin/break` moves one fixture endpoint, `/_admin/reset` restores it.
-
-The mapper imports `schema` (`validate_card`, `Card`, `Envelope`) and saves through `runtime.registry.Registry`.
-
-## Mapper
+Add it to Claude Code:
 
 ```bash
-uv run python -m mapper capture <start_url> --task NAME --run m1|m2|real|page2 [--marker query=zqxv8841]
-uv run python -m mapper map captures/<domain>/
-uv run python -m mapper validate path/to/card.json
-uv run python -m mapper heal captures/<domain>/ --save   # site changed: replay all recordings, re-map, save
+claude mcp add --transport http spider http://127.0.0.1:8765/mcp --header "Authorization: Bearer <GATEWAY_API_KEY>"
 ```
 
-Captures, HAR files, `state.json` and `.env` hold live login sessions: never commit them.
+Then ask Claude: "use spider to search the fixture.test shop for lamps".
+
+The demo shop (`tests/fixture_site/`) has 21 actions covering every runtime case: reads, writes that need
+confirmation, rate limits, bot challenges, browser-only endpoints, and a sign-in (`demo` / `demo-password`).
+`POST http://127.0.0.1:8900/_admin/break` moves one endpoint so you can watch an action heal;
+`/_admin/reset` puts it back.
+
+## MCP tools
+
+The endpoint is `<PUBLIC_BASE_URL>/mcp` (Streamable HTTP, `Authorization: Bearer <key>`, or OAuth for regular
+Claude).
+
+| Tool | What it does |
+|---|---|
+| `find_actions` | Search the registry for actions that fit a task ("search companies on linkedin.com") |
+| `run_action` | Run one action with inputs; writes return a confirmation id first |
+| `request_map` | Ask for a site, or one named action on it, to be set up when nothing fits |
+| `map_status` | Progress of a map job |
+| `heal_status` | Progress of a heal job after a `PAGE_CHANGED` result |
+| `start_connection` | Get a sign-in link for a site that needs the user's login |
+| `poll_connection` | Wait until the user has signed in |
+| `connection_status` | Which sites the user is signed in to |
+| `disconnect` | Delete a stored sign-in and its browser profile |
+
+Every result is one envelope (`schema/envelope.py`): a status (`SUCCESS`, `EMPTY`, `NEEDS_CONFIRMATION`,
+`AUTH_EXPIRED`, `PAGE_CHANGED`, `BLOCKED`, ...), the data, and what to do next.
+
+## Using spider from regular Claude (web, desktop, phone)
+
+In Claude: Customize, Connectors, Add custom connector, URL `<PUBLIC_BASE_URL>/mcp`, then Connect. Claude registers
+itself and opens spider's sign-in page (password, an API key, or a new account with the invite code).
+`PUBLIC_BASE_URL` must be the https address people reach, for example an ngrok domain.
+
+The gateway serves its own pages (`runtime/ui.py`): home `/`, sign-up `/signup`, sign-in `/account/login`, the
+account page `/account` (waiting sign-ins, sites, connected apps, API key), Claude's sign-in `/oauth/login`, and
+the website sign-in `/connect/<token>`. `PRODUCT_NAME` sets the name shown on them.
+
+## Users and keys
+
+Every key belongs to one user, and every call acts as that user: their own sign-ins, browser profiles and device
+identity. `GATEWAY_API_KEY` is user `default`. Everyone else gets their own key:
+
+- **Sign-up page:** set `SIGNUP_CODE` and share it; people open `/signup`, enter the code, a name and an email,
+  and get their key once with the `claude mcp add` line. Wrong codes are rate limited.
+- **Command line:** `uv run python -m runtime.keys add alice --email alice@example.com` (also `list`, `reissue`,
+  `revoke`, `set-password`). Keys are shown once; only their SHA-256 is stored.
+
+## Setting up a new site
+
+### From an agent (map jobs)
+
+With `MAPPER=flowmap` and `ANTHROPIC_API_KEY` set, an agent that finds nothing for a site calls `request_map`.
+The gateway maps it on the server: one named action ("search products on amazon.co.uk") in a few minutes, or the
+whole site's main reads. The account page shows the job's progress; `map_status` reports it to the agent. A site
+that needs a sign-in pauses the job and returns a sign-in link, then carries on.
+
+A specific change ("follow this company") goes through `request_map` with `write: true`. The click that would
+commit it is held back, and before the write is saved, its steps up to the send are tried on each tier to find
+one that works.
+
+`MAP_ALLOW_LOCAL=1` also allows sites on this machine (the bookshop test site:
+`uv run uvicorn tests.flowmap.site:app --port 8911`).
+
+### From the command line (flowmap)
+
+```bash
+# have Claude record an action once (or drop --agent and do it yourself in the browser that opens)
+uv run python -m flowmap record https://example.com/ --action search_things \
+  --agent "search for the query" --input query=lamp --example query=chair
+
+uv run python -m flowmap map example.com            # replay, infer, check, save to the registry
+uv run python -m flowmap show example.com           # the card and recent heal timings
+uv run python -m flowmap heal example.com search_things
+```
+
+Full reference: `docs/flowmap.md`. Wei Wei's mapper (`python -m mapper capture | map | heal`) is described in
+`docs/mapper-design.md`.
 
 ## Healing
 
-When an action returns `PAGE_CHANGED`, the runtime queues a heal job, pre-checks it (a block or an expired login
-cancels it), then asks the mapper to re-record just the broken action and re-map the site:
+When an action returns `PAGE_CHANGED`, the runtime queues a heal job, checks first that the cause isn't a block
+or an expired sign-in, then asks the remapper to re-map just the broken action. The new card is validated against
+the action's `examples` and saved as a new version. `REMAPPER` picks the remapper:
 
-```python
-class Remapper(Protocol):  # runtime/healing.py
-    async def remap(self, card: Card, actions: list[str], reason: str) -> Card | dict: ...
+- `flowmap`: replays the action's recording from `FLOWS_DIR/<domain>/<action>.json`.
+- `mapper`: Wei Wei's mapper, replaying recordings from `CAPTURES_DIR/<domain>/`.
+- `tests.fixture_site.remapper:FixtureRemapper`: a stand-in for the demo shop.
+
+## Sign-in and the browser tier
+
+Sites with `connect_providers` need the user's sign-in once. The agent calls `start_connection` and shows the user
+a link. There the user signs in to the real site in a private browser in a short-lived Neko container, streamed
+to their screen. spider checks the cookies with the provider's `session_check` and stores them encrypted with
+`SESSION_KEY`; the agent never sees a password or cookie. Cookies the site refreshes are saved back, and the
+sign-in browser's identity (user agent, client hints, language) is presented on every later request.
+
+- **Neko:** needs Docker and `docker pull ghcr.io/m1k1o/neko/chromium:latest`. Hosted: set `NEKO_PUBLIC_IP`, open
+  `NEKO_UDP_PORTS` (UDP and TCP), and add a TURN server in `NEKO_ICE_SERVERS` for strict networks.
+- **Residential proxy (optional):** set `PROXY_URL` to a sticky-session URL with `{session}` where the session id
+  goes. Each sign-in keeps one home IP; public actions go direct.
+- **Browser tier:** installed Chrome (`uv run playwright install --with-deps chrome` on a server); keep
+  `PROFILES_DIR` and the database on persistent storage.
+
+Every setting is described in `.env.example`.
+
+## Tests
+
+```bash
+uv run pytest
+uv run ruff check runtime schema flowmap tools tests --exclude tests/mapper
+uv run ruff format --check runtime schema flowmap tools tests --exclude tests/mapper
 ```
 
-Return the whole proposed card. The runtime validates the changed actions against their `examples` and saves a
-new version (healed writes go live too, listed as unvalidated).
+Tests run in parallel. Those that need Docker, Neko or a Playwright browser skip themselves when it isn't
+installed; two of Wei Wei's mapper tests need `uv sync --extra llm`.
 
-- `REMAPPER=mapper` (the default in `.env.example`) uses WeiWei's mapper (`runtime/mapper_remapper.py`): it replays
-  the broken action's recordings from `CAPTURES_DIR/<domain>/<action>/` in a headless browser, signed in as the
-  user, then re-maps the site. Sites need recordings made with `python -m mapper capture`.
-- `REMAPPER=tests.fixture_site.remapper:FixtureRemapper` is a stand-in for the fixture shop (which has no
-  recordings): break the site, call `get_item`, watch `heal_status`, call again.
+## Security
 
-## Login (connect a site) and the browser tier
+Captures, HAR files, `state.json`, cookies, profiles, `runtime.db` and `.env` hold live sign-ins: they are
+git-ignored and must never be committed. Logs show cookie, csrf and auth header values as `[redacted]`.
 
-Sites with `connect_providers` need the user's login once. The agent calls `start_connection(domain)` and shows the
-user a link. On that page the user clicks **Log in** and signs in to the real site inside a private Chromium in a
-short-lived Neko container, streamed over WebRTC. We watch the browser's cookies, check them with the provider's
-`session_check` and store them encrypted (`SESSION_KEY`); the password never reaches us or the agent. The agent
-calls `poll_connection` straight after showing the link: it waits (up to 45 s per call) and returns as soon as the
-user is signed in, so the agent carries on by itself. `connection_status` reports the state; `disconnect` deletes
-the stored sign-in and the server-side browser profile; a keep-alive marks sessions that have expired.
-Cookies the site refreshes (after successful actions and passing keep-alive checks) are saved back to the encrypted
-sign-in, so sites that rotate their login cookie stay signed in. The login browser's identity (user-agent, client
-hints, language) is saved too, and every tier presents it on that sign-in's later requests; requests with no saved
-identity look like Chrome 152 on Windows.
+## Limits
 
-**Residential proxy (optional).** Set `PROXY_URL` to your provider's sticky-session URL with `{session}` where its
-session id goes. Each sign-in (user + site) gets its own session id, so the login browser and every later request
-for that sign-in leave through the same home IP; public actions go direct. The login browser can't send proxy
-credentials itself, so a small helper inside its container adds them (`runtime/neko/proxy_auth.py`).
-
-Setup:
-- Neko: Docker running, and `docker pull ghcr.io/m1k1o/neko/chromium:latest` (about 2.2 GB). Hosted: set
-  `NEKO_PUBLIC_IP` to the server's public IP, open the `NEKO_UDP_PORTS` range (UDP and TCP), and for users behind
-  strict networks add a TURN server via `NEKO_ICE_SERVERS`. `NEKO_ENABLED=0` turns it off.
-- Browser tier: install Chrome on the server (`uv run playwright install --with-deps chrome`); keep `PROFILES_DIR` and
-  the SQLite file on persistent storage; serve over HTTPS and set `PUBLIC_BASE_URL`.
-
-Fixture shop login for testing: `demo` / `demo-password`. Tests needing Docker/Neko or Playwright's Chromium skip
-themselves when those aren't installed.
-Heal jobs use the mapper automatically with `REMAPPER=mapper`; `python -m mapper heal` still works by hand.
+- Sites that build everything in scripts with no readable request (browser replay) aren't supported.
+- An action is set up from one real example, so a page layout the example didn't show can come back empty.
+- Pages about a single item (a product page) yield one field so far.
+- Writes on real sites are early: the safety path is tested on the demo shop and on LinkedIn.
+- No per-user quotas, response cache or outgoing rate limit yet (`TODO`s in `runtime/executor.py`).

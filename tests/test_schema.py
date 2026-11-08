@@ -182,7 +182,12 @@ def test_coerce_params() -> None:
     specs = card.actions[0].params
     assert coerce_params(specs, {"query": "x"}) == ({"query": "x", "page": 1}, {})
     _, errs = coerce_params(specs, {"page": "2", "extra": 1, "_x": 1})
-    assert errs == {"query": "required", "page": "must be an integer", "extra": "unknown param", "_x": "reserved name"}
+    assert errs == {
+        "query": "required",
+        "page": "must be an integer",
+        "extra": "unknown param",
+        "_x": "reserved name",
+    }
     _, errs = coerce_params(specs, {"query": "x", "page": True})
     assert errs == {"page": "must be an integer"}
 
@@ -191,7 +196,11 @@ def test_input_schema() -> None:
     card = Card.model_validate(EXAMPLE)
     schema = input_schema(card.actions[0].params, requires_confirmation=False)
     assert schema["required"] == ["query"]
-    assert schema["properties"]["page"] == {"type": "integer", "description": "1-based page number", "default": 1}
+    assert schema["properties"]["page"] == {
+        "type": "integer",
+        "description": "1-based page number",
+        "default": 1,
+    }
     follow = input_schema(card.actions[2].params, requires_confirmation=True)
     assert "_confirmation_id" in follow["properties"]
 

@@ -53,7 +53,9 @@ def new_session_key() -> str:
 class EncryptedSessionStore:
     def __init__(self, path: str | Path, key: str) -> None:
         if not key:
-            raise ValueError("SESSION_KEY must be set (generate one with: uv run python -m runtime.session_store)")
+            raise ValueError(
+                "SESSION_KEY must be set (generate one with: uv run python -m runtime.session_store)"
+            )
         self._fernet = Fernet(key.encode())
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
@@ -69,7 +71,12 @@ class EncryptedSessionStore:
         self._conn.close()
 
     def put(
-        self, user: str, domain: str, provider_id: str, cookies: Cookies, identity: BrowserIdentity | None = None
+        self,
+        user: str,
+        domain: str,
+        provider_id: str,
+        cookies: Cookies,
+        identity: BrowserIdentity | None = None,
     ) -> None:
         """A new sign-in: its cookies and the identity of the browser it was made with."""
         blob = self._fernet.encrypt(json.dumps(cookies).encode())
@@ -77,11 +84,11 @@ class EncryptedSessionStore:
         now = _now()
         with self._lock:
             self._conn.execute(
-                "INSERT INTO sessions (user, domain, provider, cookies_enc, status, connected_at, checked_at, "
-                "identity) VALUES (?, ?, ?, ?, 'connected', ?, ?, ?) "
-                "ON CONFLICT (user, domain, provider) DO UPDATE SET cookies_enc = excluded.cookies_enc, "
-                "status = 'connected', connected_at = excluded.connected_at, checked_at = excluded.checked_at, "
-                "identity = excluded.identity",
+                "INSERT INTO sessions (user, domain, provider, cookies_enc, status, connected_at, "
+                "checked_at, identity) VALUES (?, ?, ?, ?, 'connected', ?, ?, ?) ON CONFLICT (user, domain, "
+                "provider) DO UPDATE SET cookies_enc = excluded.cookies_enc, status = 'connected', "
+                "connected_at = excluded.connected_at, checked_at = excluded.checked_at, identity = "
+                "excluded.identity",
                 (user, domain, provider_id, blob, now, now, ident),
             )
 
@@ -119,7 +126,8 @@ class EncryptedSessionStore:
                 return False
             blob = self._fernet.encrypt(json.dumps(after).encode())
             self._conn.execute(
-                "UPDATE sessions SET cookies_enc = ?, checked_at = ? WHERE user = ? AND domain = ? AND provider = ?",
+                "UPDATE sessions SET cookies_enc = ?, checked_at = ? WHERE user = ? AND domain = ? AND "
+                "provider = ?",
                 (blob, _now(), user, domain, provider_id),
             )
             return True
@@ -127,13 +135,15 @@ class EncryptedSessionStore:
     def mark(self, user: str, domain: str, provider_id: str, status: SessionStatus) -> None:
         with self._lock:
             self._conn.execute(
-                "UPDATE sessions SET status = ?, checked_at = ? WHERE user = ? AND domain = ? AND provider = ?",
+                "UPDATE sessions SET status = ?, checked_at = ? WHERE user = ? AND domain = ? AND provider = "
+                "?",
                 (status, _now(), user, domain, provider_id),
             )
 
     def record(self, user: str, domain: str, provider_id: str) -> SessionRecord | None:
         row = self._conn.execute(
-            "SELECT * FROM sessions WHERE user = ? AND domain = ? AND provider = ?", (user, domain, provider_id)
+            "SELECT * FROM sessions WHERE user = ? AND domain = ? AND provider = ?",
+            (user, domain, provider_id),
         ).fetchone()
         return self._to_record(row) if row else None
 
@@ -149,7 +159,8 @@ class EncryptedSessionStore:
     def delete(self, user: str, domain: str, provider_id: str) -> None:
         with self._lock:
             self._conn.execute(
-                "DELETE FROM sessions WHERE user = ? AND domain = ? AND provider = ?", (user, domain, provider_id)
+                "DELETE FROM sessions WHERE user = ? AND domain = ? AND provider = ?",
+                (user, domain, provider_id),
             )
 
     def _to_record(self, row: sqlite3.Row) -> SessionRecord:
@@ -191,7 +202,9 @@ class ChainedSessionStore:
         for store in self.stores:
             if store.get(user, domain, provider_id) is not None:
                 refresh = getattr(store, "refresh", None)
-                return bool(refresh(user, domain, provider_id, before, after)) if refresh is not None else False
+                return (
+                    bool(refresh(user, domain, provider_id, before, after)) if refresh is not None else False
+                )
         return False
 
 

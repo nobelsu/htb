@@ -127,8 +127,8 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "array",
                 "items": ELEMENT,
                 "description": "The results, pointed at as the tree shows them: each result's link (or "
-                "heading) by role and name exactly, in order, up to 10. Empty when the action has no list "
-                "of results.",
+                "heading) by role and name exactly, in order, up to 10. Empty when the action has no list of "
+                "results.",
             },
             "results": {
                 "type": "array",
@@ -293,7 +293,8 @@ PICK_SELECTOR = """  if (!found.length) return {selector: null, missing};
   return {selector: best && best.selector, count: best ? best.count : 0, missing};
 """
 
-COMMON_SELECTOR = """(texts) => {
+COMMON_SELECTOR = (
+    """(texts) => {
   const norm = (s) => (s || "").replace(/\\s+/g, " ").trim();
   const all = [...document.body.querySelectorAll("*")]
     .filter((el) => !el.closest("script,style,noscript,head"));
@@ -313,14 +314,21 @@ COMMON_SELECTOR = """(texts) => {
       found.push(best);
     } else missing.push(t);
   }
-""" + PICK_SELECTOR + "}"
+"""
+    + PICK_SELECTOR
+    + "}"
+)
 
-ELEMENTS_SELECTOR = """(els) => {
+ELEMENTS_SELECTOR = (
+    """(els) => {
   const norm = (s) => (s || "").replace(/\\s+/g, " ").trim();
   const missing = [];
   // A result is a link: point at its link, so its href is the page the result leads to.
   const found = els.filter(Boolean).map((el) => el.closest("a[href]") || el);
-""" + PICK_SELECTOR + "}"
+"""
+    + PICK_SELECTOR
+    + "}"
+)
 
 
 async def elements_selector(page: Any, elements: list[dict[str, Any]]) -> str:
@@ -335,7 +343,8 @@ async def elements_selector(page: Any, elements: list[dict[str, Any]]) -> str:
             missing.append(describe(el))
     if len(missing) > len(elements[:10]) // 2:
         raise AgentError(
-            "these results aren't on the page: " + "; ".join(missing[:5])
+            "these results aren't on the page: "
+            + "; ".join(missing[:5])
             + ". Point at each result as the tree shows it (its role and name, exactly), e.g. its link."
         )
     out = await page.evaluate(ELEMENTS_SELECTOR, handles)

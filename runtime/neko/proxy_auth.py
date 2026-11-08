@@ -1,5 +1,6 @@
 """Local proxy run inside the Neko container: Chromium can't send proxy credentials itself, so it uses this
-(--proxy-server=http://127.0.0.1:PORT), which adds the residential proxy's credentials and passes everything on.
+(--proxy-server=http://127.0.0.1:PORT), which adds the residential proxy's credentials and passes everything
+on.
 Standard library only (it runs on the image's python3).
 
 Usage: proxy_auth.py LISTEN_PORT UPSTREAM_FILE
@@ -37,7 +38,8 @@ async def read_head(reader: asyncio.StreamReader) -> bytes:
 
 
 def with_auth(head: bytes, auth: bytes, close: bool) -> bytes:
-    """The client's request head with our Proxy-Authorization (and, for plain http, Connection: close, so the next
+    """The client's request head with our Proxy-Authorization (and, for plain http, Connection: close, so the
+    next
     request comes on a new connection, which gets credentials too)."""
     lines = head[:-4].split(b"\r\n")
     kept = [lines[0]] + [ln for ln in lines[1:] if not ln.lower().startswith(HOP_HEADERS)]
@@ -63,11 +65,16 @@ def handler(host: str, port: int, auth: bytes):  # type: ignore[no-untyped-def]
     return handle
 
 
-async def serve(listen_port: int, upstream: dict[str, object], host: str = "127.0.0.1") -> asyncio.base_events.Server:
+async def serve(
+    listen_port: int, upstream: dict[str, object], host: str = "127.0.0.1"
+) -> asyncio.base_events.Server:
     user, password = str(upstream.get("username", "")), str(upstream.get("password", ""))
     auth = b"Basic " + base64.b64encode(f"{user}:{password}".encode())
     return await asyncio.start_server(
-        handler(str(upstream["host"]), int(str(upstream["port"])), auth), host, listen_port, limit=HEADER_LIMIT
+        handler(str(upstream["host"]), int(str(upstream["port"])), auth),
+        host,
+        listen_port,
+        limit=HEADER_LIMIT,
     )
 
 

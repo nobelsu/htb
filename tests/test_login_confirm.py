@@ -51,7 +51,9 @@ class FakeNeko:
     async def cleanup_stale(self) -> int:
         return 0
 
-    async def launch(self, token: str, start_url: str, site_urls: list[str], proxy: Any = None) -> FakeSession:
+    async def launch(
+        self, token: str, start_url: str, site_urls: list[str], proxy: Any = None
+    ) -> FakeSession:
         self.proxy = proxy
         return self.sessions.setdefault(token, FakeSession(token))
 
@@ -61,7 +63,9 @@ class FakeNeko:
     async def cookies(self, token: str, base_url: str) -> dict[str, str]:
         return dict(self.cookies_now)
 
-    IDENTITY = BrowserIdentity("Mozilla/5.0 (X11; Linux x86_64) Chrome/155.0.0.0", "155.0.1.2", "Linux", None, "en-US")
+    IDENTITY = BrowserIdentity(
+        "Mozilla/5.0 (X11; Linux x86_64) Chrome/155.0.0.0", "155.0.1.2", "Linux", None, "en-US"
+    )
 
     async def identity(self, token: str) -> BrowserIdentity | None:
         return self.IDENTITY if token in self.sessions else None
@@ -89,12 +93,19 @@ def make_manager(tmp_path: Path, card: dict[str, Any], neko: FakeNeko) -> tuple[
     registry.save(card)
     store = EncryptedSessionStore(db, new_session_key())
     manager = ConnectionManager(
-        registry, store, Executor(store, Confirmer("s")), "http://gw", neko=neko, check_every_s=0.05  # type: ignore[arg-type]
+        registry,
+        store,
+        Executor(store, Confirmer("s")),
+        "http://gw",
+        neko=neko,
+        check_every_s=0.05,  # type: ignore[arg-type]
     )
     return manager, registry
 
 
-async def test_weak_check_waits_for_the_user(tmp_path: Path, fixture_card: dict[str, Any], site_url: str) -> None:
+async def test_weak_check_waits_for_the_user(
+    tmp_path: Path, fixture_card: dict[str, Any], site_url: str
+) -> None:
     neko = FakeNeko()
     manager, registry = make_manager(tmp_path, weak_card(fixture_card), neko)
     token = manager.start("u", DOMAIN)["url"].rsplit("/", 1)[1]
@@ -185,11 +196,15 @@ async def test_signed_in_button_on_the_page(weak_gateway: tuple[str, FakeNeko], 
             assert await page.is_hidden("#viewer")
             assert "inv" in (await page.get_attribute(".wrap", "class") or "")  # the page turns to night
             await browser.close()
-        assert envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "connected"
+        assert (
+            envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "connected"
+        )
         assert envelope(await client.call_tool(*act("list_orders", {})))["status"] == "SUCCESS"
 
 
-async def test_poll_waits_for_the_sign_in(tmp_path: Path, fixture_card: dict[str, Any], site_url: str) -> None:
+async def test_poll_waits_for_the_sign_in(
+    tmp_path: Path, fixture_card: dict[str, Any], site_url: str
+) -> None:
     neko = FakeNeko()
     manager, registry = make_manager(tmp_path, fixture_card, neko)
     token = manager.start("u", DOMAIN)["url"].rsplit("/", 1)[1]
@@ -266,7 +281,9 @@ async def _client_with_elicitation(base: str, on_url: Any) -> Any:
     return http, Client(transport, elicitation_callback=on_url, cache=None)  # type: ignore[arg-type]
 
 
-async def test_client_shows_the_link_and_the_call_waits(strong_gateway: tuple[str, FakeNeko], site_url: str) -> None:
+async def test_client_shows_the_link_and_the_call_waits(
+    strong_gateway: tuple[str, FakeNeko], site_url: str
+) -> None:
     import httpx
     import mcp_types as types
 
@@ -296,7 +313,9 @@ async def test_client_shows_the_link_and_the_call_waits(strong_gateway: tuple[st
         assert envelope(await client.call_tool(*act("list_orders", {})))["status"] == "SUCCESS"
 
 
-async def test_declining_the_link(strong_gateway: tuple[str, FakeNeko], monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_declining_the_link(
+    strong_gateway: tuple[str, FakeNeko], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A person takes a moment to say no: that's a real decline."""
     import mcp_types as types
 
@@ -312,7 +331,9 @@ async def test_declining_the_link(strong_gateway: tuple[str, FakeNeko], monkeypa
     http, client = await _client_with_elicitation(base, on_url)
     async with http, client:
         out = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
-        assert out["status"] == "pending" and out["user_message"] == "Signing in to fixture.test was cancelled."
+        assert (
+            out["status"] == "pending" and out["user_message"] == "Signing in to fixture.test was cancelled."
+        )
         assert "url" not in out
 
 
@@ -320,7 +341,8 @@ async def test_declining_the_link(strong_gateway: tuple[str, FakeNeko], monkeypa
 async def test_app_that_answers_url_prompts_itself_gets_the_link_back(
     strong_gateway: tuple[str, FakeNeko], action: str
 ) -> None:
-    """Claude Code's desktop app declares URL elicitation but answers it itself within milliseconds (it used to
+    """Claude Code's desktop app declares URL elicitation but answers it itself within milliseconds (it used
+    to
     cancel, now it declines). No person answers that fast, so the agent shows the link instead."""
     import mcp_types as types
 
@@ -343,10 +365,11 @@ async def test_clients_without_url_elicitation_get_the_link(strong_gateway: tupl
         assert out["status"] == "pending" and out["user_message"].startswith("**[Sign in to fixture.test →](")
 
 
-
-
-async def test_pending_sign_in_results_lead_with_the_link_in_plain_text(strong_gateway: tuple[str, FakeNeko]) -> None:
-    """Agents summarised the JSON's user_message as "use the link" and dropped the URL; a plain first line holding
+async def test_pending_sign_in_results_lead_with_the_link_in_plain_text(
+    strong_gateway: tuple[str, FakeNeko],
+) -> None:
+    """Agents summarised the JSON's user_message as "use the link" and dropped the URL; a plain first line
+    holding
     the link itself is what they copy."""
     import mcp_types as types
 

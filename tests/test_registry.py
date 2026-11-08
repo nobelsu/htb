@@ -69,7 +69,8 @@ def test_partial_unique_index_enforced(reg: Registry, db_path: Path) -> None:
         )
     # Inactive rows for the same domain are fine.
     conn.execute(
-        "INSERT INTO action_maps (domain, version, map_json, active, created_at) VALUES ('linkedin.com', 98, '{}', 0, 'now')"
+        "INSERT INTO action_maps (domain, version, map_json, active, created_at) VALUES ('linkedin.com', "
+        "98, '{}', 0, 'now')"
     )
 
 

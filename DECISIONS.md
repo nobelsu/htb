@@ -20,7 +20,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   exists. `meta.tier` reports the tier that produced the result.
 - **D8 Sessions (asked).** A `SessionStore` interface keyed by (user, domain, provider id). Tests use an in-memory
   store; for local dev, cookies can be loaded from `.env` (`DEV_SESSION_COOKIES`,
-  `{"<domain>": {"<provider_id>": {"<cookie>": "<value>"}}}`). The remote-login flow will fill the store later.
+  `{"<domain>": {"<provider_id>": {"<cookie>": "<value>"}}}`). The remote-login flow will fill the store later
+  (*since built:* L1 and L4, the encrypted store in `runtime/session_store.py`).
 
 ## Schema / validation
 - Card models use `extra="forbid"`: unknown fields are rejected at save time, so typos surface early.
@@ -86,7 +87,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   the params themselves are valid. The id format is `c_` + base64url(`expires_at.hmac_hex`); `expires_at` is a
   Unix timestamp; the HMAC (SHA-256) covers `user|domain|action|canonical_params|expires_at`. `summary` is
   `"<description> Params: <canonical_params>"`.
-- **User.** A single API key means a single user, `"default"`. Per-user keys are a TODO.
+- **User.** A single API key means a single user, `"default"`. Per-user keys are a TODO
+  (*since built:* L9).
 - **Single-value extract errors** report `error.step` = the step that *extracted* the value (where the bad data
   came from). `EMPTY` envelopes have `error: null` and `data: []` (or `null` if `output.from` is null).
 - **`until`** follows the single-value rule literally: zero matches → `EMPTY`, several → `PAGE_CHANGED`, a value
@@ -103,7 +105,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   `[redacted]`; requests are only logged at DEBUG. Session cookie values are scrubbed from every error message.
   Envelopes never include headers or cookies.
 - **Out of scope stubs.** `NoHealQueue` (PAGE_CHANGED → `heal: null`), and TODOs for cache, rate limits,
-  EMPTY tracking, ladder escalation and the impersonate/browser tiers.
+  EMPTY tracking, ladder escalation and the impersonate/browser tiers (*since built:* healing, the ladder
+  and both tiers; cache and rate limits are still TODOs in `runtime/executor.py`).
 
 ## Gateway (mcp SDK 2.3.0)
 - **Low-level `Server`** with `on_list_tools` / `on_call_tool`. *Superseded:* the first version exposed one MCP tool
@@ -319,7 +322,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   - A card's own header still wins over the identity's (the mapper strips `user-agent`/`accept-language` anyway).
   - The fixture site's bot guard now keys on `sec-fetch-mode` (only a browser's network stack sends it) as its
     stand-in for a TLS fingerprint, since the `http` tier now sends a Chrome user-agent and client hints.
-  - Not covered: the IP address (residential proxies, still to do), time zone, screen size and other JS-visible
+  - Not covered: the IP address (residential proxies, *since built:* L10), time zone, screen size and other JS-visible
     traits (only the `browser` tier runs JS); the `browser` tier's real Chrome engine version may differ from the
     version it claims.
 - **L9 Several users (asked).** Each API key belongs to one user, and every tool call acts as that user (the
@@ -337,7 +340,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
     from it is refused until they age out (behind a proxy that's the proxy's address). The page is no-store,
     no-referrer and can't be framed. Logs name new users but never the key, the code or the email.
   - A URL sign-in prompt's retry is only accepted from the user who started it.
-  - Not done: users can't see or rotate their own key on the page (lost key = `reissue` by us); no per-user
+  - Not done: users can't see or rotate their own key on the page (lost key = `reissue` by us;
+    *since built:* the account page makes a new key, L11); no per-user
     rate limits or quotas; `heal_status` shows any job (jobs are about sites).
 - **L10 Residential proxies (asked).** One setting, `PROXY_URL`, a URL template in the provider's own sticky-session
   format with `{session}` (asked: any provider). Each sign-in (user + site + provider) gets a stable id, 16 hex
@@ -444,7 +448,7 @@ markers and infers the card deterministically, and the LLM only names things. We
   sign-out/delete clicks, no data-changing clicks unless `--write` (which asks first on real sites), no
   sign-in (the person signs in in the window; the recording restarts). Older page snapshots are dropped
   from the conversation to keep it small.
-- **M8 Mapping runs on the server (asked, 2026-11-08; not built yet).** Map jobs run inside the gateway next to
+- **M8 Mapping runs on the server (asked, 2026-11-08; built the same day).** Map jobs run inside the gateway next to
   heal jobs, using its stored sessions, `BrowserPool`, proxy and identity (so sign-in goes through Connect,
   where Google works). Build order: flowmap on the runtime's browser and sessions; map jobs
   (`request_map`, status); explore as a map job (Claude proposes tasks, each is recorded, mapped and kept

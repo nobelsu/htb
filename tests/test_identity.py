@@ -29,7 +29,10 @@ DOMAIN = "fixture.test"
 # The login browser today: Neko's Chromium 155 on Linux (DevTools /json/version).
 NEKO_VERSION = {
     "Browser": "Chrome/155.0.8059.79",
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/155.0.0.0 Safari/537.36"
+    ),
 }
 LOGIN = BrowserIdentity.from_devtools(NEKO_VERSION, brand=None, accept_language="en-GB,en;q=0.9")
 
@@ -48,7 +51,10 @@ def chrome_at(major: int, brand: str | None = "Google Chrome") -> BrowserIdentit
         (122, '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"'),
         (124, '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"'),
         (131, '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'),
-        (152, '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"'),  # as curl_cffi's chrome152
+        (
+            152,
+            '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"',
+        ),  # as curl_cffi's chrome152
     ],
 )
 def test_client_hints_match_real_chrome(major: int, expected: str) -> None:
@@ -69,11 +75,16 @@ def test_identity_from_the_login_browser() -> None:
         "sec-ch-ua-platform": '"Linux"',
         "accept-language": "en-GB,en;q=0.9",
     }
-    headless = {"Browser": "HeadlessChrome/150.0.1.2", "User-Agent": "Mozilla/5.0 (Macintosh) HeadlessChrome/150.0.0.0"}
+    headless = {
+        "Browser": "HeadlessChrome/150.0.1.2",
+        "User-Agent": "Mozilla/5.0 (Macintosh) HeadlessChrome/150.0.0.0",
+    }
     ident = BrowserIdentity.from_devtools(headless, brand="Google Chrome", accept_language="en-US")
     assert "HeadlessChrome" not in ident.user_agent and ident.platform == "macOS"
     with pytest.raises(ValueError):
-        BrowserIdentity.from_devtools({"Browser": "Firefox/140", "User-Agent": "x"}, brand=None, accept_language="")
+        BrowserIdentity.from_devtools(
+            {"Browser": "Firefox/140", "User-Agent": "x"}, brand=None, accept_language=""
+        )
 
 
 @pytest.mark.parametrize(
@@ -103,7 +114,7 @@ def test_default_identity_matches_the_impersonate_fingerprint() -> None:
     assert "Chrome/152.0.0.0" in DEFAULT_IDENTITY.user_agent and DEFAULT_IDENTITY.platform == "Windows"
 
 
-# ---- what sites see, per tier -------------------------------------------------------------------------------
+# ---- what sites see, per tier ------------------------------------------------------------------------------
 
 
 async def _echoed(session: Any, site_url: str, headers: dict[str, str] | None = None) -> dict[str, str]:
@@ -146,7 +157,9 @@ def test_impersonate_uses_the_closest_fingerprint() -> None:
 def _signed_in_card(fixture_card: dict[str, Any]) -> StoredCard:
     card = copy.deepcopy(fixture_card)
     flow = next(a for a in card["actions"] if a["name"] == "guarded_flow")
-    flow["auth_provider"] = card["connect_providers"][0]["id"]  # a signed-in flow that escalates to impersonate
+    flow["auth_provider"] = card["connect_providers"][0][
+        "id"
+    ]  # a signed-in flow that escalates to impersonate
     return StoredCard(DOMAIN, 1, load_card(card), True, "now", None)
 
 
@@ -172,11 +185,15 @@ async def test_sign_in_checks_present_the_identity(fixture_card: dict[str, Any],
     stored = StoredCard(DOMAIN, 1, load_card(fixture_card), True, "now", None)
     store = InMemorySessionStore()
     store.put("default", DOMAIN, _provider(stored), {"sid": VALID_SID, "csrftoken": CSRF}, LOGIN)
-    assert await Executor(store, Confirmer("s")).check_session(stored.card, _provider(stored), "default") is None
+    assert (
+        await Executor(store, Confirmer("s")).check_session(stored.card, _provider(stored), "default") is None
+    )
     assert state.last_headers["GET /api/me"]["user-agent"] == LOGIN.user_agent
 
 
-async def test_sign_ins_without_an_identity_use_the_default(fixture_card: dict[str, Any], site_url: str) -> None:
+async def test_sign_ins_without_an_identity_use_the_default(
+    fixture_card: dict[str, Any], site_url: str
+) -> None:
     stored = StoredCard(DOMAIN, 1, load_card(fixture_card), True, "now", None)
     store = InMemorySessionStore()
     store.put("default", DOMAIN, _provider(stored), {"sid": VALID_SID, "csrftoken": CSRF})
@@ -221,10 +238,12 @@ def test_chained_store_reads_the_identity_from_the_session_it_uses(tmp_path: Pat
     assert chained.identity("u", DOMAIN, "p") == LOGIN
 
 
-# ---- the login flow saves the login browser's identity ------------------------------------------------------
+# ---- the login flow saves the login browser's identity -----------------------------------------------------
 
 
-async def test_connecting_saves_the_login_browsers_identity(tmp_path: Path, fixture_card: dict[str, Any]) -> None:
+async def test_connecting_saves_the_login_browsers_identity(
+    tmp_path: Path, fixture_card: dict[str, Any]
+) -> None:
     from tests.test_login_confirm import SIGNED_IN, FakeNeko, make_manager
 
     neko = FakeNeko()
@@ -239,7 +258,7 @@ async def test_connecting_saves_the_login_browsers_identity(tmp_path: Path, fixt
     assert manager.store.identity("default", DOMAIN, provider) == FakeNeko.IDENTITY
 
 
-# ---- the browser tier (real Chrome) --------------------------------------------------------------------------
+# ---- the browser tier (real Chrome) ------------------------------------------------------------------------
 
 
 async def test_browser_tier_presents_the_identity(tmp_path: Path, site_url: str, chrome: None) -> None:
@@ -252,7 +271,9 @@ async def test_browser_tier_presents_the_identity(tmp_path: Path, site_url: str,
     session = BrowserSession(pool, ProfileKey("u", DOMAIN, None), site_url, {}, LOGIN)
     try:
         await session.prepare()
-        seen = await _echoed(session, site_url)  # fetch() in the page; 127.0.0.1 counts as secure: hints are sent
+        seen = await _echoed(
+            session, site_url
+        )  # fetch() in the page; 127.0.0.1 counts as secure: hints are sent
         for name, value in LOGIN.headers().items():
             assert seen[name] == value, name
     finally:

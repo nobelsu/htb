@@ -1,4 +1,6 @@
-"""User sessions (cookies per connected provider). The login flow that fills them is TODO."""
+"""User sessions: cookies per (user, domain, auth provider). The `SessionStore` protocol, an in-memory store
+for tests and the `.env` store for local development. The encrypted store that sign-ins fill is
+`runtime/session_store.py`."""
 
 from __future__ import annotations
 
@@ -23,7 +25,12 @@ class InMemorySessionStore:
         self._identities: dict[tuple[str, str, str], BrowserIdentity] = {}
 
     def put(
-        self, user: str, domain: str, provider_id: str, cookies: Cookies, identity: BrowserIdentity | None = None
+        self,
+        user: str,
+        domain: str,
+        provider_id: str,
+        cookies: Cookies,
+        identity: BrowserIdentity | None = None,
     ) -> None:
         self._data[(user, domain, provider_id)] = dict(cookies)
         if identity is not None:
@@ -71,7 +78,3 @@ class DevEnvSessionStore(InMemorySessionStore):
 
     def refresh(self, user: str, domain: str, provider_id: str, before: Cookies, after: Cookies) -> bool:
         return False  # sign-ins pasted into .env stay as written (DECISIONS.md, cookie rotation)
-
-
-# TODO(login): a persistent store filled by start_connection / poll_connection (remote browser login),
-# plus session_check before use.

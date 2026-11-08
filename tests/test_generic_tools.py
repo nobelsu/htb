@@ -10,10 +10,9 @@ from runtime.catalog import find_actions
 from runtime.confirm import Confirmer
 from runtime.executor import Executor
 from runtime.gateway import Gateway
-from runtime.registry import Registry
+from runtime.registry import Registry, StoredCard
 from runtime.sessions import InMemorySessionStore
 from schema import load_card
-from runtime.registry import StoredCard
 from tests.conftest import LiveServer
 from tests.test_gateway import API_KEY, connect, envelope
 
@@ -97,7 +96,9 @@ async def test_confirmation_through_run_action(generic_url: str, site_url: str) 
         args = {"site": DOMAIN, "action": "add_to_cart", "params": {"sku": "SKU-004"}}
         first = envelope(await client.call_tool("run_action", args))
         assert first["status"] == "NEEDS_CONFIRMATION"
-        done = envelope(await client.call_tool("run_action", {**args, "confirmation_id": first["confirmation"]["id"]}))
+        done = envelope(
+            await client.call_tool("run_action", {**args, "confirmation_id": first["confirmation"]["id"]})
+        )
         assert done["status"] == "SUCCESS"
         bad = envelope(await client.call_tool("run_action", {**args, "confirmation_id": "c_forged"}))
         assert bad["status"] == "BAD_PARAMS"
@@ -115,7 +116,11 @@ async def test_run_action_errors(generic_url: str) -> None:
         assert unknown_site.is_error and "find_actions" in unknown_site.content[0].text  # type: ignore[union-attr]
         unknown_action = await client.call_tool("run_action", {"site": DOMAIN, "action": "nope"})
         assert unknown_action.is_error
-        bad_params = await client.call_tool("run_action", {"site": DOMAIN, "action": "search_products", "params": "x"})
+        bad_params = await client.call_tool(
+            "run_action", {"site": DOMAIN, "action": "search_products", "params": "x"}
+        )
         assert bad_params.is_error
-        missing = envelope(await client.call_tool("run_action", {"site": DOMAIN, "action": "search_products"}))
+        missing = envelope(
+            await client.call_tool("run_action", {"site": DOMAIN, "action": "search_products"})
+        )
         assert missing["status"] == "BAD_PARAMS"  # params default to {}, and query is required

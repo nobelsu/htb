@@ -24,9 +24,8 @@ def match_signal(signals: Iterable[str], resp: HttpResponse) -> str | None:
             paths = [_path(loc) for _, loc in resp.hops if loc] + [_path(resp.final_url)]
             if any(p.startswith(value) for p in paths):
                 return signal
-        elif kind == "body_contains":
-            if value in resp.text:
-                return signal
+        elif kind == "body_contains" and value in resp.text:
+            return signal
     return None
 
 

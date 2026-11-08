@@ -44,9 +44,9 @@ from runtime.connect_page import routes as connect_routes
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
 from runtime.home_page import routes as home_routes
-from runtime.mapping import MapConfig, Mapper, MapManager
 from runtime.keys import ENV_KEY_USER, KeyStore
 from runtime.mapper_remapper import MapperRemapper
+from runtime.mapping import MapConfig, MapManager, Mapper
 from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.oauth import OAuth
 from runtime.proxy import ProxyConfig
@@ -76,25 +76,25 @@ INSTRUCTIONS = (
     "or computer-use tool: call find_actions with the site and what you want to do, then run_action. If the "
     "site has nothing yet, call request_map (with only the site, it explores it) and wait with map_status "
     "instead of opening a browser; only fall back to a browser if that fails. Use find_actions to discover "
-    "what a site can do, then run_action to do it. Every tool returns JSON; check its `status` field (SUCCESS, EMPTY, NEEDS_CONFIRMATION, "
-    "AUTH_REQUIRED, ...) to decide what to do next.\n"
-    "When you talk to the user, describe outcomes in plain terms (\"You're signed out of linkedin.com\", "
-    "\"Sign in here: <link>\", \"The site changed; I'll retry in a moment\"). Don't mention tool names, status "
+    "what a site can do, then run_action to do it. Every tool returns JSON; check its `status` field "
+    "(SUCCESS, EMPTY, NEEDS_CONFIRMATION, AUTH_REQUIRED, ...) to decide what to do next.\n"
+    'When you talk to the user, describe outcomes in plain terms ("You\'re signed out of linkedin.com", '
+    '"Sign in here: <link>", "The site changed; I\'ll retry in a moment"). Don\'t mention tool names, status '
     "codes, sessions, cookies, browser profiles, cards or other internals unless the user asks how it works. "
     "Results about signing in include a `user_message`; use it.\n"
-    "The user cannot see tool results. When start_connection gives you a sign-in link, write its user_message "
-    "(a markdown link) exactly as given in your reply before you call poll_connection, or they will have nothing "
-    "to click. (Apps that support "
-    "it show the link to the user themselves; then start_connection simply returns once they've signed in.)"
+    "The user cannot see tool results. When start_connection gives you a sign-in link, write its "
+    "user_message (a markdown link) exactly as given in your reply before you call poll_connection, or "
+    "they will have nothing to click. (Apps that support it show the link to the user themselves; then "
+    "start_connection simply returns once they've signed in.)"
 )
 
 
 FIND_ACTIONS_TOOL = types.Tool(
     name="find_actions",
     description="Use this first for any task on a website, before any browser tool. Find what you can do on "
-    "websites for the user. Give a short description of the task (query), a "
-    "site (its domain, e.g. linkedin.com), or both. Returns matching actions with their parameters; then call "
-    "run_action. With no arguments it lists the available sites.",
+    "websites for the user. Give a short description of the task (query), a site (its domain, e.g. "
+    "linkedin.com), or both. Returns matching actions with their parameters; then call run_action. With no "
+    "arguments it lists the available sites.",
     input_schema={
         "type": "object",
         "properties": {
@@ -109,15 +109,18 @@ FIND_ACTIONS_TOOL = types.Tool(
 RUN_ACTION_TOOL = types.Tool(
     name="run_action",
     description="Run an action from find_actions. Pass its params as an object. Returns JSON with a `status` "
-    "(SUCCESS, EMPTY, NEEDS_CONFIRMATION, AUTH_REQUIRED, ...) and the data. Actions that need confirmation first "
-    "return NEEDS_CONFIRMATION with a summary: show it to the user and, only after their explicit approval, call "
-    "again with identical params plus confirmation_id.",
+    "(SUCCESS, EMPTY, NEEDS_CONFIRMATION, AUTH_REQUIRED, ...) and the data. Actions that need confirmation "
+    "first return NEEDS_CONFIRMATION with a summary: show it to the user and, only after their explicit "
+    "approval, call again with identical params plus confirmation_id.",
     input_schema={
         "type": "object",
         "properties": {
             "site": {"type": "string", "description": "the site's domain, from find_actions"},
             "action": {"type": "string", "description": "the action's name, from find_actions"},
-            "params": {"type": "object", "description": "the action's parameters, as described by find_actions"},
+            "params": {
+                "type": "object",
+                "description": "the action's parameters, as described by find_actions",
+            },
             "confirmation_id": {
                 "type": "string",
                 "description": "from a NEEDS_CONFIRMATION result, only after the user explicitly approved it",
@@ -143,23 +146,27 @@ HEAL_STATUS_TOOL = types.Tool(
 REQUEST_MAP_TOOL = types.Tool(
     name="request_map",
     description="Ask for a website to be set up, when find_actions has nothing for a site the user needs. "
-    "For one specific thing the user wants done, name it as one action: what it should do (task), a snake_case name (action) and the values you'd use "
-    "for its inputs (e.g. {\"query\": \"robotics\"}); an agent does it once on the site and turns it into "
+    "For one specific thing the user wants done, name it as one action: what it should do (task), a "
+    "snake_case name (action) and the values you'd use "
+    'for its inputs (e.g. {"query": "robotics"}); an agent does it once on the site and turns it into '
     "an action (a few minutes); set write for one that changes something (send, follow, post, add): its last "
-    "click is held back, so nothing reaches the site while it's set up, and running it later asks the user to "
-    "confirm first. Or give only the site (and, optionally, what the user wants to do there as "
-    "task) to explore it: the server finds the site's main reads itself and maps the ones that work (up to "
+    "click is held back, so nothing reaches the site while it's set up, and running it later asks the user "
+    "to confirm first. Or give only the site (and, optionally, what the user wants to do there as task) to "
+    "explore it: the server finds the site's main reads itself and maps the ones that work (up to "
     "ten minutes; it also maps common writes, which never reach the site while mapping). Tell the user, then "
-    "follow it with map_status. For a site with no actions, or to add what a site can't do yet (a named action it "
-    "lacks, or explore again for more); what it can do already is never re-mapped.",
+    "follow it with map_status. For a site with no actions, or to add what a site can't do yet (a named "
+    "action it lacks, or explore again for more); what it can do already is never re-mapped.",
     input_schema={
         "type": "object",
         "properties": {
-            "site": {"type": "string", "description": "the site's address, e.g. https://www.example.com/search"},
+            "site": {
+                "type": "string",
+                "description": "the site's address, e.g. https://www.example.com/search",
+            },
             "task": {
                 "type": "string",
-                "description": "what the action does, e.g. 'search books by keyword'; when exploring, what the "
-                "user wants to do on the site (optional)",
+                "description": "what the action does, e.g. 'search books by keyword'; when exploring, what "
+                "the user wants to do on the site (optional)",
             },
             "action": {
                 "type": "string",
@@ -168,7 +175,7 @@ REQUEST_MAP_TOOL = types.Tool(
             "inputs": {
                 "type": "object",
                 "description": "input name -> the value to use while setting it up, "
-                "e.g. {\"query\": \"harbour\"}",
+                'e.g. {"query": "harbour"}',
                 "additionalProperties": {"type": ["string", "number", "boolean"]},
             },
             "write": {
@@ -184,7 +191,8 @@ REQUEST_MAP_TOOL = types.Tool(
 MAP_STATUS_TOOL = types.Tool(
     name="map_status",
     description="Status of a site being set up (request_map's job_id). Waits up to wait_seconds (default 25, "
-    "max 45) and returns as soon as it finishes. When the status is 'succeeded', use find_actions on the site.",
+    "max 45) and returns as soon as it finishes. When the status is 'succeeded', use find_actions on the "
+    "site.",
     input_schema={
         "type": "object",
         "properties": {
@@ -204,12 +212,19 @@ def _domain_tool(
     extra: dict[str, Any] | None = None,
     annotations: types.ToolAnnotations | None = None,
 ) -> types.Tool:
-    props: dict[str, Any] = {"domain": {"type": "string", "description": "the site's domain, e.g. linkedin.com"}}
+    props: dict[str, Any] = {
+        "domain": {"type": "string", "description": "the site's domain, e.g. linkedin.com"}
+    }
     props.update(extra or {})
     return types.Tool(
         name=name,
         description=description,
-        input_schema={"type": "object", "properties": props, "required": ["domain"], "additionalProperties": False},
+        input_schema={
+            "type": "object",
+            "properties": props,
+            "required": ["domain"],
+            "additionalProperties": False,
+        },
         annotations=annotations,
     )
 
@@ -219,17 +234,30 @@ CONNECTION_TOOLS = {
     for t in (
         _domain_tool(
             "start_connection",
-            "Get a sign-in link for a site, after a tool result says the user needs to sign in (AUTH_REQUIRED or "
-            "AUTH_EXPIRED). The user can't see tool results: write the result's user_message (it contains the link) "
-            "in your reply to them first. Then call poll_connection: it waits until they've signed in.",
-            {"provider": {"type": "string", "description": "optional connect provider id, if the site has several"}},
+            "Get a sign-in link for a site, after a tool result says the user needs to sign in "
+            "(AUTH_REQUIRED or AUTH_EXPIRED). The user can't see tool results: write the result's "
+            "user_message (it contains the link) in your reply to them first. Then call poll_connection: it "
+            "waits until they've signed in.",
+            {
+                "provider": {
+                    "type": "string",
+                    "description": "optional connect provider id, if the site has several",
+                }
+            },
         ),
         _domain_tool(
             "poll_connection",
-            "Wait for the user to finish signing in. Holds for up to wait_seconds (default 25, max 45) and returns "
-            "the moment they're signed in. If status is still 'pending', call it again; when 'connected', retry the "
-            "original tool.",
-            {"wait_seconds": {"type": "number", "minimum": 0, "maximum": 45, "description": "how long to wait (default 25)"}},
+            "Wait for the user to finish signing in. Holds for up to wait_seconds (default 25, max 45) and "
+            "returns the moment they're signed in. If status is still 'pending', call it again; when "
+            "'connected', retry the original tool.",
+            {
+                "wait_seconds": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 45,
+                    "description": "how long to wait (default 25)",
+                }
+            },
         ),
         _domain_tool(
             "connection_status",
@@ -240,7 +268,12 @@ CONNECTION_TOOLS = {
             "disconnect",
             "Sign the user out of a site in this service (it forgets their sign-in; the site itself is not "
             "touched). Only call this when the user asks to disconnect or sign out of that site.",
-            {"provider": {"type": "string", "description": "optional connect provider id; default: all of them"}},
+            {
+                "provider": {
+                    "type": "string",
+                    "description": "optional connect provider id; default: all of them",
+                }
+            },
             types.ToolAnnotations(destructive_hint=True, idempotent_hint=True, read_only_hint=False),
         ),
     )
@@ -305,11 +338,15 @@ class Gateway:
         elicitation = getattr(caps, "elicitation", None) if caps is not None else None
         log.info(
             "client %s %s (protocol %s), elicitation: %s",
-            key[0], key[1], key[2],
+            key[0],
+            key[1],
+            key[2],
             elicitation.model_dump(exclude_none=True) if elicitation is not None else None,
         )
 
-    async def _list_tools(self, ctx: Any, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+    async def _list_tools(
+        self, ctx: Any, params: types.PaginatedRequestParams | None
+    ) -> types.ListToolsResult:
         self._log_client(ctx)
         tools = [FIND_ACTIONS_TOOL, RUN_ACTION_TOOL]
         if self.healer is not None:
@@ -337,7 +374,9 @@ class Gateway:
 
     def _find_actions(self, args: dict[str, Any]) -> types.CallToolResult:
         query, site = args.get("query"), args.get("site")
-        if (query is not None and not isinstance(query, str)) or (site is not None and not isinstance(site, str)):
+        if (query is not None and not isinstance(query, str)) or (
+            site is not None and not isinstance(site, str)
+        ):
             return _error_result("query and site must be strings")
         out = find_actions(
             self.registry.active_cards(), query or None, site or None, can_map=self.maps is not None
@@ -356,7 +395,9 @@ class Gateway:
         if stored is None:
             return _error_result(f"unknown site {site!r}; use find_actions to see the available sites")
         if stored.card.action(action) is None:
-            return _error_result(f"{site} has no action {action!r}; use find_actions(site={site!r}) to list them")
+            return _error_result(
+                f"{site} has no action {action!r}; use find_actions(site={site!r}) to list them"
+            )
         call_args = dict(params)
         confirmation_id = args.get("confirmation_id")
         if confirmation_id is not None:
@@ -429,7 +470,11 @@ class Gateway:
         return _json_result(out)
 
     async def _connection_tool(
-        self, name: str, args: dict[str, Any], ctx: Any = None, params: types.CallToolRequestParams | None = None
+        self,
+        name: str,
+        args: dict[str, Any],
+        ctx: Any = None,
+        params: types.CallToolRequestParams | None = None,
     ) -> types.CallToolResult | types.InputRequiredResult:
         assert self.connections is not None
         user = caller(ctx)
@@ -456,7 +501,9 @@ class Gateway:
                 )
                 log.info("start_connection: asking the client to show the sign-in link (URL elicitation)")
                 self._prompted_at[token] = time.monotonic()
-                return types.InputRequiredResult(input_requests={SIGN_IN_REQUEST: request}, request_state=token)
+                return types.InputRequiredResult(
+                    input_requests={SIGN_IN_REQUEST: request}, request_state=token
+                )
         elif name == "poll_connection":
             wait = args.get("wait_seconds", 25)
             wait_s = float(wait) if isinstance(wait, (int, float)) and not isinstance(wait, bool) else 25.0
@@ -472,11 +519,15 @@ class Gateway:
             return _error_result(str(out["error"]))
         return _connection_result(out)
 
-    async def _finish_url_sign_in(self, params: types.CallToolRequestParams, user: str) -> types.CallToolResult:
+    async def _finish_url_sign_in(
+        self, params: types.CallToolRequestParams, user: str
+    ) -> types.CallToolResult:
         """The client's retry after showing the sign-in link: wait for the sign-in, then report."""
         assert self.connections is not None
-        log.info("start_connection: client retried after the sign-in prompt: %s",
-                 {k: getattr(v, "action", type(v).__name__) for k, v in (params.input_responses or {}).items()})
+        log.info(
+            "start_connection: client retried after the sign-in prompt: %s",
+            {k: getattr(v, "action", type(v).__name__) for k, v in (params.input_responses or {}).items()},
+        )
         conn = self.connections.by_token(params.request_state or "")
         if conn is None or conn.user != user:
             return _error_result("unknown or expired sign-in; call start_connection again")
@@ -485,8 +536,12 @@ class Gateway:
         prompted_at = self._prompted_at.pop(conn.token, None)
         answered_in = time.monotonic() - prompted_at if prompted_at is not None else None
         if action == "decline" and answered_in is not None and answered_in < HUMAN_REPLY_MIN_S:
-            # Claude Code's desktop app declines URL prompts by itself within milliseconds; no person is that fast.
-            log.info("start_connection: the client answered the sign-in prompt itself (%.0f ms)", answered_in * 1000)
+            # Claude Code's desktop app declines URL prompts by itself within milliseconds; no person is that
+            # fast.
+            log.info(
+                "start_connection: the client answered the sign-in prompt itself (%.0f ms)",
+                answered_in * 1000,
+            )
             action = "cancel"
         if action == "decline":  # the user said no
             out = await self.connections.poll(conn.user, conn.domain)
@@ -499,9 +554,9 @@ class Gateway:
             # automatically). Fall back to the agent showing the link and waiting in the same turn.
             out = await self.connections.poll(conn.user, conn.domain)
             out["hint"] = (
-                "Your app couldn't show the sign-in link to the user. In this same reply, write the user_message "
-                "exactly as given (a markdown link), then immediately call poll_connection; don't end your turn, it "
-                "waits for them to sign in."
+                "Your app couldn't show the sign-in link to the user. In this same reply, write the "
+                "user_message exactly as given (a markdown link), then immediately call poll_connection; "
+                "don't end your turn, it waits for them to sign in."
             )
             return _connection_result(out)
         out = await self.connections.poll(conn.user, conn.domain, wait_s=40, opened=True)
@@ -522,8 +577,10 @@ class Gateway:
                 tg.start_soon(self.connections.keepalive_forever, self.keepalive_s)
                 if self.connections.neko is not None:
                     if not await self.connections.neko.available():
-                        log.warning("Neko image not available (docker pull %s); 'log in here' is off",
-                                    self.connections.neko.config.image)
+                        log.warning(
+                            "Neko image not available (docker pull %s); 'log in here' is off",
+                            self.connections.neko.config.image,
+                        )
                         self.connections.neko = None
                     else:
                         removed = await self.connections.neko.cleanup_stale()
@@ -557,9 +614,12 @@ class Gateway:
         public_base_url: str | None = None,
         oauth: OAuth | None = None,
     ) -> ASGIApp:
-        """`oauth` (with `keys` and `public_base_url`) adds sign-in for apps that can't send an API key (regular
+        """`oauth` (with `keys` and `public_base_url`) adds sign-in for apps that can't send an API key
+        (regular
         Claude): the OAuth endpoints, the sign-in page and the account page (DECISIONS.md L11)."""
-        extra: list[BaseRoute] = list(connect_routes(self.connections)) if self.connections is not None else []
+        extra: list[BaseRoute] = (
+            list(connect_routes(self.connections)) if self.connections is not None else []
+        )
         connections = self.connections
         public = (public_base_url or "").rstrip("/")
         exempt: tuple[str, ...] = ("/connect/", "/neko/", "/signup")
@@ -575,7 +635,9 @@ class Gateway:
                 revocation_options=RevocationOptions(enabled=True),
             )
             extra += create_protected_resource_routes(
-                resource_url=AnyHttpUrl(f"{public}/mcp"), authorization_servers=[issuer], resource_name=PRODUCT_NAME
+                resource_url=AnyHttpUrl(f"{public}/mcp"),
+                authorization_servers=[issuer],
+                resource_name=PRODUCT_NAME,
             )
             resolve = BearerAuth(lambda *_: None, api_key, keys=keys)._user_for  # type: ignore[arg-type]
             extra += account_routes(
@@ -594,7 +656,9 @@ class Gateway:
         if keys is not None:
             extra += home_routes(signup_open=bool(signup_code))
             extra += signup_routes(
-                keys, signup_code, lambda: public or (connections.public_base_url if connections else None),
+                keys,
+                signup_code,
+                lambda: public or (connections.public_base_url if connections else None),
                 start_session,
             )
         inner = self.server.streamable_http_app(
@@ -603,7 +667,12 @@ class Gateway:
             transport_security=host_check(host, public_base_url),
         )
         return BearerAuth(
-            inner, api_key, exempt_prefixes=exempt, keys=keys, oauth=oauth, resource_metadata=resource_metadata,
+            inner,
+            api_key,
+            exempt_prefixes=exempt,
+            keys=keys,
+            oauth=oauth,
+            resource_metadata=resource_metadata,
             exempt_paths=frozenset({"/"}) if keys is not None else frozenset(),
         )
 
@@ -612,8 +681,10 @@ SIGN_IN_REQUEST = "sign_in"
 
 
 def host_check(host: str, public_base_url: str | None) -> TransportSecuritySettings | None:
-    """MCP's DNS-rebinding protection: on a localhost bind the SDK only accepts localhost Host/Origin headers. Behind
-    a tunnel or reverse proxy (ngrok, Caddy) requests carry PUBLIC_BASE_URL's host, so allow exactly that one too."""
+    """MCP's DNS-rebinding protection: on a localhost bind the SDK only accepts localhost Host/Origin headers.
+    Behind a tunnel or reverse proxy (ngrok, Caddy) requests carry PUBLIC_BASE_URL's host, so allow exactly
+    that one
+    too."""
     if host not in ("127.0.0.1", "localhost", "::1"):
         return None  # the SDK's own default for other binds
     hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
@@ -622,7 +693,9 @@ def host_check(host: str, public_base_url: str | None) -> TransportSecuritySetti
     if public is not None and public.hostname and public.hostname not in ("127.0.0.1", "localhost", "::1"):
         hosts.append(public.netloc)
         origins.append(f"{public.scheme}://{public.netloc}")
-    return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins
+    )
 
 
 def caller(ctx: Any) -> str:
@@ -632,6 +705,8 @@ def caller(ctx: Any) -> str:
     state = scope.get("state") if isinstance(scope, dict) else None
     user = state.get(USER_STATE_KEY) if isinstance(state, dict) else None
     return user if isinstance(user, str) and user else DEFAULT_USER
+
+
 # An answer to the sign-in prompt faster than this came from the app, not the person (see DECISIONS.md L6).
 HUMAN_REPLY_MIN_S = 2.0
 
@@ -651,7 +726,9 @@ def _supports_url_elicitation(ctx: Any) -> bool:
 
 
 def _json_result(out: dict[str, Any]) -> types.CallToolResult:
-    return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(out))], structured_content=out)
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=json.dumps(out))], structured_content=out
+    )
 
 
 SHOW_LINK = (
@@ -661,7 +738,8 @@ SHOW_LINK = (
 
 
 def _connection_result(out: dict[str, Any]) -> types.CallToolResult:
-    """Sign-in results. While a link is waiting to be used, the result leads with a plain line holding the link (not
+    """Sign-in results. While a link is waiting to be used, the result leads with a plain line holding the
+    link (not
     buried in JSON, where agents tend to summarise it as "use the link" and drop the URL)."""
     message = out.get("user_message")
     if out.get("status") != "pending" or not isinstance(message, str) or "](" not in message:
@@ -683,7 +761,8 @@ USER_STATE_KEY = "spider_user"
 
 
 class BearerAuth:
-    """Rejects HTTP requests without `Authorization: Bearer <api key>`, and records whose key it is: the .env key
+    """Rejects HTTP requests without `Authorization: Bearer <api key>`, and records whose key it is: the .env
+    key
     is user "default", every other key belongs to its user in the KeyStore."""
 
     def __init__(
@@ -701,7 +780,9 @@ class BearerAuth:
         self.app = app
         self._key = api_key.encode()
         self._keys = keys
-        self._exempt = exempt_prefixes  # routes with their own credential (the login link's token, the invite code)
+        self._exempt = (
+            exempt_prefixes  # routes with their own credential (the login link's token, the invite code)
+        )
         self._exempt_paths = exempt_paths  # public pages, matched exactly (the home page is "/")
         self._oauth = oauth
         # Where OAuth clients find how to sign in (RFC 9728), sent with every 401.
@@ -831,8 +912,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(os.environ.get("GATEWAY_PORT", "8765")))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    # URL-level request logs would record login tokens (/connect/<token>), the login browser's password and users'
-    # query parameters, so they stay off; the runtime logs its own redacted events.
+    # URL-level request logs would record login tokens (/connect/<token>), the login browser's password and
+    # users' query parameters, so they stay off; the runtime logs its own redacted events.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.error").addFilter(_DropWebSocketLines())
 
@@ -877,8 +958,13 @@ def main() -> None:
             )
         )
     connections = ConnectionManager(
-        registry, session_store, executor, public_url, pool=pool,
-        timeout_s=float(os.environ.get("CONNECT_TIMEOUT_S", "600")), neko=neko,
+        registry,
+        session_store,
+        executor,
+        public_url,
+        pool=pool,
+        timeout_s=float(os.environ.get("CONNECT_TIMEOUT_S", "600")),
+        neko=neko,
     )
     config = HealConfig(
         retry_after_s=int(os.environ.get("HEAL_RETRY_AFTER_S", "30")),
@@ -895,7 +981,11 @@ def main() -> None:
     mapper = load_mapper(os.environ.get("MAPPER"), executor, proxies)
     maps = (
         MapManager(
-            registry, state, executor, mapper, healer,
+            registry,
+            state,
+            executor,
+            mapper,
+            healer,
             MapConfig(allow_local=os.environ.get("MAP_ALLOW_LOCAL", "0") == "1"),
             connections,
         )
@@ -904,8 +994,13 @@ def main() -> None:
     )
     log.info("map jobs: %s", "on" if maps else "off (set MAPPER=flowmap to turn them on)")
     gateway = Gateway(
-        registry, executor, healer=healer, connections=connections, pool=pool,
-        keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")), maps=maps,
+        registry,
+        executor,
+        healer=healer,
+        connections=connections,
+        pool=pool,
+        keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")),
+        maps=maps,
     )
     signup_code = os.environ.get("SIGNUP_CODE", "")
     app = gateway.asgi_app(
@@ -916,7 +1011,9 @@ def main() -> None:
         public_base_url=public_url,
         oauth=OAuth(db_path, public_url),
     )
-    log.info("sign-up page: %s", f"{public_url}/signup" if signup_code else "off (set SIGNUP_CODE to turn it on)")
+    log.info(
+        "sign-up page: %s", f"{public_url}/signup" if signup_code else "off (set SIGNUP_CODE to turn it on)"
+    )
     uvicorn.run(app, host=args.host, port=args.port, access_log=False)
 
 

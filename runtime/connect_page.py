@@ -20,7 +20,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import BaseRoute, Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from runtime.connect import Connection, ConnectError, ConnectionManager
+from runtime.connect import ConnectError, Connection, ConnectionManager
 from runtime.neko.manager import NekoSession
 from runtime.ui import bar_link, esc, icon, short_name
 from runtime.ui import page as spine_page
@@ -28,8 +28,17 @@ from runtime.ui import page as spine_page
 log = logging.getLogger("runtime.connect_page")
 NO_STORE = {"cache-control": "no-store", "referrer-policy": "no-referrer"}
 HOP_BY_HOP = {
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
-    "transfer-encoding", "upgrade", "host", "content-length", "content-encoding",
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+    "content-length",
+    "content-encoding",
 }
 
 CONNECT_SCRIPT = """<script>
@@ -101,20 +110,23 @@ def render_page(conn: Connection, width: int = 1280, height: int = 800) -> Respo
         "</section>"
         '<section id="viewer" class="state" hidden>'
         f'<iframe id="frame" title="Private browser for signing in to {domain}" '
-        f'style="width:100%;aspect-ratio:{width}/{height};border:1px solid var(--line);background:#000;display:block" '
+        f'style="width:100%;aspect-ratio:{width}/{height};border:1px solid '
+        f'var(--line);background:#000;display:block" '
         'allow="autoplay; fullscreen; clipboard-read; clipboard-write"></iframe>'
         f'<button id="done" class="bar" type="button">I have signed in{icon("arrow", 44)}</button>'
         "</section>"
         '<section id="done-panel" class="state" hidden aria-live="polite">'
-        f'<div class="center">{icon("check", 96, 1.2)}<p class="giant">You&#39;re in.<br>Close this tab.</p></div>'
+        f'<div class="center">{icon("check", 96, 1.2)}<p class="giant">You&#39;re in.<br>Close this '
+        f"tab.</p></div>"
         "</section>"
         '<section id="expired-panel" class="state" hidden>'
         f'<div class="center">{icon("clock", 96, 1.2)}<p class="giant">This link expired.</p></div>'
-        '<a class="bar" href="/account">Go to your account' + icon("arrow", 44) + "</a>"
-        "</section>"
+        '<a class="bar" href="/account">Go to your account' + icon("arrow", 44) + "</a></section>"
     )
     return spine_page(
-        title=f"Sign in to {conn.domain}", spine=short_name(conn.domain), body=body,
+        title=f"Sign in to {conn.domain}",
+        spine=short_name(conn.domain),
+        body=body,
         script=CONNECT_SCRIPT.replace("__DOMAIN__", domain),
     )
 
@@ -126,9 +138,15 @@ def routes(manager: ConnectionManager) -> list[BaseRoute]:
     async def page(request: Request) -> Response:
         conn = manager.by_token(request.path_params["token"])
         if conn is None:
-            return spine_page(title="Link expired", spine="Expired", status=404, body=(
-                f'<div class="center">{icon("clock", 96, 1.2)}<h1 class="giant">This link expired.</h1></div>'
-                + bar_link("Go to your account", "/account")))
+            return spine_page(
+                title="Link expired",
+                spine="Expired",
+                status=404,
+                body=(
+                    f'<div class="center">{icon("clock", 96, 1.2)}<h1 class="giant">This link '
+                    f"expired.</h1></div>" + bar_link("Go to your account", "/account")
+                ),
+            )
         manager.mark_opened(conn.token)
         return render_page(conn, *size)
 
@@ -151,7 +169,6 @@ def routes(manager: ConnectionManager) -> list[BaseRoute]:
         except ConnectError as e:
             return JSONResponse({"error": str(e)}, status_code=400, headers=NO_STORE)
         return JSONResponse({"status": conn.status, "message": conn.message}, headers=NO_STORE)
-
 
     def session_for(token: str) -> NekoSession | None:
         conn = manager.by_token(token)
@@ -233,5 +250,7 @@ def routes(manager: ConnectionManager) -> list[BaseRoute]:
         Route("/connect/{token}/done", done, methods=["POST"]),
         Route("/neko/{token}", neko_root),
         WebSocketRoute("/neko/{token}/api/ws", neko_ws),
-        Route("/neko/{token}/{path:path}", neko_http, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]),
+        Route(
+            "/neko/{token}/{path:path}", neko_http, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+        ),
     ]

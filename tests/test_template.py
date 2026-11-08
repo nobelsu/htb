@@ -54,7 +54,10 @@ def test_offset_from_string() -> None:
 
 
 def test_urlencode() -> None:
-    assert resolve("{{params.id | urlencode}}", ctx(id="urn:li:fsd company/1?x")) == "urn%3Ali%3Afsd%20company%2F1%3Fx"
+    assert (
+        resolve("{{params.id | urlencode}}", ctx(id="urn:li:fsd company/1?x"))
+        == "urn%3Ali%3Afsd%20company%2F1%3Fx"
+    )
 
 
 def test_strip_quotes() -> None:
@@ -66,7 +69,7 @@ def test_strip_quotes_without_quotes() -> None:
 
 
 def test_strip_quotes_only_one_pair() -> None:
-    assert resolve('{{params.v | strip_quotes}}', ctx(v='""x""')) == '"x"'
+    assert resolve("{{params.v | strip_quotes}}", ctx(v='""x""')) == '"x"'
 
 
 def test_int_filter() -> None:
@@ -80,14 +83,16 @@ def test_int_filter_bad_input() -> None:
 
 
 def test_filter_chain() -> None:
-    assert resolve('{{params.v | strip_quotes | int}}', ctx(v='"12"')) == 12
+    assert resolve("{{params.v | strip_quotes | int}}", ctx(v='"12"')) == 12
 
 
 # ---- resolution ------------------------------------------------------------
 
 
 def test_text_substitution() -> None:
-    assert resolve("{{base_url}}/c/{{params.id}}/p{{params.n}}", ctx(id="a", n=2)) == "https://site.test/c/a/p2"
+    assert (
+        resolve("{{base_url}}/c/{{params.id}}/p{{params.n}}", ctx(id="a", n=2)) == "https://site.test/c/a/p2"
+    )
 
 
 def test_whole_placeholder_keeps_type() -> None:

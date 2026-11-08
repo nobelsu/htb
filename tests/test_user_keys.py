@@ -1,5 +1,6 @@
-"""Several users: each API key belongs to a user, and every tool call acts as the caller's user. People get a key
-from the sign-up page (with the invite code) or from `python -m runtime.keys`; the .env key stays user "default"."""
+"""Several users: each API key belongs to a user, and every tool call acts as the caller's user. People get a
+key from the sign-up page (with the invite code) or from `python -m runtime.keys`; the .env key stays user
+"default"."""
 
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
 from runtime.executor import Executor
 from runtime.gateway import Gateway
-from runtime.keys import KeyStoreError, KeyStore
+from runtime.keys import KeyStore, KeyStoreError
 from runtime.registry import Registry
 from runtime.session_store import EncryptedSessionStore, new_session_key
 from schema import ResultCode
@@ -76,11 +77,13 @@ def test_revoke_and_reissue(tmp_path: Path) -> None:
         keys.reissue("nobody")
 
 
-# ---- every tool call acts as the caller's user --------------------------------------------------------------
+# ---- every tool call acts as the caller's user -------------------------------------------------------------
 
 
 @pytest.fixture
-def multi_gateway(tmp_path: Path, fixture_card: dict[str, Any]) -> Iterator[tuple[str, KeyStore, EncryptedSessionStore]]:
+def multi_gateway(
+    tmp_path: Path, fixture_card: dict[str, Any]
+) -> Iterator[tuple[str, KeyStore, EncryptedSessionStore]]:
     db = tmp_path / "gw.db"
     registry = Registry(db)
     registry.save(fixture_card)
@@ -98,9 +101,11 @@ def multi_gateway(tmp_path: Path, fixture_card: dict[str, Any]) -> Iterator[tupl
 @asynccontextmanager
 async def connect_as(base: str, key: str) -> AsyncIterator[Client]:
     http = httpx2.AsyncClient(headers={"Authorization": f"Bearer {key}"}, timeout=30)
-    async with http:
-        async with Client(streamable_http_client(f"{base}/mcp", http_client=http), cache=None) as client:  # type: ignore[arg-type]
-            yield client
+    async with (
+        http,
+        Client(streamable_http_client(f"{base}/mcp", http_client=http), cache=None) as client,  # type: ignore[arg-type]
+    ):
+        yield client
 
 
 def provider(fixture_card: dict[str, Any]) -> str:
@@ -119,27 +124,38 @@ async def test_each_key_acts_as_its_own_user(
         status = envelope(await client.call_tool("connection_status", {"domain": DOMAIN}))
         assert status["providers"][0]["status"] == "connected"
     async with connect_as(base, bob) as client:
-        assert envelope(await client.call_tool(*act("list_orders")))["status"] == ResultCode.AUTH_REQUIRED.value
+        assert (
+            envelope(await client.call_tool(*act("list_orders")))["status"] == ResultCode.AUTH_REQUIRED.value
+        )
         status = envelope(await client.call_tool("connection_status", {"domain": DOMAIN}))
         assert status["providers"][0]["status"] == "not_connected"
         await client.call_tool("disconnect", {"domain": DOMAIN})  # bob disconnecting doesn't touch alice
         started = envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))
     alices = store.get("alice", DOMAIN, provider(fixture_card))
-    assert alices is not None and alices["sid"] == VALID_SID  # still signed in (plus the cookie her run rotated in)
+    assert (
+        alices is not None and alices["sid"] == VALID_SID
+    )  # still signed in (plus the cookie her run rotated in)
     async with connect_as(base, API_KEY) as client:  # the .env key is user "default"
-        assert envelope(await client.call_tool(*act("list_orders")))["status"] == ResultCode.AUTH_REQUIRED.value
+        assert (
+            envelope(await client.call_tool(*act("list_orders")))["status"] == ResultCode.AUTH_REQUIRED.value
+        )
     # bob's sign-in link signs bob in, not anyone else
     token = started["url"].rsplit("/", 1)[1]
     async with httpx.AsyncClient() as http:
         assert (await http.get(f"{base}/connect/{token}/status")).json()["status"] == "pending"
 
 
-async def test_unknown_and_revoked_keys_are_refused(multi_gateway: tuple[str, KeyStore, EncryptedSessionStore]) -> None:
+async def test_unknown_and_revoked_keys_are_refused(
+    multi_gateway: tuple[str, KeyStore, EncryptedSessionStore],
+) -> None:
     base, keys, _ = multi_gateway
     key = keys.create("carol", "c@example.com")
     async with httpx.AsyncClient() as http:
+
         async def status(k: str) -> int:
-            return (await http.post(f"{base}/mcp", headers={"Authorization": f"Bearer {k}"}, json={})).status_code
+            return (
+                await http.post(f"{base}/mcp", headers={"Authorization": f"Bearer {k}"}, json={})
+            ).status_code
 
         assert await status("spider_made_up") == 401
         assert await status(key) != 401
@@ -147,7 +163,7 @@ async def test_unknown_and_revoked_keys_are_refused(multi_gateway: tuple[str, Ke
         assert await status(key) == 401
 
 
-# ---- the sign-up page ---------------------------------------------------------------------------------------
+# ---- the sign-up page --------------------------------------------------------------------------------------
 
 
 def _form(
@@ -162,7 +178,9 @@ async def test_sign_up_page_gives_a_working_key(
     base, keys, _ = multi_gateway
     async with httpx.AsyncClient() as http:
         page = await http.get(f"{base}/signup")
-        assert page.status_code == 200 and "invite code" in page.text.lower() and 'name="password"' in page.text
+        assert (
+            page.status_code == 200 and "invite code" in page.text.lower() and 'name="password"' in page.text
+        )
         assert page.headers["cache-control"] == "no-store"
         with caplog.at_level(logging.DEBUG):
             done = await http.post(f"{base}/signup", data=_form())
@@ -188,7 +206,10 @@ async def test_sign_up_page_gives_a_working_key(
     ],
 )
 async def test_sign_up_rejects_bad_input(
-    multi_gateway: tuple[str, KeyStore, EncryptedSessionStore], form: dict[str, str], status: int, message: str
+    multi_gateway: tuple[str, KeyStore, EncryptedSessionStore],
+    form: dict[str, str],
+    status: int,
+    message: str,
 ) -> None:
     base, keys, _ = multi_gateway
     async with httpx.AsyncClient() as http:
@@ -205,19 +226,27 @@ async def test_sign_up_name_taken(multi_gateway: tuple[str, KeyStore, EncryptedS
     assert resp.status_code == 409 and "taken" in resp.text
 
 
-async def test_guessing_the_code_is_slowed_down(multi_gateway: tuple[str, KeyStore, EncryptedSessionStore]) -> None:
+async def test_guessing_the_code_is_slowed_down(
+    multi_gateway: tuple[str, KeyStore, EncryptedSessionStore],
+) -> None:
     base, keys, _ = multi_gateway
     async with httpx.AsyncClient() as http:
-        codes = [(await http.post(f"{base}/signup", data=_form(code=f"guess{i}"))).status_code for i in range(12)]
+        codes = [
+            (await http.post(f"{base}/signup", data=_form(code=f"guess{i}"))).status_code for i in range(12)
+        ]
         assert codes[:10] == [403] * 10 and codes[10:] == [429, 429]
-        assert (await http.post(f"{base}/signup", data=_form())).status_code == 429  # even the right code, for a while
+        assert (
+            await http.post(f"{base}/signup", data=_form())
+        ).status_code == 429  # even the right code, for a while
     assert keys.users() == []
 
 
 async def test_sign_up_is_off_without_a_code(tmp_path: Path, fixture_card: dict[str, Any]) -> None:
     registry = Registry(tmp_path / "gw.db")
     registry.save(fixture_card)
-    gateway = Gateway(registry, Executor(EncryptedSessionStore(tmp_path / "gw.db", new_session_key()), Confirmer("s")))
+    gateway = Gateway(
+        registry, Executor(EncryptedSessionStore(tmp_path / "gw.db", new_session_key()), Confirmer("s"))
+    )
     with LiveServer(gateway.asgi_app(API_KEY, keys=KeyStore(tmp_path / "gw.db"), signup_code="")) as server:
         async with httpx.AsyncClient() as http:
             assert (await http.get(f"{server.url}/signup")).status_code == 404
@@ -243,22 +272,37 @@ def test_command_line(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
     assert main(["--db", db, "add", "erin", "--email", "erin@example.com"]) == 1  # name taken
 
 
-# ---- shared through a tunnel: the public address must pass MCP's host check ---------------------------------
+# ---- shared through a tunnel: the public address must pass MCP's host check --------------------------------
 
 
 async def test_the_public_address_passes_the_host_check(tmp_path: Path, fixture_card: dict[str, Any]) -> None:
-    """The MCP SDK rejects Host headers other than localhost (DNS-rebinding protection). Behind a tunnel or proxy,
+    """The MCP SDK rejects Host headers other than localhost (DNS-rebinding protection). Behind a tunnel or
+    proxy,
     requests arrive with PUBLIC_BASE_URL's host, which must be allowed; any other host is still refused."""
     registry = Registry(tmp_path / "gw.db")
     registry.save(fixture_card)
-    gateway = Gateway(registry, Executor(EncryptedSessionStore(tmp_path / "gw.db", new_session_key()), Confirmer("s")))
+    gateway = Gateway(
+        registry, Executor(EncryptedSessionStore(tmp_path / "gw.db", new_session_key()), Confirmer("s"))
+    )
     app = gateway.asgi_app(API_KEY, public_base_url="https://demo-site.ngrok-free.dev")
-    init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}}
-    headers = {"Authorization": f"Bearer {API_KEY}", "accept": "application/json, text/event-stream",
-               "mcp-protocol-version": "2025-06-18"}
+    init = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "t", "version": "0"},
+        },
+    }
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "accept": "application/json, text/event-stream",
+        "mcp-protocol-version": "2025-06-18",
+    }
     with LiveServer(app) as server:
         async with httpx.AsyncClient() as http:
+
             async def status(host: str, origin: str | None = None) -> int:
                 extra = {"host": host} | ({"origin": origin} if origin else {})
                 return (await http.post(f"{server.url}/mcp", json=init, headers=headers | extra)).status_code

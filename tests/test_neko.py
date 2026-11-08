@@ -33,7 +33,10 @@ IMAGE = NekoConfig().image
 @pytest.fixture(scope="module")
 def neko_image() -> None:
     try:
-        ok = subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True, timeout=20).returncode == 0
+        ok = (
+            subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True, timeout=20).returncode
+            == 0
+        )
     except (OSError, subprocess.TimeoutExpired):
         ok = False
     if not ok:
@@ -124,7 +127,8 @@ async def test_log_in_here_with_neko(
             )
             assert len(login_containers()) == 1
             stream_size = await frame.locator("video").evaluate("v => [v.videoWidth, v.videoHeight]")
-            # Playback-clock speed: ~1.0 when frames keep arriving (works in every engine, unlike frame counters).
+            # Playback-clock speed: ~1.0 when frames keep arriving (works in every engine, unlike frame
+            # counters).
             fps = await frame.locator("video").evaluate(
                 "async v => { const t = v.currentTime; await new Promise(r => setTimeout(r, 2000));"
                 " return Math.round((v.currentTime - t) / 2 * 100) / 100 }"
@@ -144,9 +148,11 @@ async def test_log_in_here_with_neko(
             await browser.close()
         print(f"{engine}: stream {stream_size[0]}x{stream_size[1]}, playback {fps}x")
 
-        assert envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "connected"
-        # Device identity: what we saved is exactly what the login browser sent the site when the user signed in
-        # (the site is on 127.0.0.1 inside the container, a secure context, so client hints are sent too).
+        assert (
+            envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "connected"
+        )
+        # Device identity: what we saved is exactly what the login browser sent the site when the user signed
+        # in (the site is on 127.0.0.1 inside the container, a secure context, so client hints are sent too).
         identity = store.identity("default", DOMAIN, "shop")
         assert identity is not None and identity.platform == "Linux" and identity.brand is None
         sent_at_login = state.last_headers["POST /login"]
@@ -154,7 +160,9 @@ async def test_log_in_here_with_neko(
             assert sent_at_login.get(name) == value, (name, sent_at_login.get(name), value)
         env = envelope(await client.call_tool(*act("list_orders", {})))
         assert env["status"] == "SUCCESS", env
-        later = state.last_headers["GET /api/account/orders"]  # and our server's request presents the same browser
+        later = state.last_headers[
+            "GET /api/account/orders"
+        ]  # and our server's request presents the same browser
         assert {k: later.get(k) for k in identity.headers()} == identity.headers()
 
     for _ in range(40):  # the login browser is removed once connected

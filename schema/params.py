@@ -26,9 +26,7 @@ def _type_error(spec: Param, value: Any) -> str | None:
     return None if ok else f"must be {'an' if t == 'integer' else 'a'} {t}"
 
 
-def coerce_params(
-    specs: dict[str, Param], given: dict[str, Any]
-) -> tuple[dict[str, Any], dict[str, str]]:
+def coerce_params(specs: dict[str, Param], given: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """Validate `given` and apply defaults.
 
     Returns (params, field_errors). `params` excludes `_`-prefixed keys and
@@ -72,9 +70,9 @@ def tool_description(action: Action) -> str:
         text += " This action spends money."
     if action.requires_confirmation:
         text += (
-            " Requires the user's confirmation: the first call sends nothing and returns NEEDS_CONFIRMATION with a "
-            "summary. Show that summary to the user and wait for their explicit approval before calling again "
-            "with _confirmation_id. Their original request is not approval."
+            " Requires the user's confirmation: the first call sends nothing and returns NEEDS_CONFIRMATION "
+            "with a summary. Show that summary to the user and wait for their explicit approval before "
+            "calling again with _confirmation_id. Their original request is not approval."
         )
     return text
 
@@ -107,9 +105,9 @@ def input_schema(specs: dict[str, Param], requires_confirmation: bool) -> dict[s
     if requires_confirmation:
         props[CONFIRMATION_ARG] = {
             "type": "string",
-            "description": "Confirmation id from a previous NEEDS_CONFIRMATION result. Only pass it after the "
-            "user has seen that result's summary and explicitly approved it; then call again with identical "
-            "params plus this id. Never pass it on your own judgement.",
+            "description": "Confirmation id from a previous NEEDS_CONFIRMATION result. Only pass it after "
+            "the user has seen that result's summary and explicitly approved it; then call again with "
+            "identical params plus this id. Never pass it on your own judgement.",
         }
     schema: dict[str, Any] = {"type": "object", "properties": props, "additionalProperties": False}
     required = [n for n, s in specs.items() if s.required]

@@ -77,7 +77,9 @@ async def test_two_step_success(executor: Executor, stored: StoredCard) -> None:
     assert env.data == [{"id": "p2", "sku": "SKU-002", "name": "Floor lamp", "price": 12, "colour": None}]
 
 
-async def test_unknown_item_zero_match_is_empty(executor: Executor, stored: StoredCard, site_url: str) -> None:
+async def test_unknown_item_zero_match_is_empty(
+    executor: Executor, stored: StoredCard, site_url: str
+) -> None:
     env = await call(executor, stored, "get_product", sku="SKU-NOPE")
     assert env.status == R.EMPTY and env.data == [] and env.error is None
     assert hits(site_url) == {"GET /api/lookup": 1}  # remaining steps were not run
@@ -106,7 +108,10 @@ async def test_cookie_set_in_step_one_is_sent_in_step_two(executor: Executor, st
         ({"query": 5}, "query: must be a string"),
         ({"query": "x", "page": "2"}, "page: must be an integer"),
         ({"query": "x", "color": "red"}, "color: unknown param"),
-        ({"query": "x", "_confirmation_id": "c_x"}, "_confirmation_id: this action does not take a confirmation id"),
+        (
+            {"query": "x", "_confirmation_id": "c_x"},
+            "_confirmation_id: this action does not take a confirmation id",
+        ),
     ],
 )
 async def test_bad_params(
@@ -134,14 +139,18 @@ async def test_auth_required(executor: Executor, stored: StoredCard, site_url: s
     assert hits(site_url) == {}
 
 
-async def test_logged_in_success(executor: Executor, stored: StoredCard, sessions: InMemorySessionStore) -> None:
+async def test_logged_in_success(
+    executor: Executor, stored: StoredCard, sessions: InMemorySessionStore
+) -> None:
     login(sessions)
     env = await call(executor, stored, "list_orders")
     assert env.status == R.SUCCESS
     assert env.data == [{"id": "o1", "total": 30}, {"id": "o2", "total": 12}]
 
 
-async def test_auth_expired_on_401(executor: Executor, stored: StoredCard, sessions: InMemorySessionStore) -> None:
+async def test_auth_expired_on_401(
+    executor: Executor, stored: StoredCard, sessions: InMemorySessionStore
+) -> None:
     login(sessions, sid="sid-revoked")
     env = await call(executor, stored, "list_orders")
     assert env.status == R.AUTH_EXPIRED
@@ -182,7 +191,9 @@ async def test_needs_confirmation_then_success(executor: Executor, stored: Store
     assert "Add a product to the cart." in first.confirmation.summary
     assert '"qty":2' in first.confirmation.summary
     assert hits(site_url) == {}  # nothing sent
-    second = await call(executor, stored, "add_to_cart", sku="SKU-001", qty=2, _confirmation_id=first.confirmation.id)
+    second = await call(
+        executor, stored, "add_to_cart", sku="SKU-001", qty=2, _confirmation_id=first.confirmation.id
+    )
     assert second.status == R.SUCCESS and second.data is None
     assert httpx.get(f"{site_url}/api/cart/SKU-001").json() == {"in_cart": True, "qty": 2}
 
@@ -199,7 +210,9 @@ async def test_default_applied_before_confirmation(executor: Executor, stored: S
     # qty defaults to 1, so passing it explicitly is the same canonical params.
     first = await call(executor, stored, "add_to_cart", sku="SKU-003")
     assert first.confirmation is not None
-    env = await call(executor, stored, "add_to_cart", sku="SKU-003", qty=1, _confirmation_id=first.confirmation.id)
+    env = await call(
+        executor, stored, "add_to_cart", sku="SKU-003", qty=1, _confirmation_id=first.confirmation.id
+    )
     assert env.status == R.SUCCESS
 
 
@@ -295,7 +308,9 @@ async def test_changed_signal_is_page_changed(executor: Executor, stored: Stored
     assert hits(site_url) == {"GET /api/gql": 1}  # no probe needed
 
 
-async def test_404_with_working_example_is_error(executor: Executor, stored: StoredCard, site_url: str) -> None:
+async def test_404_with_working_example_is_error(
+    executor: Executor, stored: StoredCard, site_url: str
+) -> None:
     env = await call(executor, stored, "get_item", id="nope")
     assert env.status == R.ERROR
     assert env.error is not None and "probably bad" in env.error.message and env.error.step == "item"
@@ -344,7 +359,11 @@ async def test_healing_hooks_for_page_changed(sessions: InMemorySessionStore, st
 
 @pytest.mark.parametrize(
     ("mode", "fragment"),
-    [("structure", "missing ['$.results']"), ("html", "content type 'text/html"), ("status", "unexpected HTTP 204")],
+    [
+        ("structure", "missing ['$.results']"),
+        ("html", "content type 'text/html"),
+        ("status", "unexpected HTTP 204"),
+    ],
 )
 async def test_changed_structure(executor: Executor, stored: StoredCard, mode: str, fragment: str) -> None:
     env = await call(executor, stored, "changed_structure", mode=mode)

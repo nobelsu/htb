@@ -110,7 +110,9 @@ async def test_write_blocked_without_2xx_is_resent_higher(
     assert cart(site_url, "G-1") == {"in_cart": True, "qty": 1}  # written exactly once
 
 
-async def test_write_blocked_with_2xx_is_not_resent(executor: Executor, stored: StoredCard, site_url: str) -> None:
+async def test_write_blocked_with_2xx_is_not_resent(
+    executor: Executor, stored: StoredCard, site_url: str
+) -> None:
     env = await confirmed(executor, stored, "guarded_add_soft", sku="S-1")
     assert env.status == R.BLOCKED and env.meta.tier == "http"
     assert env.error is not None and "not re-sent" in env.error.message
@@ -118,7 +120,9 @@ async def test_write_blocked_with_2xx_is_not_resent(executor: Executor, stored: 
     assert cart(site_url, "S-1") == {"in_cart": True, "qty": 1}  # the write landed once; no duplicate
 
 
-async def test_block_before_write_step_escalates(executor: Executor, stored: StoredCard, site_url: str) -> None:
+async def test_block_before_write_step_escalates(
+    executor: Executor, stored: StoredCard, site_url: str
+) -> None:
     env = await confirmed(executor, stored, "guarded_token_add", sku="T-1")
     assert env.status == R.SUCCESS and env.meta.tier == "impersonate"
     h = hits(site_url)

@@ -1,9 +1,8 @@
 """Neko login browsers: one short-lived Docker container per login, streamed to the user over WebRTC.
-
-Each container runs Neko (https://github.com/m1k1o/neko) with Chromium opened in kiosk mode on the site's login
-page. The user drives it through Neko's client, which the gateway proxies under /neko/{token}/. We read the
-browser's cookies over Chrome DevTools (browser-level Storage.getCookies, so DevTools stays disabled for pages)
-and stop the container once the login is captured or the link expires.
+ Each container runs Neko (https://github.com/m1k1o/neko) with Chromium opened in kiosk mode on the site's
+login page. The user drives it through Neko's client, which the gateway proxies under /neko/{token}/. We read
+the browser's cookies over Chrome DevTools (browser-level Storage.getCookies, so DevTools stays disabled for
+pages) and stop the container once the login is captured or the link expires.
 """
 
 from __future__ import annotations
@@ -62,7 +61,9 @@ user=%(ENV_USER)s
 """
 
 
-PROXY_PORT = 3128  # the in-container helper Chromium uses as its proxy (adds the residential proxy's credentials)
+PROXY_PORT = (
+    3128  # the in-container helper Chromium uses as its proxy (adds the residential proxy's credentials)
+)
 PROXY_CONF = """
 [program:proxy_auth]
 command=/usr/bin/python3 /etc/neko/proxy_auth.py {port} /etc/neko/upstream.json
@@ -76,8 +77,10 @@ redirect_stderr=true
 def chromium_conf(
     cfg: NekoConfig, start_url: str, forwards: list[str], proxy: ProxySpec | None, workdir: Path
 ) -> str:
-    """Supervisor config for the login browser. With a residential proxy, Chromium goes through the in-container
-    helper (Chromium can't send proxy credentials); the credentials go only into a private file for the helper,
+    """Supervisor config for the login browser. With a residential proxy, Chromium goes through the
+    in-container
+    helper (Chromium can't send proxy credentials); the credentials go only into a private file for the
+    helper,
     which runs as root, never onto a command line Chromium (or the user) could see."""
     workdir.mkdir(parents=True, exist_ok=True)
     flags, extra = "", ""
@@ -97,16 +100,21 @@ def chromium_conf(
             flags += " " + _shell_quote("--proxy-bypass-list=<-loopback>")
         extra = PROXY_CONF.format(port=PROXY_PORT)
     elif proxy is not None:
-        log.warning("the login browser supports http:// proxies only; signing in goes direct (%s)", proxy.redacted)
-    return CHROMIUM_CONF.format(
-        width=cfg.width,
-        height=cfg.height,
-        scale=cfg.scale,
-        start_url=_conf_value(_shell_quote(start_url)),
-        forwards=_conf_value(" ".join(forwards)),
-        accept_lang=_conf_value(_shell_quote(cfg.accept_languages)),
-        proxy_flags=_conf_value(flags),
-    ) + extra
+        log.warning(
+            "the login browser supports http:// proxies only; signing in goes direct (%s)", proxy.redacted
+        )
+    return (
+        CHROMIUM_CONF.format(
+            width=cfg.width,
+            height=cfg.height,
+            scale=cfg.scale,
+            start_url=_conf_value(_shell_quote(start_url)),
+            forwards=_conf_value(" ".join(forwards)),
+            accept_lang=_conf_value(_shell_quote(cfg.accept_languages)),
+            proxy_flags=_conf_value(flags),
+        )
+        + extra
+    )
 
 
 def _conf_value(text: str) -> str:
@@ -118,8 +126,8 @@ def _conf_value(text: str) -> str:
 @dataclass
 class NekoConfig:
     image: str = "ghcr.io/m1k1o/neko/chromium:latest"
-    # The address users' browsers reach for WebRTC media (NAT1TO1). "auto" = this machine's network IP, detected
-    # per login. Never advertise loopback by default: Firefox refuses WebRTC to 127.0.0.1.
+    # The address users' browsers reach for WebRTC media (NAT1TO1). "auto" = this machine's network IP,
+    # detected per login. Never advertise loopback by default: Firefox refuses WebRTC to 127.0.0.1.
     public_ip: str = "auto"
     udp_ports: tuple[int, int] = (52000, 52099)  # one per running login, published to the host (UDP and TCP)
     transports: tuple[str, ...] = ("udp", "tcp")  # TCP for browsers/networks that won't do WebRTC over UDP
@@ -129,7 +137,9 @@ class NekoConfig:
     fps: int = 30
     start_timeout_s: float = 60.0
     ice_servers: str = ""  # optional JSON list of STUN/TURN servers for users behind strict NATs
-    accept_languages: str = "en-US,en"  # the login browser's languages; saved with the sign-in (device identity)
+    accept_languages: str = (
+        "en-US,en"  # the login browser's languages; saved with the sign-in (device identity)
+    )
     docker: str = "docker"
 
 
@@ -192,7 +202,9 @@ class NekoManager:
         """Run the docker CLI in a worker thread (no asyncio subprocess transports to outlive the loop)."""
 
         def run() -> subprocess.CompletedProcess[str]:
-            return subprocess.run([self.config.docker, *args], capture_output=True, text=True, timeout=timeout)
+            return subprocess.run(
+                [self.config.docker, *args], capture_output=True, text=True, timeout=timeout
+            )
 
         try:
             proc = await asyncio.to_thread(run)
@@ -234,7 +246,11 @@ class NekoManager:
             if existing is not None:
                 return existing
             udp = next(
-                (p for p in range(self.config.udp_ports[0], self.config.udp_ports[1] + 1) if p not in self._udp_in_use),
+                (
+                    p
+                    for p in range(self.config.udp_ports[0], self.config.udp_ports[1] + 1)
+                    if p not in self._udp_in_use
+                ),
                 None,
             )
             if udp is None:
@@ -277,24 +293,37 @@ class NekoManager:
             env["NEKO_WEBRTC_ICESERVERS_FRONTEND"] = cfg.ice_servers
             env["NEKO_WEBRTC_ICESERVERS_BACKEND"] = cfg.ice_servers
         args = [
-            "run", "-d", "--rm", "--shm-size=2g", "--memory=1g",
-            "--label", f"{LABEL}={token[:12]}",
+            "run",
+            "-d",
+            "--rm",
+            "--shm-size=2g",
+            "--memory=1g",
+            "--label",
+            f"{LABEL}={token[:12]}",
             "--add-host=host.docker.internal:host-gateway",
-            "-p", f"127.0.0.1:{http_port}:8080", "-p", f"127.0.0.1:{cdp_port}:9223",
+            "-p",
+            f"127.0.0.1:{http_port}:8080",
+            "-p",
+            f"127.0.0.1:{cdp_port}:9223",
         ]
         for transport in cfg.transports:
             args += ["-p", f"{udp}:{udp}/{transport}"]
         for key, value in env.items():
             args += ["-e", f"{key}={value}"]
         args += [
-            "-v", f"{workdir}/chromium.conf:/etc/neko/supervisord/chromium.conf:ro",
-            "-v", f"{ASSETS}/policies.json:/etc/chromium/policies/managed/policies.json:ro",
-            "-v", f"{ASSETS}/forward.py:/etc/neko/forward.py:ro",
+            "-v",
+            f"{workdir}/chromium.conf:/etc/neko/supervisord/chromium.conf:ro",
+            "-v",
+            f"{ASSETS}/policies.json:/etc/chromium/policies/managed/policies.json:ro",
+            "-v",
+            f"{ASSETS}/forward.py:/etc/neko/forward.py:ro",
         ]
         if (workdir / "upstream.json").exists():
             args += [
-                "-v", f"{workdir}/upstream.json:/etc/neko/upstream.json:ro",
-                "-v", f"{ASSETS}/proxy_auth.py:/etc/neko/proxy_auth.py:ro",
+                "-v",
+                f"{workdir}/upstream.json:/etc/neko/upstream.json:ro",
+                "-v",
+                f"{ASSETS}/proxy_auth.py:/etc/neko/proxy_auth.py:ro",
             ]
         args.append(cfg.image)
         container = await self._docker(*args)
@@ -311,7 +340,10 @@ class NekoManager:
     async def _wait_ready(self, session: NekoSession) -> None:
         deadline = asyncio.get_running_loop().time() + self.config.start_timeout_s
         async with httpx.AsyncClient(timeout=2) as client:
-            for url in (f"{session.upstream}{session.prefix}/", f"http://127.0.0.1:{session.cdp_port}/json/version"):
+            for url in (
+                f"{session.upstream}{session.prefix}/",
+                f"http://127.0.0.1:{session.cdp_port}/json/version",
+            ):
                 while True:
                     try:
                         if (await client.get(url)).status_code == 200:
@@ -345,13 +377,16 @@ class NekoManager:
         return {c["name"]: c["value"] for c in found if _applies(c, base_url)}
 
     async def identity(self, token: str) -> BrowserIdentity | None:
-        """The login browser's device identity (version, user-agent, platform, languages), saved with the sign-in."""
+        """The login browser's device identity (version, user-agent, platform, languages), saved with the
+        sign-in."""
         session = self._sessions.get(token)
         if session is None:
             return None
         async with httpx.AsyncClient(timeout=5) as client:
             info = (await client.get(f"http://127.0.0.1:{session.cdp_port}/json/version")).json()
-        brand = "Google Chrome" if "google-chrome" in self.config.image else None  # Neko's chromium image: none
+        brand = (
+            "Google Chrome" if "google-chrome" in self.config.image else None
+        )  # Neko's chromium image: none
         return BrowserIdentity.from_devtools(
             info, brand=brand, accept_language=accept_language_header(self.config.accept_languages)
         )
@@ -378,10 +413,7 @@ def _applies(cookie: dict[str, Any], url: str) -> bool:
     parts = urlsplit(url)
     host, path = parts.hostname or "", parts.path or "/"
     domain = str(cookie.get("domain", "")).lower()
-    if domain.startswith("."):
-        domain_ok = host == domain[1:] or host.endswith(domain)
-    else:
-        domain_ok = host == domain
+    domain_ok = (host == domain[1:] or host.endswith(domain)) if domain.startswith(".") else host == domain
     cpath = str(cookie.get("path", "/")) or "/"
     path_ok = path == cpath or path.startswith(cpath.rstrip("/") + "/") or cpath == "/"
     secure_ok = not cookie.get("secure") or parts.scheme == "https"

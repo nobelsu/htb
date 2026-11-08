@@ -3,9 +3,8 @@
 When a heal job runs, this re-records the broken actions by replaying their saved recordings
 (`captures/<domain>/<action>/`) in a headless browser, then re-maps the whole site from every recording and
 returns the new card. The runtime's HealManager then decides, action by action, what goes live.
-
-Decisions (DECISIONS.md, "Heal adapter"): only the broken actions are re-recorded (faster); the replay uses the
-user's current sign-in from our encrypted store, else the sign-in saved inside the recording.
+ Decisions (DECISIONS.md, "Heal adapter"): only the broken actions are re-recorded (faster); the replay uses
+the user's current sign-in from our encrypted store, else the sign-in saved inside the recording.
 """
 
 from __future__ import annotations
@@ -85,7 +84,11 @@ class MapperRemapper:
         with tempfile.TemporaryDirectory(prefix="spider-heal-") as tmp:  # private (0700), removed afterwards
             for name in actions:
                 cookies = sign_ins.get(name)
-                state = _write_storage_state(Path(tmp) / f"{name}.state.json", card.base_url, cookies) if cookies else None
+                state = (
+                    _write_storage_state(Path(tmp) / f"{name}.state.json", card.base_url, cookies)
+                    if cookies
+                    else None
+                )
                 _, warnings = recapture(domain_dir, task=name, state=state, headless=self.headless)
                 for warning in warnings:
                     log.info("replay %s: %s", card.domain, warning)
@@ -108,8 +111,14 @@ class MapperRemapper:
 def _write_storage_state(path: Path, base_url: str, cookies: Cookies) -> Path:
     """The user's sign-in as a Playwright storage state, readable only by us. Values are never logged."""
     url = urlsplit(base_url)
-    common = {"domain": url.hostname or "", "path": "/", "expires": -1, "httpOnly": False,
-              "secure": url.scheme == "https", "sameSite": "Lax"}
+    common = {
+        "domain": url.hostname or "",
+        "path": "/",
+        "expires": -1,
+        "httpOnly": False,
+        "secure": url.scheme == "https",
+        "sameSite": "Lax",
+    }
     state = {"cookies": [{"name": k, "value": v, **common} for k, v in cookies.items()], "origins": []}
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:

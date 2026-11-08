@@ -65,7 +65,8 @@ class BrowserPool:
             return self._pw
 
     async def _real_user_agent(self, pw: Playwright) -> str | None:
-        """Headless Chrome advertises itself as 'HeadlessChrome'; use the same string a headed Chrome sends."""
+        """Headless Chrome advertises itself as 'HeadlessChrome'; use the same string a headed Chrome
+        sends."""
         if not self.config.headless:
             return None
         browser = await pw.chromium.launch(channel=self.config.channel, headless=True)
@@ -96,12 +97,21 @@ class BrowserPool:
             if self._user_agent:
                 kwargs["user_agent"] = self._user_agent
             if proxy is not None:  # the sign-in's residential proxy: fixed for this profile's warm browser
-                kwargs["proxy"] = {"server": proxy.server, "username": proxy.username, "password": proxy.password}
+                kwargs["proxy"] = {
+                    "server": proxy.server,
+                    "username": proxy.username,
+                    "password": proxy.password,
+                }
                 if proxy.local:
                     kwargs["args"] = ["--proxy-bypass-list=<-loopback>"]
             context = await pw.chromium.launch_persistent_context(str(path), **kwargs)
-            log.info("browser for %s/%s/%s up in %.1fs", key.user, key.domain, key.provider or ANON,
-                     time.monotonic() - started)
+            log.info(
+                "browser for %s/%s/%s up in %.1fs",
+                key.user,
+                key.domain,
+                key.provider or ANON,
+                time.monotonic() - started,
+            )
             entry = _Entry(context=context, last_used=time.monotonic())
 
             def forget(_ctx: BrowserContext, k: ProfileKey = key) -> None:
@@ -127,7 +137,9 @@ class BrowserPool:
 
     async def close_idle(self) -> list[ProfileKey]:
         now = time.monotonic()
-        idle = [k for k, e in self._entries.items() if e.leases == 0 and now - e.last_used >= self.config.idle_s]
+        idle = [
+            k for k, e in self._entries.items() if e.leases == 0 and now - e.last_used >= self.config.idle_s
+        ]
         for key in idle:
             entry = self._entries.pop(key, None)
             if entry is not None:
@@ -135,7 +147,8 @@ class BrowserPool:
         return idle
 
     async def delete_profile(self, key: ProfileKey) -> bool:
-        """Close the profile's browser (even mid-use) and delete its folder. Returns whether a folder existed."""
+        """Close the profile's browser (even mid-use) and delete its folder. Returns whether a folder
+        existed."""
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
             entry = self._entries.pop(key, None)

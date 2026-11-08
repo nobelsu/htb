@@ -1,6 +1,7 @@
-"""The Margin design every page shares (DECISIONS.md L13): a left panel where a spider spins orb webs, a hairline,
-and a calm column of small type on the right, centred vertically. Linen palette (paper, ink, umber, brick), IBM
-Plex Sans, stroke icons instead of symbols, minimal copy. Errors show next to the field they are about.
+"""The Margin design every page shares (DECISIONS.md L13): a left panel where a spider spins orb webs, a
+hairline, and a calm column of small type on the right, centred vertically. Linen palette (paper, ink, umber,
+brick), IBM Plex Sans, stroke icons instead of symbols, minimal copy. Errors show next to the field they are
+about.
 """
 
 from __future__ import annotations
@@ -21,8 +22,8 @@ FONTS = (
     '&family=IBM+Plex+Mono:wght@400&display=swap">'
 )
 
-# Linen: paper, ink, a muted ink, umber for actions, brick for errors. `.inv` is the same palette at night (the
-# finished website sign-in turns dark).
+# Linen: paper, ink, a muted ink, umber for actions, brick for errors. `.inv` is the same palette at night
+# (the finished website sign-in turns dark).
 CSS = """
 :root,.wrap{--paper:#F5EDE2;--ink:#2A2421;--muted:#6A5E55;--action:#6B5A35;--on-action:#F5EDE2;--error:#9C3F33;
   --line:#E0D3C1;--tint:#EDE2D2}
@@ -102,8 +103,8 @@ button.link{border:0;background:none;color:var(--action);font:inherit;font-size:
 }
 """
 
-# Motion, kept calm: lines rise into place on load, buttons darken on hover, waiting sign-ins breathe. All of it
-# stops for people who ask their system to reduce motion.
+# Motion, kept calm: lines rise into place on load, buttons darken on hover, waiting sign-ins breathe. All of
+# it stops for people who ask their system to reduce motion.
 MOTION_CSS = """
 .pill,.bar,.tile,.sq{transition:filter .2s,background-color .2s,color .2s}
 .pill:hover,.bar:hover{filter:brightness(.9)}
@@ -319,8 +320,9 @@ SPIDER_SCRIPT = """<script>
 })();
 </script>"""
 
-# Form errors: the browser's "Please fill out this field" bubbles are replaced by a line under the field itself,
-# naming it, and the field is marked. Server errors show as a notice at the top. Runs with or without motion.
+# Form errors: the browser's "Please fill out this field" bubbles are replaced by a line under the field
+# itself, naming it, and the field is marked. Server errors show as a notice at the top. Runs with or without
+# motion.
 FORM_SCRIPT = """<script>
 (() => {
   const ALERT = `{ALERT_SVG}`;
@@ -367,7 +369,10 @@ _ICONS = {
     "link": '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/>'
     '<path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
     "signout": '<path d="M14 4h6v16h-6"/><path d="M10 8l-4 4 4 4"/><path d="M6 12h10"/>',
-    "user": '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-3.9 3.1-7 7-7s7 3.1 7 7"/><path d="M19 8v6"/><path d="M16 11h6"/>',
+    "user": (
+        '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-3.9 3.1-7 7-7s7 3.1 7 7"/>'
+        '<path d="M19 8v6"/><path d="M16 11h6"/>'
+    ),
     "check": '<circle cx="12" cy="12" r="10"/><path d="M7.5 12.5l3 3 6-6.5"/>',
     "clock": '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
     "alert": '<circle cx="12" cy="12" r="10"/><path d="M12 7v6"/><path d="M12 16.5v.01"/>',
@@ -414,7 +419,7 @@ def page(
         f'<body><div class="wrap{" inv" if inverted else ""}">'
         '<aside class="art"><canvas id="web" role="img" aria-label="A spider spinning a web"></canvas>'
         f'<a class="brand" href="/">{esc(PRODUCT_NAME)}</a>'
-        f'{f"<nav class=foot>{foot}</nav>" if foot else ""}</aside>'
+        f"{f'<nav class=foot>{foot}</nav>' if foot else ''}</aside>"
         '<div class="hair"></div>'
         f'<main class="main">{heading}{body}</main>'
         f"</div>{script}{FORM_SCRIPT}{SPIDER_SCRIPT}{MOTION_SCRIPT}</body></html>"
@@ -428,7 +433,9 @@ def bar_link(text: str, href: str, *, target_blank: bool = False) -> str:
 
 
 def bar_button(text: str, *, name: str = "", value: str = "", button_id: str = "") -> str:
-    attrs = (f' name="{esc(name)}" value="{esc(value)}"' if name else "") + (f' id="{esc(button_id)}"' if button_id else "")
+    attrs = (f' name="{esc(name)}" value="{esc(value)}"' if name else "") + (
+        f' id="{esc(button_id)}"' if button_id else ""
+    )
     return f'<button class="bar" type="submit"{attrs}>{esc(text)}{icon("arrow")}</button>'
 
 
@@ -442,9 +449,16 @@ def notice(text: str, *, error: bool = True) -> str:
 
 
 def field(
-    name: str, label: str, kind: str = "text", value: str = "", autocomplete: str = "off", *, code: bool = False
+    name: str,
+    label: str,
+    kind: str = "text",
+    value: str = "",
+    autocomplete: str = "off",
+    *,
+    code: bool = False,
 ) -> str:
-    """One labelled input. `code=True` is for a code someone was given (an invite code): plain text, and browsers
+    """One labelled input. `code=True` is for a code someone was given (an invite code): plain text, and
+    browsers
     and password managers are told not to fill it from saved logins."""
     shown = f' value="{esc(value)}"' if value and kind != "password" else ""
     extra = (

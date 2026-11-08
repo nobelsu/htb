@@ -20,9 +20,25 @@ from schema.card import Tier
 
 # Headers the browser sets itself; fetch() would ignore or reject them.
 FORBIDDEN = {
-    "accept-charset", "accept-encoding", "connection", "content-length", "cookie", "cookie2", "date", "dnt",
-    "expect", "host", "keep-alive", "origin", "referer", "te", "trailer", "transfer-encoding", "upgrade",
-    "user-agent", "via",
+    "accept-charset",
+    "accept-encoding",
+    "connection",
+    "content-length",
+    "cookie",
+    "cookie2",
+    "date",
+    "dnt",
+    "expect",
+    "host",
+    "keep-alive",
+    "origin",
+    "referer",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "user-agent",
+    "via",
 }
 
 FETCH_JS = """async ([method, url, headers, body]) => {
@@ -115,7 +131,9 @@ class BrowserSession:
                 headers.setdefault("content-type", "application/json")
         try:
             async with asyncio.timeout(max(timeout_s, 0.001)):
-                result: dict[str, Any] = await self._page.evaluate(FETCH_JS, [req.method, req.url, headers, body])
+                result: dict[str, Any] = await self._page.evaluate(
+                    FETCH_JS, [req.method, req.url, headers, body]
+                )
         except TimeoutError:
             raise TransportTimeout(f"no response within {timeout_s:.1f}s") from None
         except PlaywrightError as e:

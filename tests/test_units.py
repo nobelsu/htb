@@ -55,7 +55,9 @@ def test_confirmation_other_secret_and_garbage() -> None:
 # ---- signals ---------------------------------------------------------------
 
 
-def resp(status: int = 200, text: str = "", url: str = "https://s.test/x", hops: list | None = None) -> HttpResponse:  # type: ignore[type-arg]
+def resp(
+    status: int = 200, text: str = "", url: str = "https://s.test/x", hops: list | None = None
+) -> HttpResponse:  # type: ignore[type-arg]
     return HttpResponse(status=status, headers={}, text=text, final_url=url, hops=hops or [])
 
 
@@ -87,14 +89,19 @@ def ex(**kw: str) -> Extract:
 
 
 VIEW = ResponseView(
-    text='<meta name="csrf" content="tok1"><script id="__NEXT_DATA__" type="x">{"props":{"pageProps":{"n":1}}}</script>',
+    text=(
+        '<meta name="csrf" content="tok1">'
+        '<script id="__NEXT_DATA__" type="x">{"props":{"pageProps":{"n":1}}}</script>'
+    ),
     headers={"x-total": "42", "content-type": "text/html"},
     cookies={"flow": "abc"},
 )
 
 
 def test_regex_extract() -> None:
-    assert run_extract(ex(**{"from": "body", "type": "regex", "expr": 'name="csrf" content="([^"]+)"'}), VIEW) == ["tok1"]
+    assert run_extract(
+        ex(**{"from": "body", "type": "regex", "expr": 'name="csrf" content="([^"]+)"'}), VIEW
+    ) == ["tok1"]
 
 
 def test_regex_parse_json_then() -> None:
@@ -139,7 +146,12 @@ def test_project() -> None:
 
 def test_redact_headers() -> None:
     out = redact_headers({"csrf-token": "x", "Authorization": "Bearer y", "Cookie": "a=b", "accept": "json"})
-    assert out == {"csrf-token": "[redacted]", "Authorization": "[redacted]", "Cookie": "[redacted]", "accept": "json"}
+    assert out == {
+        "csrf-token": "[redacted]",
+        "Authorization": "[redacted]",
+        "Cookie": "[redacted]",
+        "accept": "json",
+    }
 
 
 def test_dev_env_sessions() -> None:
@@ -163,8 +175,16 @@ def test_regex_extract_resolves_streamed_rows() -> None:
     )
     view = ResponseView(body, {"content-type": "application/octet-stream"}, {})
     rows_expr = r'(?m)^[0-9a-f]+:(\["\$","\$L1".*\])$'
-    e = ex(**{"from": "body", "type": "regex", "expr": rows_expr, "parse": "json", "resolve": "rows",
-              "then": "$[3]"})
+    e = ex(
+        **{
+            "from": "body",
+            "type": "regex",
+            "expr": rows_expr,
+            "parse": "json",
+            "resolve": "rows",
+            "then": "$[3]",
+        }
+    )
     acme, bright = run_extract(e, view)
     assert acme["info"] == {"name": "Acme Labs", "followers": "1,200 followers"}  # "$2" filled in
     assert acme["price"] == "$$5"  # escaped text is left alone

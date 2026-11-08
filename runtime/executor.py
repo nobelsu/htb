@@ -26,9 +26,9 @@ from runtime.template import (
     MissingCookie,
     StepValueError,
     TemplateError,
-    to_int,
     build_request,
     merge_headers,
+    to_int,
 )
 from runtime.tiers import (
     LADDER,
@@ -140,7 +140,9 @@ class Executor:
         self.healing: HealingHooks = healing or NoHealing()
         self.action_cap_s = action_cap_s
 
-    async def run(self, stored: StoredCard, action_name: str, args: dict[str, Any], user: str = "default") -> Envelope:
+    async def run(
+        self, stored: StoredCard, action_name: str, args: dict[str, Any], user: str = "default"
+    ) -> Envelope:
         action = stored.card.action(action_name)
         if action is None:
             raise KeyError(f"{stored.domain} has no action {action_name!r}")
@@ -254,7 +256,11 @@ class Executor:
 
     def proxy_for(self, user: str, domain: str, provider_id: str, base_url: str) -> ProxySpec | None:
         """The sign-in's residential proxy session (None: go direct)."""
-        return self.proxies.for_sign_in(user, domain, provider_id, base_url) if self.proxies is not None else None
+        return (
+            self.proxies.for_sign_in(user, domain, provider_id, base_url)
+            if self.proxies is not None
+            else None
+        )
 
     def identity_for(self, user: str, domain: str, provider_id: str) -> BrowserIdentity | None:
         """The device identity saved with this sign-in (None: tiers use DEFAULT_IDENTITY)."""
@@ -262,7 +268,9 @@ class Executor:
         found = lookup(user, domain, provider_id) if lookup is not None else None
         return found if isinstance(found, BrowserIdentity) else None
 
-    def _save_refreshed(self, user: str, domain: str, provider_id: str, before: Cookies, after: Cookies) -> None:
+    def _save_refreshed(
+        self, user: str, domain: str, provider_id: str, before: Cookies, after: Cookies
+    ) -> None:
         """Cookie rotation (DECISIONS.md): save the cookies as the site left them after a successful run."""
         if not after or after == before:
             return  # nothing changed, or we saw no cookies at all (that isn't the site signing us out)
@@ -270,7 +278,13 @@ class Executor:
         if refresh is None or not refresh(user, domain, provider_id, before, after):
             return
         changed = sum(1 for name in before.keys() | after.keys() if before.get(name) != after.get(name))
-        log.info("saved a refreshed sign-in for %s/%s/%s (%d cookie(s) changed)", user, domain, provider_id, changed)
+        log.info(
+            "saved a refreshed sign-in for %s/%s/%s (%d cookie(s) changed)",
+            user,
+            domain,
+            provider_id,
+            changed,
+        )
 
     @staticmethod
     def session_verdict(card: Card, provider: ConnectProvider, resp: HttpResponse) -> ResultCode | None:
@@ -323,7 +337,11 @@ class Executor:
             if stop.code == R.PAGE_CHANGED and primary:
                 heal = self.healing.page_changed(card.domain, action.name, stop.message, user)
             error = ErrorInfo(
-                code=stop.code, message=stop.message, hint=stop.hint, step=stop.step, retry_after_s=stop.retry_after_s
+                code=stop.code,
+                message=stop.message,
+                hint=stop.hint,
+                step=stop.step,
+                retry_after_s=stop.retry_after_s,
             )
             return envelope(stop.code, data, error=error, heal=heal)
 
@@ -382,6 +400,7 @@ class Executor:
             identity=identity,
             proxy=proxy,
         )
+
         async def attempt() -> tuple[Envelope, int | None]:
             try:
                 await self._prepare(run)
@@ -441,7 +460,11 @@ class Executor:
         cookies = run.session.cookies
         await run.session.aclose()
         run.session = self.tiers[to].open(
-            run.card.base_url, cookies, ProfileKey(run.user, run.card.domain, run.auth), run.identity, run.proxy
+            run.card.base_url,
+            cookies,
+            ProfileKey(run.user, run.card.domain, run.auth),
+            run.identity,
+            run.proxy,
         )
         await self._prepare(run)
         log.info("%s.%s escalating %s -> %s", run.card.domain, run.action.name, run.tier[0], to)
@@ -528,7 +551,9 @@ class Executor:
             # Row 4: timeout / 5xx (and transport failures).
             if is_write:
                 if sent:
-                    raise Stop(R.UNKNOWN_OUTCOME, f"{problem}; the write may or may not have happened", step=step.id)
+                    raise Stop(
+                        R.UNKNOWN_OUTCOME, f"{problem}; the write may or may not have happened", step=step.id
+                    )
                 raise Stop(R.ERROR, f"{problem}; the write was not sent", step=step.id)
             if attempt == 1 and run.remaining_s() > 0:
                 continue
@@ -558,7 +583,9 @@ class Executor:
             raise Stop(R.AUTH_EXPIRED, why, step=step_id, hint=self._reconnect(run))
         blocked = match_signal(card.blocked_signals, resp)
         if blocked:
-            raise Stop(R.BLOCKED, f"{where} looks bot-blocked (matched {blocked})", step=step_id, http_status=status)
+            raise Stop(
+                R.BLOCKED, f"{where} looks bot-blocked (matched {blocked})", step=step_id, http_status=status
+            )
         if not listed and status >= 500:
             return True
         if not listed and 400 <= status < 500:
@@ -567,11 +594,17 @@ class Executor:
                 raise Stop(R.PAGE_CHANGED, f"HTTP {status} from {where} (matched {changed})", step=step_id)
             raise await self._probe_verdict(run, status, where, step_id)
         if not listed:
-            raise Stop(R.PAGE_CHANGED, f"unexpected HTTP {status} from {where}, expected {expect.status}", step=step_id)
+            raise Stop(
+                R.PAGE_CHANGED,
+                f"unexpected HTTP {status} from {where}, expected {expect.status}",
+                step=step_id,
+            )
         if not content_type_ok(expect.content_type, resp.headers.get("content-type")):
             got = resp.headers.get("content-type") or "none"
             raise Stop(
-                R.PAGE_CHANGED, f"{where} returned content type {got!r}, expected {expect.content_type}", step=step_id
+                R.PAGE_CHANGED,
+                f"{where} returned content type {got!r}, expected {expect.content_type}",
+                step=step_id,
             )
         missing = _missing_paths(expect.paths, resp.text)
         if missing:
@@ -591,7 +624,8 @@ class Executor:
         if env.status == R.ERROR and probe_status == status:
             return Stop(
                 R.PAGE_CHANGED,
-                f"{base}; the action's example gets the same HTTP {status}, so the endpoint itself has changed",
+                f"{base}; the action's example gets the same HTTP {status}, so the endpoint itself has "
+                f"changed",
                 step=step_id,
             )
         got = f"{env.status}" + (f" (HTTP {probe_status})" if probe_status else "")
@@ -624,11 +658,15 @@ class Executor:
                 if len(matches) == 0:
                     raise Stop(R.EMPTY, f"{np_.until} has no match", step=sid)
                 if len(matches) > 1:
-                    raise Stop(R.PAGE_CHANGED, f"{np_.until} has {len(matches)} matches, expected 1", step=sid)
+                    raise Stop(
+                        R.PAGE_CHANGED, f"{np_.until} has {len(matches)} matches, expected 1", step=sid
+                    )
                 try:
                     total = to_int(matches[0])
                 except TemplateError:
-                    raise Stop(R.PAGE_CHANGED, f"{np_.until} is not a number: {matches[0]!r}", step=sid) from None
+                    raise Stop(
+                        R.PAGE_CHANGED, f"{np_.until} is not a number: {matches[0]!r}", step=sid
+                    ) from None
                 has_next = current * np_.page_size < total
             else:
                 has_next = len(raw) >= np_.page_size

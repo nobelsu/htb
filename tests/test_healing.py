@@ -47,7 +47,9 @@ def executor() -> Executor:
     return Executor(InMemorySessionStore(), Confirmer("s"))
 
 
-def manager(registry: Registry, state: StateStore, executor: Executor, remapper: Any = None, **cfg: Any) -> HealManager:
+def manager(
+    registry: Registry, state: StateStore, executor: Executor, remapper: Any = None, **cfg: Any
+) -> HealManager:
     return HealManager(registry, state, executor, remapper or FixtureRemapper(), HealConfig(**cfg))
 
 
@@ -95,7 +97,9 @@ async def test_break_heal_and_heal_back(
     stored = registry.get(DOMAIN)
     assert stored is not None and stored.card.provenance.source == "fixture_remapper"
     # Unchanged actions are copied as-is.
-    assert stored.card.action("search_products") == Card.model_validate(registry.get(DOMAIN, 1).card.to_json_dict()).action("search_products")  # type: ignore[union-attr]
+    assert stored.card.action("search_products") == Card.model_validate(
+        registry.get(DOMAIN, 1).card.to_json_dict()
+    ).action("search_products")  # type: ignore[union-attr]
 
     # Undo the break: the healed mapping is now the broken one, and heals back.
     httpx.post(f"{site_url}/_admin/reset")
@@ -145,7 +149,9 @@ async def test_precheck_session_check_for_login_actions(
     assert heal is not None
     await healer.drain()
     status = healer.heal_status(heal.job_id)
-    assert status is not None and status["status"] == "cancelled" and status["result"]["code"] == "AUTH_EXPIRED"
+    assert (
+        status is not None and status["status"] == "cancelled" and status["result"]["code"] == "AUTH_EXPIRED"
+    )
 
 
 # ---- failed heals, degraded, cooldown --------------------------------------
@@ -181,7 +187,9 @@ async def test_failed_heal_marks_degraded_and_cools_down(
     assert env.heal is not None
     await healer.drain()
     status = healer.heal_status(env.heal.job_id)
-    assert status is not None and status["status"] == "failed" and "capture failed" in status["result"]["error"]
+    assert (
+        status is not None and status["status"] == "failed" and "capture failed" in status["result"]["error"]
+    )
     assert state.is_degraded(DOMAIN, "get_item")
 
     later = await call(registry, executor, "get_item", id="p1")
@@ -194,7 +202,9 @@ async def test_healed_read_failing_examples_keeps_old(
     registry: Registry, state: StateStore, executor: Executor, site_url: str
 ) -> None:
     def point_to_v3(data: dict[str, Any]) -> None:
-        action_of(data, "get_item")["steps"][0]["request"]["url"] = "{{base_url}}/api/v3/items/{{params.id | urlencode}}"
+        action_of(data, "get_item")["steps"][0]["request"]["url"] = (
+            "{{base_url}}/api/v3/items/{{params.id | urlencode}}"
+        )
 
     remapper = Broken(point_to_v3)
     healer = manager(registry, state, executor, remapper=remapper)
@@ -210,7 +220,9 @@ async def test_healed_read_failing_examples_keeps_old(
     assert [h.version for h in registry.history(DOMAIN)] == [1]
 
 
-async def test_invalid_remap_is_rejected(registry: Registry, state: StateStore, executor: Executor, site_url: str) -> None:
+async def test_invalid_remap_is_rejected(
+    registry: Registry, state: StateStore, executor: Executor, site_url: str
+) -> None:
     def break_card(data: dict[str, Any]) -> None:
         action_of(data, "get_item")["steps"][0]["request"]["url"] = "{{params.nope}}"
 
@@ -229,7 +241,9 @@ async def test_site_level_change_must_pass_every_read(
 ) -> None:
     def change_site(data: dict[str, Any]) -> None:
         data["defaults"]["headers"]["x-new"] = "1"
-        action_of(data, "get_item")["steps"][0]["request"]["url"] = "{{base_url}}/api/v2/items/{{params.id | urlencode}}"
+        action_of(data, "get_item")["steps"][0]["request"]["url"] = (
+            "{{base_url}}/api/v2/items/{{params.id | urlencode}}"
+        )
 
     healer = manager(registry, state, executor, remapper=Broken(change_site))
     httpx.post(f"{site_url}/_admin/break")
@@ -244,7 +258,9 @@ async def test_site_level_change_must_pass_every_read(
     assert "site-level" in status["result"]["error"]
 
 
-async def test_healed_write_goes_live(registry: Registry, state: StateStore, executor: Executor, site_url: str) -> None:
+async def test_healed_write_goes_live(
+    registry: Registry, state: StateStore, executor: Executor, site_url: str
+) -> None:
     def change_write(data: dict[str, Any]) -> None:
         action_of(data, "add_to_cart")["steps"][0]["request"]["url"] = "{{base_url}}/api/v2/cart"
 
@@ -254,7 +270,9 @@ async def test_healed_write_goes_live(registry: Registry, state: StateStore, exe
     await healer.drain()
     status = healer.heal_status(heal.job_id)
     assert status is not None and status["status"] == "succeeded", status
-    assert status["result"]["healed"] == ["add_to_cart"] and status["result"]["unvalidated"] == ["add_to_cart"]
+    assert status["result"]["healed"] == ["add_to_cart"] and status["result"]["unvalidated"] == [
+        "add_to_cart"
+    ]
     assert status["new_version"] == 2
     stored = registry.get(DOMAIN)
     assert stored is not None
@@ -318,7 +336,9 @@ async def test_health_check_queues_heal_for_no_login_sites(
     db: Path, fixture_card: dict[str, Any], state: StateStore, executor: Executor, site_url: str
 ) -> None:
     card = copy.deepcopy(fixture_card)
-    card["actions"] = [a for a in card["actions"] if a["name"] in ("search_products", "get_item", "add_to_cart")]
+    card["actions"] = [
+        a for a in card["actions"] if a["name"] in ("search_products", "get_item", "add_to_cart")
+    ]
     card["connect_providers"] = []
     reg = Registry(db)
     reg.save(card)
@@ -333,7 +353,9 @@ async def test_health_check_queues_heal_for_no_login_sites(
     reg.close()
 
 
-async def test_health_check_skips_login_sites(registry: Registry, state: StateStore, executor: Executor) -> None:
+async def test_health_check_skips_login_sites(
+    registry: Registry, state: StateStore, executor: Executor
+) -> None:
     assert await manager(registry, state, executor).check_domain(DOMAIN) == []
 
 

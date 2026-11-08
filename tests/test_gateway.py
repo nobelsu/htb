@@ -53,7 +53,9 @@ async def connect(url: str, mode: str, message_handler: Any = None) -> AsyncIter
             yield client
 
 
-def act(action: str, params: dict[str, Any] | None = None, site: str = "fixture.test") -> tuple[str, dict[str, Any]]:
+def act(
+    action: str, params: dict[str, Any] | None = None, site: str = "fixture.test"
+) -> tuple[str, dict[str, Any]]:
     """Arguments for a run_action call: `client.call_tool(*act("search_products", {"query": "lamp"}))`."""
     return "run_action", {"site": site, "action": action, "params": params or {}}
 
@@ -83,7 +85,10 @@ async def test_list_and_call(mcp_url: str, mode: str) -> None:
         by_name = {a["action"]: a for a in found["actions"]}
         search = by_name["search_products"]
         assert search["description"].startswith("Search the shop's products")
-        assert search["params"]["required"] == ["query"] and search["params"]["properties"]["page"]["default"] == 1
+        assert (
+            search["params"]["required"] == ["query"]
+            and search["params"]["properties"]["page"]["default"] == 1
+        )
         cart = by_name["add_to_cart"]
         assert cart["requires_confirmation"] and "explicit approval" in cart["description"]
 
@@ -112,10 +117,16 @@ async def test_every_code_reachable_over_mcp(mcp_url: str, site_url: str) -> Non
             assert env["status"] == expected, (tool, env)
 
         # Writes: confirm, then the three write outcomes.
-        for sku, expected in [("SKU-002", "SUCCESS"), ("FAIL-1", "UNKNOWN_OUTCOME"), ("GHOST-1", "VERIFY_FAILED")]:
+        for sku, expected in [
+            ("SKU-002", "SUCCESS"),
+            ("FAIL-1", "UNKNOWN_OUTCOME"),
+            ("GHOST-1", "VERIFY_FAILED"),
+        ]:
             first = envelope(await client.call_tool(*act("add_to_cart", {"sku": sku})))
             conf_id = first["confirmation"]["id"]
-            env = envelope(await client.call_tool(*act("add_to_cart", {"sku": sku, "_confirmation_id": conf_id})))
+            env = envelope(
+                await client.call_tool(*act("add_to_cart", {"sku": sku, "_confirmation_id": conf_id}))
+            )
             assert env["status"] == expected, (sku, env)
 
         # AUTH_EXPIRED needs a session; the gateway uses the executor's store.
@@ -190,7 +201,9 @@ async def test_break_and_heal_over_mcp(registry: Registry, tmp_path: Path, site_
     from tests.fixture_site.remapper import FixtureRemapper
 
     executor = Executor(InMemorySessionStore(), Confirmer("s"))
-    healer = HealManager(registry, StateStore(tmp_path / "gw.db"), executor, FixtureRemapper(), HealConfig(poll_s=0.05))
+    healer = HealManager(
+        registry, StateStore(tmp_path / "gw.db"), executor, FixtureRemapper(), HealConfig(poll_s=0.05)
+    )
     gw = Gateway(registry, executor, poll_interval_s=0.05, healer=healer)
     with LiveServer(gw.asgi_app(API_KEY)) as server:
         async with connect(f"{server.url}/mcp", "auto") as client:
@@ -217,4 +230,7 @@ def test_instructions_ask_for_plain_language() -> None:
 
     assert "plain terms" in INSTRUCTIONS and "user_message" in INSTRUCTIONS
     assert "Don't mention tool names, status codes, sessions, cookies, browser profiles" in INSTRUCTIONS
-    assert "The user cannot see tool results" in INSTRUCTIONS and "before you call poll_connection" in INSTRUCTIONS
+    assert (
+        "The user cannot see tool results" in INSTRUCTIONS
+        and "before you call poll_connection" in INSTRUCTIONS
+    )

@@ -50,8 +50,10 @@ class FakeProxy:
             user, _, password = base64.b64decode(auth[6:]).decode().partition(":")
         self.seen.append(Seen(method, target, user, password))
         if self.require_auth and user is None:
-            writer.write(b"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic\r\n"
-                         b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+            writer.write(
+                b"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic\r\n"
+                b"Content-Length: 0\r\nConnection: close\r\n\r\n"
+            )
             await writer.drain()
             writer.close()
             return
@@ -64,9 +66,14 @@ class FakeProxy:
             url = urlsplit(target)
             up_reader, up_writer = await asyncio.open_connection(url.hostname, url.port or 80)
             path = url.path + (f"?{url.query}" if url.query else "")
-            kept = [ln for ln in lines[1:] if not ln.lower().startswith(("proxy-", "connection:", "keep-alive:"))]
-            up_writer.write(("\r\n".join([f"{method} {path or '/'} HTTP/1.1", *kept, "Connection: close"])
-                             + "\r\n\r\n").encode("latin-1"))
+            kept = [
+                ln for ln in lines[1:] if not ln.lower().startswith(("proxy-", "connection:", "keep-alive:"))
+            ]
+            up_writer.write(
+                (
+                    "\r\n".join([f"{method} {path or '/'} HTTP/1.1", *kept, "Connection: close"]) + "\r\n\r\n"
+                ).encode("latin-1")
+            )
             await up_writer.drain()
         await asyncio.gather(_pipe(reader, up_writer), _pipe(up_reader, writer))
 

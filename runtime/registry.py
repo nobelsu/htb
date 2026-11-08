@@ -82,7 +82,8 @@ class Registry:
     def history(self, domain: str) -> list[VersionInfo]:
         """Every version for `domain`, newest first."""
         rows = self._conn.execute(
-            "SELECT version, active, created_at, note FROM action_maps WHERE domain = ? ORDER BY version DESC",
+            "SELECT version, active, created_at, note FROM action_maps "
+            "WHERE domain = ? ORDER BY version DESC",
             (domain,),
         ).fetchall()
         return [VersionInfo(r["version"], bool(r["active"]), r["created_at"], r["note"]) for r in rows]
@@ -105,9 +106,12 @@ class Registry:
                 ).fetchone()
                 version = int(row[0]) + 1
                 if activate:
-                    cur.execute("UPDATE action_maps SET active = 0 WHERE domain = ? AND active = 1", (card.domain,))
+                    cur.execute(
+                        "UPDATE action_maps SET active = 0 WHERE domain = ? AND active = 1", (card.domain,)
+                    )
                 cur.execute(
-                    "INSERT INTO action_maps (domain, version, map_json, active, created_at, note) VALUES (?,?,?,?,?,?)",
+                    "INSERT INTO action_maps (domain, version, map_json, active, created_at, note) VALUES "
+                    "(?,?,?,?,?,?)",
                     (card.domain, version, map_json, int(activate), _now(), note),
                 )
             self.refresh()
@@ -123,7 +127,9 @@ class Registry:
                 if not exists:
                     raise KeyError(f"{domain} has no version {version}")
                 cur.execute("UPDATE action_maps SET active = 0 WHERE domain = ? AND active = 1", (domain,))
-                cur.execute("UPDATE action_maps SET active = 1 WHERE domain = ? AND version = ?", (domain, version))
+                cur.execute(
+                    "UPDATE action_maps SET active = 1 WHERE domain = ? AND version = ?", (domain, version)
+                )
             self.refresh()
 
     # ---- change tracking ---------------------------------------------------

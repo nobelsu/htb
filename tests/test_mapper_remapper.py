@@ -61,7 +61,9 @@ class FakeMapper:
     replays: list[dict[str, Any]] = field(default_factory=list)
     mapped: list[Path] = field(default_factory=list)
 
-    def recapture(self, domain_dir: Path, *, task: str, state: Path | None, headless: bool) -> tuple[list[Any], list[str]]:
+    def recapture(
+        self, domain_dir: Path, *, task: str, state: Path | None, headless: bool
+    ) -> tuple[list[Any], list[str]]:
         seen: dict[str, Any] = {"dir": Path(domain_dir), "task": task, "headless": headless, "state": None}
         if state is not None:
             seen["state"] = json.loads(Path(state).read_text())
@@ -85,9 +87,14 @@ def captures(tmp_path: Path) -> Path:
     return root
 
 
-def adapter(captures: Path, mapper: FakeMapper, sessions: InMemorySessionStore | None = None) -> MapperRemapper:
+def adapter(
+    captures: Path, mapper: FakeMapper, sessions: InMemorySessionStore | None = None
+) -> MapperRemapper:
     return MapperRemapper(
-        captures, sessions=sessions, recapture=mapper.recapture, map_domain=mapper.map_domain  # type: ignore[arg-type]
+        captures,
+        sessions=sessions,
+        recapture=mapper.recapture,
+        map_domain=mapper.map_domain,  # type: ignore[arg-type]
     )
 
 
@@ -104,7 +111,9 @@ async def test_replays_only_the_broken_actions_then_remaps_the_site(captures: Pa
 async def test_uses_the_users_current_sign_in(captures: Path) -> None:
     card = fixture_card()
     store = InMemorySessionStore()
-    store.put("default", "fixture.test", provider_of(card, "list_orders"), {"sid": "s3cret", "csrftoken": "c"})
+    store.put(
+        "default", "fixture.test", provider_of(card, "list_orders"), {"sid": "s3cret", "csrftoken": "c"}
+    )
     mapper = FakeMapper(card.to_json_dict())
     await adapter(captures, mapper, store).remap(card, ["list_orders"], "PAGE_CHANGED")
 
@@ -143,7 +152,9 @@ async def test_no_recording_for_the_broken_action(captures: Path) -> None:
 
 async def test_replay_failure_becomes_a_remap_error(captures: Path) -> None:
     card = fixture_card()
-    mapper = FakeMapper(card.to_json_dict(), fail_replay=RuntimeError("replay of list_orders wrote no bundles"))
+    mapper = FakeMapper(
+        card.to_json_dict(), fail_replay=RuntimeError("replay of list_orders wrote no bundles")
+    )
     with pytest.raises(RemapError, match="replay of list_orders wrote no bundles"):
         await adapter(captures, mapper).remap(card, ["list_orders"], "PAGE_CHANGED")
     assert mapper.mapped == []
@@ -184,7 +195,8 @@ async def test_heal_job_heals_a_changed_site_with_the_mapper(tmp_path: Path) -> 
             return str(e)
         return None
 
-    # The mapper drives the browser with Playwright's sync API, so it runs in a worker thread (as in the adapter).
+    # The mapper drives the browser with Playwright's sync API, so it runs in a worker thread (as in the
+    # adapter).
     if (problem := await asyncio.to_thread(chromium_ok)) is not None:
         pytest.skip(f"Playwright Chromium unavailable: {problem}")
 
@@ -229,10 +241,19 @@ async def test_heal_job_heals_a_changed_site_with_the_mapper(tmp_path: Path) -> 
 
         store = InMemorySessionStore()
         state = json.loads(login.read_text())
-        store.put("default", site.host, provider_of(card.card, "search"), {c["name"]: c["value"] for c in state["cookies"]})
+        store.put(
+            "default",
+            site.host,
+            provider_of(card.card, "search"),
+            {c["name"]: c["value"] for c in state["cookies"]},
+        )
         executor = Executor(store, Confirmer("s"))
         healer = HealManager(
-            registry, StateStore(tmp_path / "runtime.db"), executor, MapperRemapper(root, sessions=store), HealConfig()
+            registry,
+            StateStore(tmp_path / "runtime.db"),
+            executor,
+            MapperRemapper(root, sessions=store),
+            HealConfig(),
         )
         params = {"query": "software"}
         assert (await executor.run(card, "search", params)).status == ResultCode.SUCCESS

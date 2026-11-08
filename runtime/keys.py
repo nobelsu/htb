@@ -1,5 +1,5 @@
-"""API keys: one per user. A key identifies the user every tool call acts as (their sign-ins, browser profiles,
-login links and device identities). Keys are shown once and only their SHA-256 is stored.
+"""API keys: one per user. A key identifies the user every tool call acts as (their sign-ins, browser
+profiles, login links and device identities). Keys are shown once and only their SHA-256 is stored.
 
 People get a key from the gateway's sign-up page (with the invite code, SIGNUP_CODE) or from the command line:
 
@@ -83,13 +83,16 @@ class KeyStore:
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA_SQL)
         if "password" not in {r[1] for r in self._conn.execute("PRAGMA table_info(api_users)")}:
-            self._conn.execute("ALTER TABLE api_users ADD COLUMN password TEXT")  # tables made before passwords
+            self._conn.execute(
+                "ALTER TABLE api_users ADD COLUMN password TEXT"
+            )  # tables made before passwords
 
     def close(self) -> None:
         self._conn.close()
 
     def create(self, name: str, email: str, password: str | None = None) -> str:
-        """A new user and their key (returned once). With a password they can also sign in on the web pages."""
+        """A new user and their key (returned once). With a password they can also sign in on the web
+        pages."""
         check_name(name)
         check_email(email)
         stored = None
@@ -102,7 +105,8 @@ class KeyStore:
         with self._lock:
             try:
                 self._conn.execute(
-                    "INSERT INTO api_users (name, email, key_hash, created_at, password) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO api_users (name, email, key_hash, created_at, password) VALUES (?, ?, ?, ?, "
+                    "?)",
                     (name, email, _hash(key), _now(), stored),
                 )
             except sqlite3.IntegrityError:
@@ -129,7 +133,11 @@ class KeyStore:
     def check_login(self, login: str, password: str) -> str | None:
         """The user if `login` (name or email) and `password` match an active account with a password."""
         name = self.find(login)
-        row = self._conn.execute("SELECT password FROM api_users WHERE name = ?", (name,)).fetchone() if name else None
+        row = (
+            self._conn.execute("SELECT password FROM api_users WHERE name = ?", (name,)).fetchone()
+            if name
+            else None
+        )
         if row is None or not row[0]:
             _hash_password(password)  # same work either way, so timing doesn't reveal which accounts exist
             return None
@@ -138,7 +146,9 @@ class KeyStore:
     def set_password(self, name: str, password: str) -> None:
         check_password(password)
         with self._lock:
-            cur = self._conn.execute("UPDATE api_users SET password = ? WHERE name = ?", (_hash_password(password), name))
+            cur = self._conn.execute(
+                "UPDATE api_users SET password = ? WHERE name = ?", (_hash_password(password), name)
+            )
         if cur.rowcount == 0:
             raise KeyStoreError(f"no user {name!r}")
 
@@ -180,7 +190,9 @@ def check_password(password: str) -> None:
 def _hash_password(password: str, salt: bytes | None = None) -> str:
     """scrypt (slow on purpose, unlike API keys: people pick guessable passwords)."""
     salt = salt or secrets.token_bytes(16)
-    digest = hashlib.scrypt(password.encode(), salt=salt, n=_SCRYPT["n"], r=_SCRYPT["r"], p=_SCRYPT["p"], dklen=_SCRYPT["dklen"])
+    digest = hashlib.scrypt(
+        password.encode(), salt=salt, n=_SCRYPT["n"], r=_SCRYPT["r"], p=_SCRYPT["p"], dklen=_SCRYPT["dklen"]
+    )
     return f"scrypt${salt.hex()}${digest.hex()}"
 
 
@@ -196,19 +208,29 @@ def _verify_password(password: str, stored: str) -> bool:
 
 def mcp_add_command(base_url: str, key: str) -> str:
     """The line a user pastes to connect Claude Code to the gateway."""
-    return f'claude mcp add --transport http spider {base_url.rstrip("/")}/mcp --header "Authorization: Bearer {key}"'
+    return (
+        f"claude mcp add --transport http spider {base_url.rstrip('/')}/mcp "
+        f'--header "Authorization: Bearer {key}"'
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m runtime.keys", description="Manage the gateway's API keys")
+    parser = argparse.ArgumentParser(
+        prog="python -m runtime.keys", description="Manage the gateway's API keys"
+    )
     parser.add_argument("--db", default=os.environ.get("REGISTRY_DB", "./runtime.db"))
     sub = parser.add_subparsers(dest="command", required=True)
     add = sub.add_parser("add", help="create a user and print their key (shown once)")
     add.add_argument("name")
     add.add_argument("--email", required=True)
-    sub.add_parser("set-password", help="set a user's web sign-in password (asks for it)").add_argument("name")
+    sub.add_parser("set-password", help="set a user's web sign-in password (asks for it)").add_argument(
+        "name"
+    )
     sub.add_parser("list", help="list users (never keys)")
-    for cmd, text in (("reissue", "print a new key for a user; the old one stops working"), ("revoke", "turn a user's key off")):
+    for cmd, text in (
+        ("reissue", "print a new key for a user; the old one stops working"),
+        ("revoke", "turn a user's key off"),
+    ):
         sub.add_parser(cmd, help=text).add_argument("name")
     args = parser.parse_args(argv)
 
@@ -217,10 +239,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "add":
             key = store.create(args.name, args.email)
-            print(f"{args.name}'s key (shown once):\n  {key}\nTo connect Claude Code:\n  {mcp_add_command(base, key)}")
+            print(
+                f"{args.name}'s key (shown once):\n  {key}\nTo connect Claude Code:\n  "
+                f"{mcp_add_command(base, key)}"
+            )
         elif args.command == "reissue":
             key = store.reissue(args.name)
-            print(f"{args.name}'s new key (shown once):\n  {key}\nTo connect Claude Code:\n  {mcp_add_command(base, key)}")
+            print(
+                f"{args.name}'s new key (shown once):\n  {key}\nTo connect Claude Code:\n  "
+                f"{mcp_add_command(base, key)}"
+            )
         elif args.command == "set-password":
             import getpass
 

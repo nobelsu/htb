@@ -25,7 +25,8 @@ SIGNED_IN = {"sid": VALID_SID, "csrftoken": CSRF, "tracker": "t-1"}
 
 
 def rotating_card(card: dict[str, Any]) -> dict[str, Any]:
-    """The fixture card, but its sign-in check and list_orders hit endpoints that rotate the sign-in cookie."""
+    """The fixture card, but its sign-in check and list_orders hit endpoints that rotate the sign-in
+    cookie."""
     card = copy.deepcopy(card)
     card["connect_providers"][0]["session_check"]["url"] = "{{base_url}}/api/rotating/me"
     orders = next(a for a in card["actions"] if a["name"] == "list_orders")
@@ -34,7 +35,9 @@ def rotating_card(card: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.fixture
-def setup(tmp_path: Path, fixture_card: dict[str, Any]) -> tuple[StoredCard, EncryptedSessionStore, Executor, str]:
+def setup(
+    tmp_path: Path, fixture_card: dict[str, Any]
+) -> tuple[StoredCard, EncryptedSessionStore, Executor, str]:
     registry = Registry(tmp_path / "r.db")
     registry.save(rotating_card(fixture_card))
     stored = registry.get(DOMAIN)
@@ -120,7 +123,7 @@ async def test_cookie_values_are_never_logged(setup: Any, caplog: pytest.LogCapt
         assert secret not in ours
 
 
-# ---- the store: only replace what we started from -----------------------------------------------------------
+# ---- the store: only replace what we started from ----------------------------------------------------------
 
 
 def test_refresh_only_replaces_what_the_run_started_from(tmp_path: Path) -> None:
@@ -142,11 +145,13 @@ async def test_unchanged_or_empty_jars_are_not_written(setup: Any) -> None:
     real = store.refresh
     store.refresh = lambda *a: calls.append(a) or real(*a)  # type: ignore[method-assign]
     executor._save_refreshed("default", DOMAIN, provider, SIGNED_IN, dict(SIGNED_IN))
-    executor._save_refreshed("default", DOMAIN, provider, SIGNED_IN, {})  # we saw no cookies: not "signed out"
+    executor._save_refreshed(
+        "default", DOMAIN, provider, SIGNED_IN, {}
+    )  # we saw no cookies: not "signed out"
     assert calls == [] and store.get("default", DOMAIN, provider) == SIGNED_IN
 
 
-# ---- tiers: only the site's own cookies are saved ------------------------------------------------------------
+# ---- tiers: only the site's own cookies are saved ----------------------------------------------------------
 
 
 @pytest.mark.parametrize("session_cls", [HttpSession, ImpersonateSession])
@@ -154,7 +159,9 @@ async def test_site_cookies_leave_out_other_sites(session_cls: Any) -> None:
     session = session_cls("https://www.shop.test/app", {"sid": "a"})
     try:
         session._client.cookies.set("pref", "1", domain=".shop.test")  # a parent-domain cookie the site sends
-        session._client.cookies.set("other", "x", domain="tracker.example")  # set during a cross-site redirect
+        session._client.cookies.set(
+            "other", "x", domain="tracker.example"
+        )  # set during a cross-site redirect
         assert session.site_cookies == {"sid": "a", "pref": "1"}
     finally:
         await session.aclose()
@@ -162,7 +169,8 @@ async def test_site_cookies_leave_out_other_sites(session_cls: Any) -> None:
 
 async def test_a_redirect_loop_on_the_sign_in_check_means_signed_out(fixture_card: dict[str, Any]) -> None:
     """LinkedIn bounces an ended session between /feed/ and /feed/: the check says expired, not a network
-    error (which never marks a sign-in expired), so the account page and the agent stop calling it signed in."""
+    error (which never marks a sign-in expired), so the account page and the agent stop calling it signed
+    in."""
     card = copy.deepcopy(fixture_card)
     card["connect_providers"][0]["session_check"]["url"] = "{{base_url}}/api/loop"
     report = validate_card(card)

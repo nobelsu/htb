@@ -1,5 +1,5 @@
-"""The sign-in pages (where regular Claude's "Connect" button lands, and the account sign-in) and the account page,
-drawn in the Spine design (runtime/ui.py).
+"""The sign-in pages (where regular Claude's "Connect" button lands, and the account sign-in) and the account
+page, drawn in the Spine design (runtime/ui.py).
 
 GET/POST /oauth/login?request=...   sign in for an app (OAuth): password, API key, or a new account
 GET/POST /account/login             sign in to the account page (same three ways)
@@ -10,9 +10,8 @@ POST     /account/key               a new API key (the old one stops working)
 POST     /account/apps/revoke       disconnect an app (its OAuth tokens)
 GET/POST /account/password          change your password
 POST     /account/logout
-
-Sign-in pages take `?with=key` or `?with=signup` to switch how you sign in. The account page is a cookie session
-(HttpOnly, SameSite=Lax); POSTs from another site are refused.
+ Sign-in pages take `?with=key` or `?with=signup` to switch how you sign in. The account page is a cookie
+session (HttpOnly, SameSite=Lax); POSTs from another site are refused.
 """
 
 from __future__ import annotations
@@ -48,8 +47,13 @@ def session_cookie(oauth: OAuth, public_url: Callable[[], str]) -> Callable[[Res
 
     def set_cookie(response: Response, user: str) -> Response:
         response.set_cookie(
-            COOKIE, oauth.new_session(user), max_age=ACCOUNT_SESSION_TTL_S, httponly=True, samesite="lax",
-            secure=public_url().startswith("https://"), path="/",
+            COOKIE,
+            oauth.new_session(user),
+            max_age=ACCOUNT_SESSION_TTL_S,
+            httponly=True,
+            samesite="lax",
+            secure=public_url().startswith("https://"),
+            path="/",
         )
         return response
 
@@ -86,7 +90,8 @@ def sign_in_page(
         nav.append(switch("signup", "Create account"))
     if for_app:
         nav.append(
-            f'<form method="post" action="{esc(action)}" style="display:inline">{hidden("request", request_id)}'
+            f'<form method="post" action="{esc(action)}" '
+            f'style="display:inline">{hidden("request", request_id)}'
             '<button type="submit" name="action" value="deny">Cancel</button></form>'
         )
 
@@ -95,7 +100,8 @@ def sign_in_page(
         parts.append(
             f'<form method="post" action="{esc(action)}" class="row strong" style="margin:0">'
             f'{hidden("request", request_id)}<span class="big">{esc(signed_in_as)}</span>'
-            f'<button class="pill" type="submit" name="action" value="continue">Continue{icon("arrow", 20)}</button></form>'
+            f'<button class="pill" type="submit" name="action" '
+            f'value="continue">Continue{icon("arrow", 20)}</button></form>'
         )
     verb = "connect" if for_app else ""
     if mode == "key":
@@ -116,12 +122,14 @@ def sign_in_page(
         bar = bar_button("Sign in and connect" if verb else "Sign in")
     parts.append(
         f'<form class="stack" method="post" action="{esc(action)}">{hidden("request", request_id)}'
-        f'{hidden("action", mode)}{fields}{bar}</form>'
+        f"{hidden('action', mode)}{fields}{bar}</form>"
     )
     return page(title=title, spine=spine, body="".join(parts), nav=nav, status=status)
 
 
-def message_page(spine: str, title: str, line: str, bar: str, status: int = 200, inverted: bool = False) -> Response:
+def message_page(
+    spine: str, title: str, line: str, bar: str, status: int = 200, inverted: bool = False
+) -> Response:
     """A page that says one thing (expired, done...), with one way forward."""
     mark = icon("check" if inverted else "clock", 96, 1.2)
     body = f'<div class="center">{mark}<h1 class="giant">{esc(line)}</h1></div>{bar}'
@@ -296,16 +304,35 @@ def routes(
     # ---- sign-in for an app (OAuth) ---------------------------------------------------------------------
 
     def oauth_page(
-        pending: PendingSignIn, request: Request, mode: str, error: str = "", status: int = 200, login: str = ""
+        pending: PendingSignIn,
+        request: Request,
+        mode: str,
+        error: str = "",
+        status: int = 200,
+        login: str = "",
     ) -> Response:
         return sign_in_page(
-            action="/oauth/login", spine="Connect", title=f"Connect {pending.app_name}", mode=mode,
-            signup_open=bool(signup_code), request_id=pending.id, app_name=pending.app_name,
-            signed_in_as=cookie_user(request), error=error, login=login, status=status,
+            action="/oauth/login",
+            spine="Connect",
+            title=f"Connect {pending.app_name}",
+            mode=mode,
+            signup_open=bool(signup_code),
+            request_id=pending.id,
+            app_name=pending.app_name,
+            signed_in_as=cookie_user(request),
+            error=error,
+            login=login,
+            status=status,
         )
 
     def expired() -> Response:
-        return message_page("Expired", "Sign-in expired", "This sign-in expired.", bar_link("Go to your account", "/account"), 400)
+        return message_page(
+            "Expired",
+            "Sign-in expired",
+            "This sign-in expired.",
+            bar_link("Go to your account", "/account"),
+            400,
+        )
 
     async def oauth_login(request: Request) -> Response:
         pending = oauth.pending(request.query_params.get("request", ""))
@@ -329,10 +356,18 @@ def routes(
 
     # ---- the account page --------------------------------------------------------------------------------
 
-    def account_sign_in(request: Request, mode: str, error: str = "", status: int = 200, login: str = "") -> Response:
+    def account_sign_in(
+        request: Request, mode: str, error: str = "", status: int = 200, login: str = ""
+    ) -> Response:
         return sign_in_page(
-            action="/account/login", spine="Sign in", title="Sign in", mode=mode, signup_open=bool(signup_code),
-            error=error, login=login, status=status,
+            action="/account/login",
+            spine="Sign in",
+            title="Sign in",
+            mode=mode,
+            signup_open=bool(signup_code),
+            error=error,
+            login=login,
+            status=status,
         )
 
     async def account_login(request: Request) -> Response:
@@ -365,18 +400,22 @@ def routes(
         pending = connections.pending_for(user) if connections else []
         sites, apps = connected_sites(user), oauth.apps(user)
         waiting_rows = "".join(
-            f'<a class="row strong" href="{esc(p["url"])}" target="_blank" rel="noopener" style="text-decoration:none">'
-            f'<span class="big">{esc(p["domain"])}</span><span class="pill pulse">Sign in{icon("arrow", 20)}</span></a>'
+            f'<a class="row strong" href="{esc(p["url"])}" target="_blank" rel="noopener" '
+            f'style="text-decoration:none">'
+            f'<span class="big">{esc(p["domain"])}</span><span class="pill pulse">Sign '
+            f"in{icon('arrow', 20)}</span></a>"
             for p in pending
         )
         site_rows = "".join(
             f'<div class="row"><span class="big"><span class="stack"><span>{esc(s["domain"])}</span>'
-            f'<span class="mono">{"signed in" if s["status"] == "connected" else "expired"}</span></span></span>'
+            f"<span "
+            f'class="mono">{"signed in" if s["status"] == "connected" else "expired"}</span></span></span>'
             + (
                 ""
                 if s["status"] == "connected"
                 else '<form method="post" action="/account/signin" style="margin:0">'
-                f'{hidden("domain", s["domain"])}<button class="link" type="submit">Sign in again</button></form>'
+                f'{hidden("domain", s["domain"])}<button class="link" type="submit">Sign in '
+                f"again</button></form>"
             )
             + square("/account/disconnect", "domain", s["domain"], f"Disconnect {s['domain']}")
             + "</div>"
@@ -405,26 +444,41 @@ def routes(
         has_rows = bool(site_rows or app_rows or map_rows)
         empty = (
             f'<p class="empty" id="empty" data-has-rows="{1 if has_rows else 0}"'
-            f'{" hidden" if has_rows or pending else ""}>Nothing yet</p>'
+            f"{' hidden' if has_rows or pending else ''}>Nothing yet</p>"
         )
         tiles = [
-            f'<button class="tile" type="button" data-copy="{esc(base)}/mcp">{icon("copy", 28, 1.8)}<span>Connector</span></button>'
+            f'<button class="tile" type="button" '
+            f'data-copy="{esc(base)}/mcp">{icon("copy", 28, 1.8)}<span>Connector</span></button>'
         ]
         if user != ENV_KEY_USER:
             tiles.append(
                 '<form method="post" action="/account/key" style="display:contents">'
-                f'<button class="tile" type="submit">{icon("key", 28, 1.8)}<span>New key</span></button></form>'
+                f'<button class="tile" type="submit">{icon("key", 28, 1.8)}<span>New '
+                f"key</span></button></form>"
             )
-            tiles.append(f'<a class="tile" href="/account/password">{icon("lock", 28, 1.8)}<span>Password</span></a>')
+            tiles.append(
+                f'<a class="tile" href="/account/password">{icon("lock", 28, 1.8)}<span>Password</span></a>'
+            )
         new_key_rows = (
             notice("Your new key is below. Your old key no longer works.", error=False)
-            + copy_row("Claude Code", "claude mcp add", mcp_add_command(base, new_key), "Copy the Claude Code command, which holds your new key")
-            if new_key else ""
+            + copy_row(
+                "Claude Code",
+                "claude mcp add",
+                mcp_add_command(base, new_key),
+                "Copy the Claude Code command, which holds your new key",
+            )
+            if new_key
+            else ""
         )
         body = (
-            f'<h1 class="title">{esc(user)}</h1>' + notice(message, error=False) + new_key_rows
-            + f'<div id="waiting" data-seen="{esc(json.dumps([p["url"] for p in pending]))}">{waiting_rows}</div>'
-            + _section("Setting up", map_rows) + _section("Signed in", site_rows) + _section("Apps", app_rows)
+            f'<h1 class="title">{esc(user)}</h1>'
+            + notice(message, error=False)
+            + new_key_rows
+            + f'<div id="waiting" data-seen="{esc(json.dumps([p["url"] for p in pending]))}">'
+            f"{waiting_rows}</div>"
+            + _section("Setting up", map_rows)
+            + _section("Signed in", site_rows)
+            + _section("Apps", app_rows)
             + empty
             + f'<div class="tiles">{"".join(tiles)}</div>'
         )
@@ -433,7 +487,10 @@ def routes(
             '<button type="submit">Sign out</button></form>'
         )
         return page(
-            title=f"Account, {user}", spine="Account", body=body, spine_end=sign_out,
+            title=f"Account, {user}",
+            spine="Account",
+            body=body,
+            spine_end=sign_out,
             script=COPY_SCRIPT + ACCOUNT_SCRIPT,
         )
 
@@ -448,7 +505,9 @@ def routes(
         user = cookie_user(request)
         if user is None:
             return JSONResponse({"error": "signed out"}, status_code=401, headers=HEADERS)
-        return JSONResponse({"pending": connections.pending_for(user) if connections else []}, headers=HEADERS)
+        return JSONResponse(
+            {"pending": connections.pending_for(user) if connections else []}, headers=HEADERS
+        )
 
     async def guarded(request: Request) -> tuple[str | None, dict[str, str], Response | None]:
         if not same_site(request):
@@ -508,8 +567,13 @@ def routes(
             + bar_button("Change password")
             + "</form>"
         )
-        return page(title="Change password", spine="Password", body=body, status=status,
-                    nav=['<a href="/account">Account</a>'])
+        return page(
+            title="Change password",
+            spine="Password",
+            body=body,
+            status=status,
+            nav=['<a href="/account">Account</a>'],
+        )
 
     async def password(request: Request) -> Response:
         user = cookie_user(request)

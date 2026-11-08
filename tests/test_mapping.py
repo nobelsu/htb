@@ -531,8 +531,9 @@ async def test_a_change_without_a_name_is_sent_back_to_be_named(
 async def test_a_new_write_is_tried_up_to_the_send_and_keeps_the_tier_that_works(
     registry: Registry, state: StateStore, executor: Executor
 ) -> None:
-    """The steps before a write's send run before it's saved: on the first tier they work on (LinkedIn's company
-    page answers plain HTTP with a 403), and the send itself never runs. A write that fails on every tier
+    """The steps before a write's send run before it's saved: on the first tier they work on (LinkedIn's
+    company page answers plain HTTP with a 403), and the send itself never runs. A write that fails on every
+    tier
     isn't saved."""
     import json as _json
     from pathlib import Path as _Path
@@ -558,7 +559,10 @@ async def test_a_new_write_is_tried_up_to_the_send_and_keeps_the_tier_that_works
     raw, failed = await m._check_writes(card, "alice", {"guarded_token_add"})
     assert not failed
     assert next(a for a in raw["actions"] if a["name"] == "guarded_token_add")["tier"] == "impersonate"
-    assert tried == [("guarded_token_add", "http", 1), ("guarded_token_add", "impersonate", 1)]  # never the send
+    assert tried == [
+        ("guarded_token_add", "http", 1),
+        ("guarded_token_add", "impersonate", 1),
+    ]  # never the send
 
     m.executor = Picky(None)  # type: ignore[assignment]
     raw, failed = await m._check_writes(card, "alice", {"guarded_token_add"})

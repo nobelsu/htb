@@ -2,7 +2,6 @@
 The real login browser (Neko) is covered end to end in tests/test_neko.py."""
 
 import asyncio
-import json
 import os
 import sqlite3
 from collections.abc import AsyncIterator, Iterator
@@ -117,7 +116,9 @@ async def test_pool_is_warm_and_reaps_idle(pool: BrowserPool) -> None:
     assert not pool.is_warm(key) and pool.profile_dir(key).exists()
 
 
-async def test_browser_tier_runs_fetch_in_page(pool: BrowserPool, fixture_card: dict[str, Any], site_url: str) -> None:
+async def test_browser_tier_runs_fetch_in_page(
+    pool: BrowserPool, fixture_card: dict[str, Any], site_url: str
+) -> None:
     tiers = default_tiers()
     tiers["browser"] = BrowserTier(pool)
     ex = Executor(InMemorySessionStore(), Confirmer("s"), tiers=tiers)
@@ -168,7 +169,9 @@ async def test_connect_page_offers_log_in(
         await browser.close()
 
 
-async def test_link_routes_and_auth_boundaries(login_gateway: tuple[str, Path, EncryptedSessionStore]) -> None:
+async def test_link_routes_and_auth_boundaries(
+    login_gateway: tuple[str, Path, EncryptedSessionStore],
+) -> None:
     base, _, _ = login_gateway
     assert httpx.get(f"{base}/connect/not-a-token").status_code == 404
     assert httpx.get(f"{base}/connect/not-a-token/status").status_code == 404
@@ -194,17 +197,23 @@ async def test_disconnect_forgets_session_and_cancels_link(manager: ConnectionMa
     manager.store.put("u", DOMAIN, "shop", {"sid": VALID_SID, "csrftoken": CSRF})
     started = manager.start("u", DOMAIN)
     assert started["user_message"].startswith("**[Sign in to fixture.test →](http://gw/connect/")
-    assert manager.status("u", DOMAIN)["user_message"] == "Waiting for you to finish signing in to fixture.test."
+    assert (
+        manager.status("u", DOMAIN)["user_message"] == "Waiting for you to finish signing in to fixture.test."
+    )
     out = await manager.disconnect("u", DOMAIN)
     assert out["disconnected"] is True
-    assert out["user_message"] == "You're signed out of fixture.test. To use it again, you'll need to sign in."
+    assert (
+        out["user_message"] == "You're signed out of fixture.test. To use it again, you'll need to sign in."
+    )
     assert out["details"]["providers"] == [
         {"provider": "shop", "was_connected": True, "session_deleted": True, "browser_profile_deleted": False}
     ]
     assert manager.store.get("u", DOMAIN, "shop") is None
     assert manager.status("u", DOMAIN)["providers"][0]["status"] == "not_connected"
     assert manager.status("u", DOMAIN)["user_message"] == "You're not signed in to fixture.test."
-    assert (await manager.poll("u", DOMAIN))["user_message"].startswith("That sign-in link for fixture.test has expired")
+    assert (await manager.poll("u", DOMAIN))["user_message"].startswith(
+        "That sign-in link for fixture.test has expired"
+    )
     conn = manager.by_token(started["url"].rsplit("/", 1)[1])
     assert conn is not None and conn.status == "expired" and "disconnected" in conn.message
     stored = manager.registry.get(DOMAIN)
@@ -213,7 +222,9 @@ async def test_disconnect_forgets_session_and_cancels_link(manager: ConnectionMa
     assert env.status == R.AUTH_REQUIRED
     again = await manager.disconnect("u", DOMAIN)  # idempotent
     assert again["details"]["providers"][0]["was_connected"] is False
-    assert again["user_message"] == "You weren't signed in to fixture.test, so there was nothing to sign out of."
+    assert (
+        again["user_message"] == "You weren't signed in to fixture.test, so there was nothing to sign out of."
+    )
 
 
 async def test_disconnect_errors(manager: ConnectionManager) -> None:
@@ -237,13 +248,19 @@ async def test_disconnect_over_mcp(
     base, db, store = login_gateway
     async with connect(f"{base}/mcp", "auto") as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-        assert tools["disconnect"].annotations is not None and tools["disconnect"].annotations.destructive_hint
-        assert "browser profile" not in (tools["disconnect"].description or "")  # no internals in descriptions
+        assert (
+            tools["disconnect"].annotations is not None and tools["disconnect"].annotations.destructive_hint
+        )
+        assert "browser profile" not in (
+            tools["disconnect"].description or ""
+        )  # no internals in descriptions
         store_rows = sqlite3.connect(db).execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
         assert store_rows == 0
         envelope(await client.call_tool("start_connection", {"domain": DOMAIN}))  # a pending link to cancel
         store.put("default", DOMAIN, "shop", {"sid": VALID_SID, "csrftoken": CSRF})  # as if signed in
-        assert envelope(await client.call_tool(*act("browser_orders", {})))["status"] == "SUCCESS"  # warms the profile
+        assert (
+            envelope(await client.call_tool(*act("browser_orders", {})))["status"] == "SUCCESS"
+        )  # warms the profile
 
         out = envelope(await client.call_tool("disconnect", {"domain": DOMAIN}))
         assert out["details"]["providers"][0]["was_connected"] is True
@@ -252,4 +269,6 @@ async def test_disconnect_over_mcp(
         assert sqlite3.connect(db).execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         assert envelope(await client.call_tool(*act("list_orders", {})))["status"] == "AUTH_REQUIRED"
         status = envelope(await client.call_tool("connection_status", {"domain": DOMAIN}))
-        assert status["providers"][0]["status"] == "not_connected" and not status["providers"][0]["browser_warm"]
+        assert (
+            status["providers"][0]["status"] == "not_connected" and not status["providers"][0]["browser_warm"]
+        )

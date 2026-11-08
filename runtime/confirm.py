@@ -37,7 +37,13 @@ class Confirmer:
         return hmac.new(self._key, msg, hashlib.sha256).hexdigest()
 
     def issue(
-        self, user: str, domain: str, action: str, params: dict[str, Any], summary: str, now: float | None = None
+        self,
+        user: str,
+        domain: str,
+        action: str,
+        params: dict[str, Any],
+        summary: str,
+        now: float | None = None,
     ) -> Confirmation:
         expires_at = int(now if now is not None else time.time()) + self.window_s
         mac = self._mac(user, domain, action, canonical_params(params), expires_at)
@@ -45,7 +51,13 @@ class Confirmer:
         return Confirmation(id=f"c_{token}", expires_at=_iso(expires_at), summary=summary)
 
     def check(
-        self, conf_id: str, user: str, domain: str, action: str, params: dict[str, Any], now: float | None = None
+        self,
+        conf_id: str,
+        user: str,
+        domain: str,
+        action: str,
+        params: dict[str, Any],
+        now: float | None = None,
     ) -> str | None:
         """Return None if valid, otherwise the reason it is not."""
         try:

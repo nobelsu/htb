@@ -246,7 +246,9 @@ class StateStore:
 
     # ---- heal_jobs ---------------------------------------------------------
 
-    def create_job(self, domain: str, actions: list[str], trigger: Trigger, reason: str, user: str) -> HealJob:
+    def create_job(
+        self, domain: str, actions: list[str], trigger: Trigger, reason: str, user: str
+    ) -> HealJob:
         job_id = "h_" + secrets.token_hex(6)
         with self._lock:
             self._conn.execute(
@@ -276,7 +278,8 @@ class StateStore:
 
     def latest_job_for(self, domain: str, action: str) -> HealJob | None:
         rows = self._conn.execute(
-            "SELECT * FROM heal_jobs WHERE domain = ? ORDER BY created_at DESC, rowid DESC LIMIT 50", (domain,)
+            "SELECT * FROM heal_jobs WHERE domain = ? ORDER BY created_at DESC, rowid DESC LIMIT 50",
+            (domain,),
         ).fetchall()
         for row in rows:
             job = _row_to_job(row)
@@ -341,8 +344,13 @@ class StateStore:
         filters = " WHERE " + " AND ".join(where) if where else ""
         sql = f"SELECT * FROM heal_events{filters} ORDER BY id"
         return [
-            {"job_id": r["job_id"], "domain": r["domain"], "event": r["event"], "data": json.loads(r["data"]),
-             "at": r["at"]}
+            {
+                "job_id": r["job_id"],
+                "domain": r["domain"],
+                "event": r["event"],
+                "data": json.loads(r["data"]),
+                "at": r["at"],
+            }
             for r in self._conn.execute(sql, args).fetchall()
         ]
 
@@ -351,7 +359,8 @@ class StateStore:
     def add_candidate(self, domain: str, action: str, job_id: str, action_json: dict[str, Any]) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO heal_candidates (domain, action, job_id, action_json, created_at) VALUES (?,?,?,?,?)",
+                "INSERT INTO heal_candidates (domain, action, job_id, action_json, created_at) VALUES "
+                "(?,?,?,?,?)",
                 (domain, action, job_id, json.dumps(action_json), _now()),
             )
 
@@ -370,7 +379,6 @@ class StateStore:
             for r in rows
         ]
 
-
     # ---- map_jobs ----------------------------------------------------------
 
     def create_map_job(
@@ -387,8 +395,8 @@ class StateStore:
         job_id = "m_" + secrets.token_hex(6)
         with self._lock:
             self._conn.execute(
-                "INSERT INTO map_jobs (id, domain, url, task, action, inputs, user, status, created_at, write) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
+                "INSERT INTO map_jobs (id, domain, url, task, action, inputs, user, status, created_at, "
+                "write) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
                 (job_id, domain, url, task, action, json.dumps(inputs), user, _now(), int(write)),
             )
         job = self.get_map_job(job_id)
@@ -409,7 +417,8 @@ class StateStore:
 
     def map_jobs_for(self, user: str, limit: int = 10) -> list[MapJob]:
         rows = self._conn.execute(
-            "SELECT * FROM map_jobs WHERE user = ? AND cleared = 0 ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            "SELECT * FROM map_jobs WHERE user = ? AND cleared = 0 ORDER BY created_at DESC, rowid DESC "
+            "LIMIT ?",
             (user, limit),
         ).fetchall()
         return [_row_to_map_job(r) for r in rows]
@@ -418,7 +427,8 @@ class StateStore:
         """Hide a finished map job from its requester's account page (the record stays)."""
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE map_jobs SET cleared = 1 WHERE id = ? AND user = ? AND status NOT IN ('queued', 'running')",
+                "UPDATE map_jobs SET cleared = 1 WHERE id = ? AND user = ? AND status NOT IN ('queued', "
+                "'running')",
                 (job_id, user),
             )
             return cur.rowcount > 0

@@ -16,4 +16,4 @@ If code and spec disagree, the spec wins; raise a question rather than changing 
 ## Repo-wide rules
 - Never commit captures, HAR files, `state.json`, cookies or `.env`. They contain live login sessions.
 - Never print cookie values or csrf/auth headers in logs. Use `"[redacted]"`.
-- Python 3.11+. Pin dependencies in `pyproject.toml`.
+- Python 3.12. Pin dependencies in `pyproject.toml`.
