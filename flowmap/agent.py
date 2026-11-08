@@ -56,7 +56,7 @@ from flowmap.flows import (
     render,
     resolve,
 )
-from flowmap.holdback import HoldBack
+from flowmap.holdback import WRITES, HoldBack
 from flowmap.infer import registrable
 from flowmap.label import DEFAULT_MODEL, FALLBACK_BETA, FALLBACK_MODELS
 
@@ -67,11 +67,6 @@ MAX_SNAPSHOT = 16_000  # characters of accessibility tree per page
 KEEP_SNAPSHOTS = 2  # older page snapshots are dropped from the conversation
 DANGER = re.compile(
     r"\b(log ?out|sign ?out|delete|remove|deactivate|close (?:my )?account|unsubscribe|unfollow)\b", re.I
-)
-WRITES = re.compile(
-    r"\b(follow|connect|send|post|publish|buy|order|pay|checkout|add to (?:cart|basket|bag)|like|subscribe"
-    r"|message|invite|endorse|purchase|apply|reply|comment|share|repost)\b",
-    re.I,
 )
 
 ELEMENT: dict[str, Any] = {

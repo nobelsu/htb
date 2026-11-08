@@ -33,7 +33,7 @@ from pydantic import BaseModel, ConfigDict
 
 from flowmap.browser import BrowserSetup, new_page
 from flowmap.flows import Click, Flow, FlowError, play, resolve
-from flowmap.holdback import HoldBack
+from flowmap.holdback import WRITES, HoldBack
 
 RECORDED_TYPES = {"xhr", "fetch", "document"}
 TEXT_TYPES = re.compile(r"json|text|javascript|xml|html|x-www-form-urlencoded", re.I)
@@ -286,7 +286,7 @@ async def capture_run(
     block: Callable[[str, str], bool] | None = None,
 ) -> Run:
     """Play ``flow`` once in a new page of ``context`` (a Playwright BrowserContext) and record it.
-    ``hold_back``: writes never reach the site (flowmap/holdback.py), armed from the flow's last click."""
+    ``hold_back``: writes never reach the site (flowmap/holdback.py), armed from ``commit_step``."""
     hold = HoldBack() if hold_back else None
     if hold is not None:
         await hold.install(context)
@@ -299,7 +299,7 @@ async def capture_run(
                 await route.fallback()
 
         await context.route("**/*", blocked)
-    commit = max((i for i, s in enumerate(flow.steps) if isinstance(s, Click)), default=len(flow.steps))
+    commit = commit_step(flow)
     page = await new_page(context)
     t0 = time.monotonic()
     rec = _Recorder(page, t0)
@@ -355,6 +355,23 @@ async def capture_run(
         [h for ex in run.exchanges for h in ex.request_headers],
     )
     return scrub_run(run, live)
+
+
+def commit_step(flow: Any) -> int:
+    """Where a write's replay starts holding everything back: the first click that reads like a change
+    ("Follow", "Send", "Add to cart"), or the last click if none does. The earliest, not the last: a
+    recording can click the change more than once (a first try, then the same from a search), and every
+    one of those must be held back."""
+    clicks = [i for i, s in enumerate(flow.steps) if isinstance(s, Click)]
+    changes = [i for i in clicks if WRITES.search(_label(flow.steps[i].target))]
+    return min(changes[:1] + clicks[-1:], default=len(flow.steps))
+
+
+def _label(target: Any) -> str:
+    """A click target as text: a selector, or its locator calls' arguments."""
+    if isinstance(target, str):
+        return target.replace("_", " ")
+    return " ".join(json.dumps(c.model_dump(mode="json")) for c in target).replace("_", " ")
 
 
 async def _wait_changed(page: Any, flow: Flow, before: list[str], timeout_ms: int) -> list[str]:

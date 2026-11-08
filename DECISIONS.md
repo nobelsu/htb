@@ -574,3 +574,8 @@ markers and infers the card deterministically, and the LLM only names things. We
     button, so it would only fail); payments, deleting and settings are refused by name, as in explore.
     A task with change wording and no action name ("follow a company page") is sent back at once with what
     to send instead (action, inputs, write: true), rather than starting an explore of the whole site.
+  - A write's replay arms hold-back at the first click that reads like a change, not the last click
+    (2026-11-08, after a real follow got through): a recording of "follow a company" clicked Follow on the
+    company page, then again from a search; on replay the first click ran before hold-back was armed and
+    LinkedIn received the follow. The recorder and the replay now share one change-word pattern
+    (flowmap/holdback.py WRITES), and the recorder won't accept done on a write until something was held.

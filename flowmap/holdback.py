@@ -24,6 +24,12 @@ log = logging.getLogger("flowmap.holdback")
 
 HELD_HEADER = "x-flowmap-held"
 MUTATION = re.compile(r"""(^|["'{\s])mutation\b""")
+# A click with this wording commits a write: from it on only reads reach the site (recorder and replay).
+WRITES = re.compile(
+    r"\b(follow|connect|send|post|publish|buy|order|pay|checkout|add to (?:cart|basket|bag)|like|subscribe"
+    r"|message|invite|endorse|purchase|apply|reply|comment|share|repost)\b",
+    re.I,
+)
 
 
 def is_clear_change(method: str, post_data: str | None, resource_type: str) -> bool:
