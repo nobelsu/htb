@@ -30,7 +30,7 @@ ENV_KEY_USER = "default"  # the .env key's user
 RESERVED = frozenset({ENV_KEY_USER, "_shared", "admin", "root"})
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{1,31}")
 EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
-KEY_PREFIX = "htb_"
+KEY_PREFIX = "spider_"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS api_users (

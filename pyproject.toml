@@ -1,5 +1,5 @@
 [project]
-name = "htb-runtime"
+name = "spider"
 version = "0.1.0"
 description = "Website action cards: mapper (capture to card), executor, registry and MCP gateway"
 requires-python = ">=3.12,<3.13"

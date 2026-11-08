@@ -662,7 +662,7 @@ def _error_result(message: str) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(type="text", text=message)], is_error=True)
 
 
-USER_STATE_KEY = "htb_user"
+USER_STATE_KEY = "spider_user"
 
 
 class BearerAuth:

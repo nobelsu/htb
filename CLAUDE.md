@@ -1,4 +1,4 @@
-# htb: websites → agent-callable actions (Hack the Burgh 2026)
+# spider: websites → agent-callable actions (Hack the Burgh 2026)
 
 We turn websites into "action maps" (cards): JSON describing a site's own internal HTTP calls,
 so an AI agent can call `linkedin_search_companies(query=...)` as a tool, without a browser.

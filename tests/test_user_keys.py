@@ -41,7 +41,7 @@ CODE = "judges-2026"
 def test_keys_identify_their_user_and_are_stored_hashed(tmp_path: Path) -> None:
     keys = KeyStore(tmp_path / "k.db")
     key = keys.create("alice", "alice@example.com")
-    assert key.startswith("htb_") and len(key) > 40
+    assert key.startswith("spider_") and len(key) > 40
     assert keys.user_for(key) == "alice"
     assert keys.user_for(key + "x") is None and keys.user_for("") is None
     with sqlite3.connect(tmp_path / "k.db") as conn:
@@ -141,7 +141,7 @@ async def test_unknown_and_revoked_keys_are_refused(multi_gateway: tuple[str, Ke
         async def status(k: str) -> int:
             return (await http.post(f"{base}/mcp", headers={"Authorization": f"Bearer {k}"}, json={})).status_code
 
-        assert await status("htb_made_up") == 401
+        assert await status("spider_made_up") == 401
         assert await status(key) != 401
         keys.revoke("carol")
         assert await status(key) == 401
@@ -167,7 +167,7 @@ async def test_sign_up_page_gives_a_working_key(
         with caplog.at_level(logging.DEBUG):
             done = await http.post(f"{base}/signup", data=_form())
     assert done.status_code == 200 and done.headers["cache-control"] == "no-store"
-    match = re.search(r"htb_[A-Za-z0-9_-]{30,}", done.text)
+    match = re.search(r"spider_[A-Za-z0-9_-]{30,}", done.text)
     assert match is not None
     key = match.group(0)
     assert f"claude mcp add --transport http spider {base}/mcp --header" in done.text.replace("&quot;", '"')
@@ -194,7 +194,7 @@ async def test_sign_up_rejects_bad_input(
     async with httpx.AsyncClient() as http:
         resp = await http.post(f"{base}/signup", data=form)
     assert resp.status_code == status and message in resp.text.lower()
-    assert keys.users() == [] and "htb_" not in resp.text
+    assert keys.users() == [] and "spider_" not in resp.text
 
 
 async def test_sign_up_name_taken(multi_gateway: tuple[str, KeyStore, EncryptedSessionStore]) -> None:
@@ -233,11 +233,11 @@ def test_command_line(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
 
     db = str(tmp_path / "k.db")
     assert main(["--db", db, "add", "erin", "--email", "erin@example.com"]) == 0
-    key = re.search(r"htb_\S+", capsys.readouterr().out)
+    key = re.search(r"spider_\S+", capsys.readouterr().out)
     assert key is not None and KeyStore(db).user_for(key.group(0)) == "erin"
     assert main(["--db", db, "list"]) == 0
     listed = capsys.readouterr().out
-    assert "erin" in listed and "htb_" not in listed
+    assert "erin" in listed and "spider_" not in listed
     assert main(["--db", db, "revoke", "erin"]) == 0
     assert KeyStore(db).user_for(key.group(0)) is None
     assert main(["--db", db, "add", "erin", "--email", "erin@example.com"]) == 1  # name taken

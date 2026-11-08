@@ -194,7 +194,7 @@ class OAuth:
         self, client_id: str, user: str, scopes: list[str], resource: str | None, *, family: str, signed_in: float
     ) -> OAuthToken:
         now = time.time()
-        access, refresh = "htbat_" + secrets.token_urlsafe(32), "htbrt_" + secrets.token_urlsafe(32)
+        access, refresh = "spat_" + secrets.token_urlsafe(32), "sprt_" + secrets.token_urlsafe(32)
         rows = [
             (_hash(access), "access", now + ACCESS_TTL_S),
             (_hash(refresh), "refresh", signed_in + SIGN_IN_MAX_AGE_S),

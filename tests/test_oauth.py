@@ -194,7 +194,7 @@ async def test_wrong_details_are_refused_and_guessing_is_slowed_down(env: Env) -
         wrong = await sign_in(http, env.base, request_id, action="password", login="alice", password="nope-nope")
         assert wrong.status_code == 401 and "don't match" in html.unescape(wrong.text)
         assert "location" not in wrong.headers
-        bad_key = await sign_in(http, env.base, request_id, action="key", key="htb_made_up")
+        bad_key = await sign_in(http, env.base, request_id, action="key", key="spider_made_up")
         assert bad_key.status_code == 401
         bad_code = await sign_in(http, env.base, request_id, action="signup", code="x", name="eve",
                                  email="e@example.com", password="eve-password1")
@@ -295,7 +295,7 @@ async def test_new_api_key_from_the_account_page(env: Env) -> None:
     async with httpx.AsyncClient(follow_redirects=False) as http:
         await account_session(env, http)
         page = await http.post(f"{env.base}/account/key")
-    found = re.search(r"htb_[A-Za-z0-9_-]{30,}", page.text)
+    found = re.search(r"spider_[A-Za-z0-9_-]{30,}", page.text)
     assert found is not None and env.keys.user_for(found.group(0)) == "alice"
     assert env.keys.user_for(old) is None and "claude mcp add" in page.text
 

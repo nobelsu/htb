@@ -31,7 +31,7 @@ from runtime.proxy import ProxySpec, is_local
 log = logging.getLogger("runtime.neko")
 
 ASSETS = Path(__file__).resolve().parent
-LABEL = "htb.neko"
+LABEL = "spider.neko"
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
 CHROMIUM_CONF = """[program:chromium]
@@ -244,7 +244,7 @@ class NekoManager:
         self, token: str, start_url: str, site_urls: list[str], udp: int, proxy: ProxySpec | None = None
     ) -> NekoSession:
         cfg = self.config
-        workdir = Path(tempfile.mkdtemp(prefix="htb-neko-"))
+        workdir = Path(tempfile.mkdtemp(prefix="spider-neko-"))
         # In local development the site may be on the Docker host's loopback; forward it into the container.
         forwards = ["0.0.0.0:9223=127.0.0.1:9222"]
         for url in {start_url, *site_urls}:

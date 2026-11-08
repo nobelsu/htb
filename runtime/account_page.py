@@ -37,7 +37,7 @@ from runtime.signup_page import AttemptLimiter, copy_row
 from runtime.ui import COPY_SCRIPT, HEADERS, bar_button, bar_link, esc, field, hidden, icon, notice, page
 
 log = logging.getLogger("runtime.account")
-COOKIE = "htb_account"
+COOKIE = "spider_account"
 MAX_BODY = 4096
 MODES = ("password", "key", "signup")
 

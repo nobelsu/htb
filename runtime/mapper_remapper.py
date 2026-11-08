@@ -82,7 +82,7 @@ class MapperRemapper:
         self, card: Card, domain_dir: Path, actions: list[str], sign_ins: dict[str, Cookies | None]
     ) -> dict[str, Any]:
         recapture, map_domain = self._mapper()
-        with tempfile.TemporaryDirectory(prefix="htb-heal-") as tmp:  # private (0700), removed afterwards
+        with tempfile.TemporaryDirectory(prefix="spider-heal-") as tmp:  # private (0700), removed afterwards
             for name in actions:
                 cookies = sign_ins.get(name)
                 state = _write_storage_state(Path(tmp) / f"{name}.state.json", card.base_url, cookies) if cookies else None
