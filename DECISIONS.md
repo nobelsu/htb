@@ -518,5 +518,14 @@ markers and infers the card deterministically, and the LLM only names things. We
     before); level 2, built, reads a page rendered on the server with a `css` extract (spec addition: each
     match is `{text, href}`; `from: body` only; selectolax parses). Inference picks the page when its HTML
     holds the visible results, and prefers the request in a group that carries the input (the blank page of
-    a GET form loads first). Level 3 (replaying the flow in a browser) is not built. Not yet tried on
-    LinkedIn: its search may fill results in with scripts, which level 2 doesn't cover.
+    a GET form loads first). Level 3 (replaying the flow in a browser) is not built.
+  - LinkedIn company search mapped at level 2 (2026-11-08): GET /search/results/companies/?keywords={query}
+    read with CSS, http tier, strong sign-in check (signed out: 403 or redirect to /uas/login); a call takes
+    about a second. It took four fixes, all general: (1) a recorded read that ends on an address holding
+    every input becomes just that address (`url_shortcut`), since LinkedIn fetches results in place after
+    typing but renders them in the HTML on a fresh load; (2) capture no longer treats a cookie whose value is
+    a host name as a secret (LinkedIn's hashed www.linkedin.com out of every URL, so nothing looked
+    same-site: every earlier LinkedIn mapping failed on this); (3) inference uses a redirect's target when
+    a request redirects to the same place (LinkedIn's 307); (4) the sign-in check doesn't reject checks
+    that end on the start page when no separate login page is known. The selector LinkedIn gets uses its
+    generated class names, which change with its deploys: heal re-maps it when that happens.

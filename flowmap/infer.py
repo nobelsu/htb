@@ -394,6 +394,8 @@ def _groups(ctx: _Ctx) -> dict[tuple[str, str, str], dict[str, Exchange]]:
             elif not _carries_any(held, run) and _carries_any(ex, run):
                 # The same page blank first, then with the input (a GET form): the second is the action.
                 group[run.run_id] = ex
+            elif held.status and 300 <= held.status < 400 and ex.redirected_from == held.id:
+                group[run.run_id] = ex  # redirected to the same place (LinkedIn's 307): use the target
     return groups
 
 

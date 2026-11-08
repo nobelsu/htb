@@ -181,3 +181,12 @@ async def test_capture_keeps_partial_run_on_failure(bookshop: str) -> None:
     runs = await capture_flow(flow, marker_runs=0, real_runs=1, pause_s=0, timeout_ms=500)
     assert runs[0].error and "step 7 (wait_for) failed" in runs[0].error
     assert any("/api/search?" in e.url for e in runs[0].exchanges)
+
+
+def test_a_cookie_holding_a_host_name_is_not_a_secret() -> None:
+    """LinkedIn sets a cookie whose value is its own host name: hashing it hashed www.linkedin.com out of
+    every captured URL, so nothing looked same-site and every LinkedIn mapping failed."""
+    from flowmap.capture import secret_values
+
+    found = secret_values(["www.linkedin.com", ".linkedin.com", "AQEDAS-a-real-session-token"], [])
+    assert found == {"AQEDAS-a-real-session-token"}

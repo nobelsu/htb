@@ -233,6 +233,20 @@ def option_value(chosen: str, option: str, inputs: dict[str, str]) -> str:
     return chosen or option
 
 
+def url_shortcut(url: str, inputs: dict[str, str], site: str) -> Goto | None:
+    """A read that ends on an address holding every input (a search page's ?keywords=...) is recorded as
+    opening that address, not as replaying the typing: shorter and steadier, and on sites that fetch results
+    in place it's the page load that carries the input (LinkedIn's search renders results on the server).
+    Values shorter than 3 characters could match by chance, so they never count."""
+    if not inputs or any(len(v) < 3 for v in inputs.values()):
+        return None
+    if registrable(urlsplit(url).hostname or "") != site:
+        return None
+    found: dict[str, str] = {}
+    templated = _template_url(url, {v: k for k, v in inputs.items()}, found)
+    return Goto(url=templated) if set(found) == set(inputs) else None
+
+
 def check_click(el: dict[str, Any], *, write: bool) -> None:
     label = str(el.get("name") or "")
     if DANGER.search(label):
@@ -291,10 +305,14 @@ async def results_selector(page: Any, texts: list[str]) -> str:
         raise AgentError(
             "these results aren't on the page exactly as written: "
             + "; ".join(missing[:5])
-            + ". Copy each result's text exactly as the page shows it."
+            + ". Give each result's title only (the text of its link or heading, e.g. just the name), copied "
+            "exactly, without badges or labels next to it."
         )
     if not out.get("selector"):
-        raise AgentError("couldn't find one selector for those results; name the results' titles only")
+        raise AgentError(
+            "couldn't find one selector for those results; give each result's title only (the text of its "
+            "link or heading), without badges or labels next to it"
+        )
     return str(out["selector"])
 
 
@@ -475,8 +493,11 @@ async def record_with_agent(
                 if outcome.give_up:
                     raise AgentError(f"the agent gave up: {outcome.summary}", lines)
                 note(f"done: {outcome.summary}")
+                direct = None if write else url_shortcut(page.url, inputs, site)
+                if direct is not None:
+                    note(f"the address holds every input: the flow is just {direct.url}")
                 flow = _build_flow(
-                    steps,
+                    [direct] if direct is not None else steps,
                     inputs=inputs,
                     examples=_with(examples, alternatives),
                     no_marker=no_marker,

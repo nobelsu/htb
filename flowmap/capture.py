@@ -107,6 +107,11 @@ class Run(_Model):
 # ---------- secrets ----------
 
 
+# A cookie whose value is just a host name ("www.linkedin.com") is no secret, and hashing it would also hash
+# the site's own address out of every URL (nothing would look same-site any more).
+HOSTNAME = re.compile(r"^\.?(?:[a-z0-9-]+\.)+[a-z]{2,}$", re.I)
+
+
 def secret_values(cookies: Iterable[str], headers: Iterable[tuple[str, str]]) -> set[str]:
     """Live values to hash: cookie values (quotes stripped, so a header carrying the unquoted value hashes the
     same) and sensitive header values (and the credential after an auth scheme like ``Bearer``).
@@ -114,14 +119,14 @@ def secret_values(cookies: Iterable[str], headers: Iterable[tuple[str, str]]) ->
     out: set[str] = set()
     for value in cookies:
         v = value.strip('"')
-        if len(v) >= MIN_SECRET_LEN:
+        if len(v) >= MIN_SECRET_LEN and not HOSTNAME.match(v):
             out.add(v)
     for name, value in headers:
         if name.lower() in ("cookie", "set-cookie") or not SENSITIVE_NAME.search(name):
             continue  # cookie headers are covered by the cookie values themselves
         for v in (value, value.split(" ", 1)[-1]):
             v = v.strip().strip('"')
-            if len(v) >= MIN_SECRET_LEN:
+            if len(v) >= MIN_SECRET_LEN and not HOSTNAME.match(v):
                 out.add(v)
     return out
 

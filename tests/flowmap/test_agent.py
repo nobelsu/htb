@@ -275,3 +275,14 @@ async def test_agent_sign_in_and_give_up(bookshop: str) -> None:
             assert any("starts again" in line for line in info.value.log)
         finally:
             await browser.close()
+
+
+def test_an_address_holding_every_input_becomes_the_flow() -> None:
+    from flowmap.agent import url_shortcut
+
+    url = "https://www.linkedin.com/search/results/companies/?keywords=robotics&origin=SWITCH_SEARCH_VERTICAL"
+    direct = url_shortcut(url, {"query": "robotics"}, "linkedin.com")
+    assert direct is not None and direct.url.endswith("?keywords={{query}}&origin=SWITCH_SEARCH_VERTICAL")
+    assert url_shortcut(url, {"query": "robotics", "location": "London"}, "linkedin.com") is None  # not all
+    assert url_shortcut(url, {"page": "2"}, "linkedin.com") is None  # too short to trust
+    assert url_shortcut("https://evil.example/?q=robotics", {"query": "robotics"}, "linkedin.com") is None

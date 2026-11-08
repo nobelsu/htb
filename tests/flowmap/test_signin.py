@@ -109,3 +109,18 @@ async def test_a_sign_in_that_lands_on_the_login_page_is_no_check(bookshop: str)
             user="alice",
             executor=Executor(sessions, Confirmer("s")),
         )
+
+
+async def test_a_login_page_that_is_the_start_page_rejects_nothing(bookshop: str) -> None:
+    """A job that was signed in from the start has no login page of its own: the start page stands in, and
+    a check ending there is fine (LinkedIn's search failed on this)."""
+    executor = Executor(await _signed_in(bookshop), Confirmer("s"))
+    check = await infer_sign_in(
+        _card(bookshop),
+        "bookshop",
+        login_url=bookshop + "/orders",
+        start_url=bookshop + "/orders",
+        user="alice",
+        executor=executor,
+    )
+    assert check.strong and check.provider["session_check"]["url"] == "{{base_url}}/orders"

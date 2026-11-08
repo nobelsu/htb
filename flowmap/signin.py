@@ -83,6 +83,8 @@ async def infer_sign_in(
     weak: SignInCheck | None = None
     tried: list[str] = []
     login_path = urlsplit(login_url).path
+    if login_path == urlsplit(start_url).path:
+        login_path = ""  # no separate login page known (the start page stands in for it): nothing to guard
     for check, tier in candidates(card, provider, start_url):
         tried.append(f"{check['method']} {check['url']} ({tier})")
         entry = {"id": provider, "login_url": login_url, "session_check": check, "logged_out_signals": []}

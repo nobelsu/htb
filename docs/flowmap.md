@@ -66,6 +66,10 @@ fetches that page and reads the results with the recorder's CSS selector: a `css
 the selector finds there, and needs at least 60% in every real run. Pages that fill their results in with
 scripts from data flowmap can't see still fail; replaying the flow in a browser (level 3) isn't built.
 
+A recorded read that ends on an address holding every input (`?keywords=robotics`) is saved as just that
+address, not the typing that led there. That's how LinkedIn's company search maps: typing fetches results in
+place, but loading the address renders them in the HTML.
+
 ### Explore
 
 `request_map` with only a site (and, optionally, what the user wants to do there as `task`) explores it
