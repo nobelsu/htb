@@ -549,3 +549,9 @@ markers and infers the card deterministically, and the LLM only names things. We
     isn't saved. The saved recording (heal replays it) gets the same values, or is deleted. Ran it on
     LinkedIn's card: get_profile_experience's example went from a private person's profile to williamhgates
     (version 4).
+  - The same check covers fixed values in requests (asked, 2026-11-08): a task recorded as "open my
+    profile" bakes the requester's own username or member id into the request, and the shared card would
+    serve their data to everyone. Claude is shown every fixed value (path segments, query and body values);
+    one that belongs to the signed-in person becomes a required input with a public example (kept only if it
+    works), and personal values quoted in descriptions are replaced too. Not built: a per-site "who am I"
+    action, so "my profile" needs the agent to know the user's id.

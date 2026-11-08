@@ -14,8 +14,9 @@ from runtime.sessions import InMemorySessionStore
 class Checker:
     """Stands in for Claude's check: ``verdicts`` is param -> replacement for the values it calls personal."""
 
-    def __init__(self, verdicts: dict[str, str]) -> None:
+    def __init__(self, verdicts: dict[str, str], fixed: list[dict[str, str]] | None = None) -> None:
         self.verdicts = verdicts
+        self.fixed = fixed or []
         self.calls: list[dict[str, Any]] = []
         self.beta = self
         self.messages = self
@@ -23,7 +24,8 @@ class Checker:
     async def create(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(kwargs)
         values = [{"param": k, "personal": True, "replacement": v} for k, v in self.verdicts.items()]
-        return {"content": [{"type": "tool_use", "name": "check_examples", "input": {"values": values}}]}
+        answer = {"values": values, "fixed": self.fixed}
+        return {"content": [{"type": "tool_use", "name": "check_examples", "input": answer}]}
 
 
 def card_with(fixture_card: dict[str, Any], query: str) -> dict[str, Any]:
@@ -80,3 +82,35 @@ async def test_public_examples_are_left_alone(fixture_card: dict[str, Any]) -> N
         card, {"search_products"}, user="u", executor=executor(), client=Checker({})
     )
     assert out == card and not report.replaced and not report.dropped
+
+
+def baked_in(fixture_card: dict[str, Any]) -> dict[str, Any]:
+    """get_product with its SKU fixed in the request, as if recorded as "open my item"."""
+    card = card_with(fixture_card, "lamp")
+    product = next(a for a in card["actions"] if a["name"] == "get_product")
+    product["steps"][0]["request"]["query"] = {"sku": "SKU-001"}
+    product["params"] = {}
+    product["examples"] = [{"params": {}, "min_items": 1}]
+    return card
+
+
+async def test_the_recorders_own_fixed_value_becomes_an_input(fixture_card: dict[str, Any]) -> None:
+    card = baked_in(fixture_card)
+    client = Checker({}, fixed=[{"value": "SKU-001", "param": "sku", "replacement": "SKU-002"}])
+    out, report = await public_examples(card, {"get_product"}, user="u", executor=executor(), client=client)
+    product = next(a for a in out["actions"] if a["name"] == "get_product")
+    assert product["steps"][0]["request"]["query"] == {"sku": "{{params.sku}}"}
+    assert product["params"]["sku"]["required"] and product["params"]["sku"]["example"] == "SKU-002"
+    assert product["examples"] == [{"params": {"sku": "SKU-002"}, "min_items": 1}]
+    assert report.replaced == {"get_product": {"sku": "SKU-002"}}
+    assert '"SKU-001"' in client.calls[0]["messages"][0]["content"]  # Claude was shown the fixed values
+    assert "SKU-001" not in str(product)
+
+
+async def test_a_fixed_value_without_a_working_stand_in_drops_the_action(
+    fixture_card: dict[str, Any],
+) -> None:
+    card = baked_in(fixture_card)
+    client = Checker({}, fixed=[{"value": "SKU-001", "param": "sku", "replacement": "SKU-404"}])
+    out, report = await public_examples(card, {"get_product"}, user="u", executor=executor(), client=client)
+    assert "get_product" in report.dropped and "get_product" not in [a["name"] for a in out["actions"]]
