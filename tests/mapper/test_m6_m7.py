@@ -1,6 +1,7 @@
 """M6 output/expect, M7 annotation and the optional LLM layer (offline, with a fake client)."""
 
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -227,3 +228,34 @@ def test_kind_mismatch_and_unknowns_are_reported():
 def test_jsonpaths_all_compile():
     for p in ["$.elements[*]", "$.data['x-y'][0]"]:
         assert jsonpaths.compiles(p)
+
+
+def test_server_rendered_page_outputs_its_visible_text():
+    from mapper.pipeline.m6_output import plan_html_output
+
+    page = (
+        "<html><head><script>var a = 1;</script><style>.x{}</style></head><body><nav><a href='/'>Home</a>"
+        "</nav><main><h1 class='gvy1'>Granite Labs</h1><p>Software Development</p>"
+        "<span>10K+ employees</span><div><b>x</b></div></main></body></html>"
+    )
+    b = make_bundle("real", [har_entry("GET", "https://example.com/company/granite/", mime="text/html", body=page)])
+    goal = SimpleNamespace(id="granite", extract={})
+    plan = plan_html_output(goal, b.entries[0], ["Granite Labs", "10K+ employees"])
+    assert plan.source == "page_text" and plan.output["fields"] == {}
+    items = goal.extract["items"]
+    assert items["type"] == "regex" and "parse" not in items
+    texts = re.findall(items["expr"], page)
+    assert texts == ["Home", "Granite Labs", "Software Development", "10K+ employees"]  # no script/style
+
+
+def test_one_graphql_path_serves_many_reads():
+    from mapper.pipeline.m3_goal import counterpart, operation_key
+
+    def gql(q, at):
+        return har_entry("GET", f"https://example.com/api/graphql?variables=()&queryId={q}.abc{at}", at=at, body={"data": {}})
+
+    live = make_bundle("real", [gql("navs", 1), gql("me", 2)])
+    m1 = make_bundle("m1", [gql("navs", 1), gql("me", 2)])
+    me = live.entries[1]
+    assert operation_key(me) != operation_key(live.entries[0])
+    assert "queryId=me" in counterpart(m1, me, {}).url

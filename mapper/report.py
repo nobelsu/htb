@@ -152,8 +152,19 @@ def _section_task(tr: TaskResult, secrets: set[str]) -> list[str]:
         source = {"llm": "picked by the LLM", "fallback": "first item's scalar leaves (no LLM)"}.get(
             tr.output.source, tr.output.source
         )
-        where = f"`{tr.output.items_path}[*]`" if tr.output.items_path else "the streamed result rows"
-        out.append(f"From `{o['from']}` ({where}), limit {o['limit']}, fields {source}:")
+        step = next(st for st in a["steps"] if o["from"] == f"steps.{st['id']}.items")
+        items = step["extract"]["items"]
+        where = (
+            "the streamed result rows"
+            if items.get("resolve") == "rows"
+            else "the page's visible text, one string per element"
+            if tr.output.source == "page_text"
+            else f"`{items['expr']}`"
+        )
+        if tr.output.source == "page_text":
+            out.append(f"From `{o['from']}` ({where}), limit {o['limit']}, no fields.")
+        else:
+            out.append(f"From `{o['from']}` ({where}), limit {o['limit']}, fields {source}:")
         out.append("")
         for name, path in o["fields"].items():
             out.append(f"- `{name}` ← `{path}`")

@@ -124,6 +124,8 @@ def plan_output(
     if (real_goal or m1_goal).response_kind == "stream":
         return plan_stream_output(goal, m1_goal, real_goal, task, llm, description, screen, compare_runs)
     full = (real_goal or m1_goal).response_json
+    if full is None and (real_goal or m1_goal).response_kind == "html":
+        return plan_html_output(goal, real_goal or m1_goal, screen)
     if full is None:
         return OutputPlan(
             {"from": None, "fields": {}, "limit": None, "next_params": None},
@@ -157,6 +159,35 @@ def plan_output(
         fields = field_names(picked or candidates[:MAX_FIELDS])
     output = {"from": f"steps.{goal.id}.items", "fields": fields, "limit": len(items), "next_params": None}
     return OutputPlan(output, items_path, sample, source)
+
+
+# --- server-rendered pages (the data is only in the HTML) ---------------------------------------------
+# No JSON to point into, so the result is the page's visible text, one string per element, in page order
+# ("Microsoft", "Software Development", "10K+ employees", ...). The agent reading it is an LLM: a list of
+# texts is enough for it, and it doesn't break when the site renames its (often generated) CSS classes.
+
+PAGE_TEXT = r"<(?:h[1-6]|p|span|a|dd|dt|li|td|th|button|div)\b[^>]*>\s*([^<>\s][^<>]{0,300}?)\s*</"
+MAX_PAGE_TEXTS = 200
+
+
+def plan_html_output(goal: StepPlan, entry: Entry, screen: list[str] | None) -> OutputPlan:
+    texts = re.findall(PAGE_TEXT, entry.response_body or "")
+    if not texts:
+        return OutputPlan(
+            {"from": None, "fields": {}, "limit": None, "next_params": None},
+            source="none",
+            warnings=["goal response is HTML with no text in it: no output extracted"],
+        )
+    goal.extract["items"] = {"from": "body", "type": "regex", "expr": PAGE_TEXT}
+    shown = sum(any(t in x for x in texts) for t in screen or [])
+    note = f"page text ({len(texts)} texts; {shown} of {len(screen or [])} shown on the page)"
+    output = {
+        "from": f"steps.{goal.id}.items",
+        "fields": {},
+        "limit": min(len(texts), MAX_PAGE_TEXTS),
+        "next_params": None,
+    }
+    return OutputPlan(output, None, texts[:5], "page_text", warnings=[f"output is the {note}"])
 
 
 # --- streamed answers (data rows, one per line; see m1_load) -----------------------------------------

@@ -65,6 +65,17 @@ def endpoint_key(entry: Entry, values: dict[str, str] | None = None) -> tuple[st
     return entry.method, entry.host, path
 
 
+OPERATION_PARAMS = ("queryId", "operationName", "operation", "op", "action", "componentId", "sduiid")
+
+
+def operation_key(entry: Entry) -> tuple:
+    """Endpoint plus the query values that name the operation (a GraphQL ``queryId``/``operationName``):
+    one ``/graphql`` path serves many different reads."""
+    pairs = [kv.split("=", 1) for kv in entry.raw_query.split("&") if "=" in kv]
+    ops = tuple(sorted((k, v.split(".")[0]) for k, v in pairs if k in OPERATION_PARAMS))
+    return entry.method, entry.host, entry.path, ops
+
+
 @dataclass
 class Goal:
     entry: Entry
@@ -171,6 +182,7 @@ def find_write_goal(bundle: Bundle, mark_index: int = 0) -> Goal:
     return Goal(chosen, reason, pool, _distinct_endpoints(pool, {}) > 1, None, mark)
 
 
+MAX_SCREEN_CANDIDATES = 10  # with small data answers holding the page's text, for the LLM to weigh
 SCREEN_GRACE = timedelta(seconds=3)  # a page that performs the task fetches its data right after loading
 
 
@@ -198,7 +210,7 @@ def find_screen_goal(
     anchor = _anchor(bundle, None, mark)  # the click/Enter that performed the task, if it was one
     texts = [t for t in dict.fromkeys(screen) if len(t) >= 3]
     forms = {t: (t, json.dumps(t)[1:-1]) for t in texts}
-    pool = [
+    seen = [
         e
         for e in bundle.entries
         if (not values or any(entry_mentions(bundle, e, v) for v in values.values() if v))
@@ -206,11 +218,11 @@ def find_screen_goal(
         and e.response_body
         and 200 <= e.status < 300
         and (mark is None or e.started <= mark + SCREEN_GRACE)
-        and (anchor is None or e.started >= anchor)
     ]
-    holds = {id(e): {t for t in texts if any(f in e.response_body for f in forms[t])} for e in pool}
-    spread = {t: sum(t in h for h in holds.values()) for t in texts}
-    score = {id(e): sum(1 / spread[t] for t in holds[id(e)]) for e in pool}
+    pool = [e for e in seen if anchor is None or e.started >= anchor]
+    holds = {id(e): {t for t in texts if any(f in e.response_body for f in forms[t])} for e in seen}
+    spread = {t: max(1, sum(t in holds[id(e)] for e in pool)) for t in texts}
+    score = {id(e): sum(1 / spread[t] for t in holds[id(e)]) for e in seen}
     scored = [e for e in pool if score[id(e)] > 0]
     if not scored:
         raise GoalNotFound(f"{bundle.run}: no answer holds the text the page showed")
@@ -222,7 +234,18 @@ def find_screen_goal(
     window = sorted((e for e in scored if score[id(e)] == top), key=lambda e: e.started)
     held = len(holds[id(window[0])])
     reason = f"its answer holds {held} of the {len(texts)} texts the page showed"
-    return Goal(window[0], reason, sorted(scored, key=lambda e: -score[id(e)])[:5], False, None, mark)
+    candidates = sorted(scored, key=lambda e: -score[id(e)])[:5]
+    if not values:  # nothing typed: the data may have loaded before the task (who am I, on every page)
+        dense = [e for e in seen if e.response_kind in ("json", "stream") and score[id(e)] > 0]
+        dense.sort(key=lambda e: -score[id(e)] / max(1, len(e.response_body)))
+        candidates += dense
+    unique, ops = [], set()
+    for e in candidates:  # each operation once
+        if operation_key(e) not in ops and len(unique) < MAX_SCREEN_CANDIDATES:
+            ops.add(operation_key(e))
+            unique.append(e)
+    candidates = unique
+    return Goal(window[0], reason, candidates, False, None, mark)
 
 
 def find_goal(bundle: Bundle, kind: str | None = None, mark_index: int = 0) -> Goal:
@@ -238,6 +261,7 @@ def counterpart(
     """The entry in ``bundle`` for the same endpoint as ``like`` (nearest before ``before``)."""
     key = endpoint_key(like, like_values)
     same = [e for e in bundle.entries if endpoint_key(e, bundle.values) == key]
+    same = [e for e in same if operation_key(e) == operation_key(like)] or same  # the same GraphQL query
     if before is not None:
         earlier = [e for e in same if e.started < before]
         if earlier:

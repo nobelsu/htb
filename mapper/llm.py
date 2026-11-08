@@ -84,7 +84,9 @@ class LLM:
 
     # --- the three optional steps ------------------------------------------------------------
 
-    def pick_goal(self, task: str, candidates: list[str]) -> int | None:
+    def pick_goal(
+        self, task: str, candidates: list[str], description: str = "", typed: bool = True
+    ) -> int | None:
         """Index of the candidate request that performs ``task``."""
         schema = {
             "type": "object",
@@ -93,10 +95,20 @@ class LLM:
             "additionalProperties": False,
         }
         listing = "\n".join(f"{i}. {c}" for i, c in enumerate(candidates))
-        prompt = (
-            f"A person performed the task {task!r} on a website. These requests all carried their input. "
-            f"Which one actually performs the task (not autocomplete, logging or prefetch)?\n{listing}"
-        )
+        about = f" It returns: {description[:1500]}" if description else ""
+        if typed:
+            prompt = (
+                f"A person performed the task {task!r} on a website.{about} These requests all carried "
+                "their input. Which one actually performs the task (not autocomplete, logging or "
+                f"prefetch)?\n{listing}"
+            )
+        else:
+            prompt = (
+                f"A person performed the task {task!r} on a website; it takes no input.{about} These "
+                "answers all hold what the page then showed. Which request should an agent call to get "
+                "that data? Prefer a data answer (JSON) that holds the fields named above over a page "
+                f"or a big component answer that only happens to show them.\n{listing}"
+            )
         data = self.ask_json("goal tie-break", prompt, schema, max_tokens=1000)
         if data is None or not 0 <= int(data.get("index", -1)) < len(candidates):
             return None

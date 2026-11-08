@@ -80,6 +80,8 @@ def _summary(e) -> str:
         answer = f"streamed answer, {len(e.response_rows or [])} data rows"
     elif isinstance(e.response_json, dict):
         answer = str(sorted(e.response_json))
+    elif e.response_kind == "html":
+        answer = "HTML page"
     else:
         answer = type(e.response_json).__name__
     query = "&".join(sorted(k.split("=")[0] for k in e.raw_query.split("&") if k))
@@ -136,14 +138,15 @@ def _task_goal(runs: dict[str, Bundle], kind: str) -> tuple[Goal, str, list[str]
             if not m1.values:
                 raise
         if found is not None:
-            entry = None
-            for cand in [found.entry, *found.candidates]:  # best match first that m1 has too
-                entry = cand if live is m1 else counterpart(m1, cand, live.values) or similar_entry(m1, cand)
-                if entry is not None:
-                    found.entry = cand
-                    break
-            if entry is not None:
-                goal = Goal(entry, found.reason, [entry], False, None, pick_mark(m1, 0))
+            in_m1 = []  # the candidates m1 has too, best match first
+            for cand in [found.entry, *found.candidates]:
+                e = cand if live is m1 else counterpart(m1, cand, live.values) or similar_entry(m1, cand)
+                if e is not None and all(e is not x for x in in_m1):
+                    in_m1.append(e)
+            if in_m1:
+                # nothing typed to follow: the LLM weighs the best match against small data answers
+                tie = not live.values and len(in_m1) > 1
+                goal = Goal(in_m1[0], found.reason, in_m1, tie, None, pick_mark(m1, 0))
                 return goal, "the text on the page", screen
     return find_goal(m1, kind), "earliest (no LLM)", screen
 
@@ -171,8 +174,15 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
 
     goal, picked_by, screen = _task_goal(runs, kind)
     if goal.tie:
-        idx = llm.pick_goal(task, [_summary(c) for c in goal.candidates])
+        idx = llm.pick_goal(
+            task,
+            [_summary(c) for c in goal.candidates],
+            description=m1.meta.get("task_description", ""),
+            typed=bool(m1.values),
+        )
         if idx is not None:
+            if goal.candidates[idx] is not goal.entry:
+                goal.reason = "the LLM picked it from the candidates as the request that returns this data"
             goal.entry, picked_by = goal.candidates[idx], "the LLM"
         warnings.append(f"goal tie between {len(goal.candidates)} endpoints, picked by {picked_by}")
     m2_goal = _matching_goal(m2, goal, m1, kind)
