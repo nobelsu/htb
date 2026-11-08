@@ -102,11 +102,17 @@ def chromium_conf(
         width=cfg.width,
         height=cfg.height,
         scale=cfg.scale,
-        start_url=_shell_quote(start_url),
-        forwards=" ".join(forwards),
-        accept_lang=_shell_quote(cfg.accept_languages),
-        proxy_flags=flags,
+        start_url=_conf_value(_shell_quote(start_url)),
+        forwards=_conf_value(" ".join(forwards)),
+        accept_lang=_conf_value(_shell_quote(cfg.accept_languages)),
+        proxy_flags=_conf_value(flags),
     ) + extra
+
+
+def _conf_value(text: str) -> str:
+    """A value written into supervisord's config: ``%`` starts its own placeholders (``%(ENV_USER)s``), so a
+    URL with ``%2F`` in it (LinkedIn's login page) would stop the login browser from starting."""
+    return text.replace("%", "%%")
 
 
 @dataclass

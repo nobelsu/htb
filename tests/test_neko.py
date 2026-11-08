@@ -174,3 +174,17 @@ def test_cookie_matching_rules() -> None:
     assert not _applies({"domain": ".linkedin.com", "path": "/jobs"}, url)
     assert not _applies({"domain": "127.0.0.1", "path": "/", "secure": True}, "http://127.0.0.1:8900/")
     assert _applies({"domain": "127.0.0.1", "path": "/"}, "http://127.0.0.1:8900/")
+
+
+def test_a_start_page_with_percent_signs_keeps_the_config_valid(tmp_path: Path) -> None:
+    """LinkedIn's login page has %2F in its address; supervisord reads % as its own placeholder, so it must
+    be written as %% (unescaped, the login browser never starts)."""
+    import configparser
+
+    from runtime.neko.manager import NekoConfig, chromium_conf
+
+    url = "https://www.linkedin.com/uas/login?session_redirect=%2Fsearch%2Fresults%2F&skipRedirect=true"
+    conf = chromium_conf(NekoConfig(), url, ["0.0.0.0:9223=127.0.0.1:9222"], None, tmp_path)
+    parser = configparser.ConfigParser(defaults={"ENV_USER": "neko", "ENV_DISPLAY": ":99.0"})
+    parser.read_string(conf)
+    assert url in parser.get("program:chromium", "command")  # supervisord's reading gives the URL back
