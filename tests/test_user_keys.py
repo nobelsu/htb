@@ -170,7 +170,7 @@ async def test_sign_up_page_gives_a_working_key(
     match = re.search(r"htb_[A-Za-z0-9_-]{30,}", done.text)
     assert match is not None
     key = match.group(0)
-    assert f"claude mcp add --transport http htb {base}/mcp --header" in done.text.replace("&quot;", '"')
+    assert f"claude mcp add --transport http spider {base}/mcp --header" in done.text.replace("&quot;", '"')
     assert keys.user_for(key) == "dave" and keys.check_login("dave", "dave-password1") == "dave"
     async with connect_as(base, key) as client:
         assert envelope(await client.call_tool("find_actions", {}))["sites"][0]["site"] == DOMAIN

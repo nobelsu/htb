@@ -65,8 +65,12 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
 INSTRUCTIONS = (
-    "Tools that act on websites for the user. Use find_actions to discover what a site can do, then run_action "
-    "to do it. Every tool returns JSON; check its `status` field (SUCCESS, EMPTY, NEEDS_CONFIRMATION, "
+    "spider: tools that act on websites for the user, directly, without a browser. For any task on a website "
+    "(searching, looking something up, adding to a cart, following, posting), use spider before any browser "
+    "or computer-use tool: call find_actions with the site and what you want to do, then run_action. If the "
+    "site has nothing yet, call request_map (with only the site, it explores it) and wait with map_status "
+    "instead of opening a browser; only fall back to a browser if that fails. Use find_actions to discover "
+    "what a site can do, then run_action to do it. Every tool returns JSON; check its `status` field (SUCCESS, EMPTY, NEEDS_CONFIRMATION, "
     "AUTH_REQUIRED, ...) to decide what to do next.\n"
     "When you talk to the user, describe outcomes in plain terms (\"You're signed out of linkedin.com\", "
     "\"Sign in here: <link>\", \"The site changed; I'll retry in a moment\"). Don't mention tool names, status "
@@ -81,7 +85,8 @@ INSTRUCTIONS = (
 
 FIND_ACTIONS_TOOL = types.Tool(
     name="find_actions",
-    description="Find what you can do on websites for the user. Give a short description of the task (query), a "
+    description="Use this first for any task on a website, before any browser tool. Find what you can do on "
+    "websites for the user. Give a short description of the task (query), a "
     "site (its domain, e.g. linkedin.com), or both. Returns matching actions with their parameters; then call "
     "run_action. With no arguments it lists the available sites.",
     input_schema={
@@ -252,7 +257,7 @@ class Gateway:
         self._seen_clients: set[tuple[object, object, object]] = set()
         self._prompted_at: dict[str, float] = {}  # sign-in token -> when we asked the client to show the link
         self.server: Server[dict[str, Any]] = Server(
-            "htb-runtime",
+            "spider",
             version="0.1.0",
             instructions=INSTRUCTIONS,
             lifespan=self._lifespan,
@@ -553,7 +558,7 @@ class Gateway:
                 revocation_options=RevocationOptions(enabled=True),
             )
             extra += create_protected_resource_routes(
-                resource_url=AnyHttpUrl(f"{public}/mcp"), authorization_servers=[issuer], resource_name="htb"
+                resource_url=AnyHttpUrl(f"{public}/mcp"), authorization_servers=[issuer], resource_name="spider"
             )
             resolve = BearerAuth(lambda *_: None, api_key, keys=keys)._user_for  # type: ignore[arg-type]
             extra += account_routes(
@@ -683,7 +688,7 @@ class BearerAuth:
         self._exempt_paths = exempt_paths  # public pages, matched exactly (the home page is "/")
         self._oauth = oauth
         # Where OAuth clients find how to sign in (RFC 9728), sent with every 401.
-        challenge = 'Bearer realm="htb-runtime"'
+        challenge = 'Bearer realm="spider"'
         if resource_metadata:
             challenge += f', resource_metadata="{resource_metadata}"'
         self._challenge = challenge.encode()
