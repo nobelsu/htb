@@ -526,3 +526,41 @@ async def test_a_change_without_a_name_is_sent_back_to_be_named(
     assert state.open_map_job_for(DOMAIN) is None
     explore = await m.request("alice", "shop.test", "find books about the sea")  # a goal to read: explores
     assert "job_id" in explore
+
+
+async def test_a_new_write_is_tried_up_to_the_send_and_keeps_the_tier_that_works(
+    registry: Registry, state: StateStore, executor: Executor
+) -> None:
+    """The steps before a write's send run before it's saved: on the first tier they work on (LinkedIn's company
+    page answers plain HTTP with a 403), and the send itself never runs. A write that fails on every tier
+    isn't saved."""
+    import json as _json
+    from pathlib import Path as _Path
+    from types import SimpleNamespace
+
+    from schema import ResultCode
+
+    card = _json.loads(_Path("tests/fixture_site.json").read_text())
+    tried: list[tuple[str, str, int]] = []
+
+    class Picky:
+        def __init__(self, works_on: str | None) -> None:
+            self.works_on = works_on
+
+        async def run_internal(self, card: Any, version: int, name: str, params: dict, user: str) -> Any:
+            action = card.action(name)
+            tried.append((name, action.tier or card.defaults.tier, len(action.steps)))
+            ok = (action.tier or card.defaults.tier) == self.works_on
+            return SimpleNamespace(status=ResultCode.SUCCESS if ok else ResultCode.BLOCKED)
+
+    m = maps(registry, state, executor, StandIn())
+    m.executor = Picky("impersonate")  # type: ignore[assignment]
+    raw, failed = await m._check_writes(card, "alice", {"guarded_token_add"})
+    assert not failed
+    assert next(a for a in raw["actions"] if a["name"] == "guarded_token_add")["tier"] == "impersonate"
+    assert tried == [("guarded_token_add", "http", 1), ("guarded_token_add", "impersonate", 1)]  # never the send
+
+    m.executor = Picky(None)  # type: ignore[assignment]
+    raw, failed = await m._check_writes(card, "alice", {"guarded_token_add"})
+    assert "BLOCKED" in failed["guarded_token_add"]
+    assert "guarded_token_add" not in {a["name"] for a in raw["actions"]}

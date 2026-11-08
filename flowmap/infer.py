@@ -959,6 +959,10 @@ def _template_value(
         return spliced.replace(base, "{{base_url}}") if where in ("header", "query") else spliced
     # 2. a constant
     if len(set(vals)) == 1 and not SECRET.search(vals[0]):
+        if ctx.flow.kind == "write":  # an id the page showed: the same in every run only because they all did
+            linked = _ids_from_page(ctx, vals[0], rids, order, by_run)
+            if linked is not None:
+                return linked
         return vals[0].replace(base, "{{base_url}}") if base in vals[0] else vals[0]
     # 3. changes per run (or is a session value): find where it comes from
     if (where in ("query", "form") and str(key).lower() in CACHE_BUSTER_KEYS) or all(
@@ -976,17 +980,39 @@ def _template_value(
     return None
 
 
+def _ids_from_page(
+    ctx: _Ctx, value: str, rids: list[str], order: list[Run], by_run: dict[str, Exchange]
+) -> str | None:
+    """A write's fixed value with ids in it (``urn:li:fsd_company:74126343``) that an earlier page, opened
+    with the action's inputs, shows: every run followed the same company, so the id never changed, but
+    another company has another id. Each such id is read from that page instead."""
+    out, found = value, False
+    for digits in dict.fromkeys(re.findall(r"\d{4,}", value)):
+        source = _find_source(ctx, {rid: digits for rid in rids}, order, by_run, from_input_pages=True)
+        if source is not None:
+            out, found = out.replace(digits, source), True
+    if found:
+        ctx.reasons.append(f"ids in {value[:60]!r} are read from the page the inputs opened")
+    return out if found else None
+
+
 def _looks_like_time(v: str) -> bool:
     return v.isdigit() and len(v) in (10, 13) and v[0] == "1"
 
 
 def _find_source(
-    ctx: _Ctx, values: dict[str, str], order: list[Run], by_run: dict[str, Exchange]
+    ctx: _Ctx,
+    values: dict[str, str],
+    order: list[Run],
+    by_run: dict[str, Exchange],
+    *,
+    from_input_pages: bool = False,
 ) -> str | None:
-    """A cookie the site set, or a value from an earlier response, consistent in every run."""
+    """A cookie the site set, or a value from an earlier response, consistent in every run.
+    ``from_input_pages``: only a response to a request that carried one of the inputs (no cookies)."""
     runs = {r.run_id: r for r in order}
     # a cookie
-    for name in {c.name for r in order for c in r.cookies}:
+    for name in set() if from_input_pages else {c.name for r in order for c in r.cookies}:
         quoted = True
         ok = True
         for rid, v in values.items():
@@ -1016,8 +1042,11 @@ def _find_source(
     first_rid = next(iter(values))
     main_first = by_run[first_rid]
     run0 = runs[first_rid]
+    inputs = [v for v in run0.values.values() if v]
     for ex in run0.exchanges:
         if ex.id >= main_first.id or not same_site(ex.url, ctx.site_hosts):
+            continue
+        if from_input_pages and not any(carries(ex, v) for v in inputs):
             continue
         sig = path_shape(ex, _all_values(run0))
         earlier = _same_group(order, sig, by_run)
@@ -1088,8 +1117,10 @@ def _extract_for(values: dict[str, str], earlier: dict[str, Exchange]) -> tuple[
             return _extract_key(k), {"from": "headers", "type": "jsonpath", "expr": jp((k.lower(),))}
     # text (an HTML page): a regex with the literal text before the value
     text0 = earlier[rids[0]].body or ""
-    i = text0.find(values[rids[0]])
-    if i > 0:
+    for m in re.finditer(re.escape(values[rids[0]]), text0):  # the first place whose lead-in is unique
+        i = m.start()
+        if i <= 0:
+            continue
         window = text0[max(0, i - 40) : i]
         tag = window.rfind("<")
         left = window[tag + 1 :] if tag >= 0 else window[-24:]

@@ -9,7 +9,7 @@ from urllib.parse import quote, urlencode
 import pytest
 
 from flowmap.capture import CookieRecord, Exchange, Run, secret_hash
-from flowmap.flows import Fill, Flow, Goto, Input, LocatorCall, Press, Select
+from flowmap.flows import Click, Fill, Flow, Goto, Input, LocatorCall, Press, Select
 from flowmap.infer import InferError, infer, registrable, same_site, splice, visible_match
 from schema.validate import validate_card
 
@@ -602,6 +602,27 @@ def test_a_held_back_tie_goes_against_background_chatter() -> None:
 
     out = infer(flow(kind="write"), runs_with(make))  # results_selector ".r" set: not checked for a write
     assert "/api/followingStates/" in out.steps[-1]["request"]["url"] and out.kind == "write"
+
+
+def test_a_write_reads_an_id_from_the_page_its_inputs_opened() -> None:
+    """LinkedIn's follow: every run followed the same company, so its id was the same in every request, but
+    another company has another id. The id is read from the company page, not fixed."""
+
+    def make(b: Builder, v: str, i: int, kind: str) -> None:
+        page = '<html><div data-urn="urn:li:organization:74126343">' + v + "</div></html>"
+        b.add(SITE + "/company/" + quote(v) + "/", step=1, body=page, ctype="text/html", rtype="document")
+        if kind == "real":  # the follow button exists only on a real company's page
+            ex = b.add(SITE + "/api/followingStates/urn:li:company:74126343", method="POST",
+                       post='{"following": true}', req_ctype="application/json", body={},
+                       headers={"referer": SITE + "/company/" + v + "/"})
+            ex.response_headers.append(("x-flowmap-held", "1"))
+
+    steps = [Goto(url=SITE + "/company/{{query}}/"), Click(target="#follow")]
+    out = infer(flow(kind="write", steps=steps), runs_with(make))
+    url = out.steps[-1]["request"]["url"]
+    assert "74126343" not in url and "{{steps." in url, url
+    page = out.steps[0]
+    assert "{{params.query" in page["request"]["url"] and page["extract"], page
 
 
 def test_a_body_whose_shape_differs_between_runs_does_not_crash() -> None:

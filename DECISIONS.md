@@ -579,3 +579,10 @@ markers and infers the card deterministically, and the LLM only names things. We
     company page, then again from a search; on replay the first click ran before hold-back was armed and
     LinkedIn received the follow. The recorder and the replay now share one change-word pattern
     (flowmap/holdback.py WRITES), and the recorder won't accept done on a write until something was held.
+  - Writes are mapped with two more checks (2026-11-08, after follow_company followed the wrong company):
+    an id inside a write's fixed value (`urn:li:fsd_company:74126343`) that an earlier page opened with the
+    inputs shows is read from that page, since every run following the same company left it unchanged
+    (flowmap/infer.py `_ids_from_page`); and before a new write is saved, its steps but the send run through
+    the executor on each tier from its own up, keeping the first that works, or the write isn't saved
+    (runtime/mapping.py `_check_writes`). LinkedIn answered a follow from the impersonate tier with 200 and
+    didn't follow; its writes need the browser tier.

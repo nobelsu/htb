@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import ipaddress
 import logging
 import re
@@ -30,7 +31,8 @@ from runtime.executor import Executor
 from runtime.healing import HealManager, example_passes
 from runtime.registry import Registry
 from runtime.state import MapJob, StateStore
-from schema import Card, validate_card
+from runtime.tiers import LADDER
+from schema import Card, ResultCode, validate_card
 
 log = logging.getLogger("runtime.mapping")
 
@@ -398,6 +400,7 @@ class MapManager:
             self.state.finish_map_job(job.id, "failed", {"error": "nothing new could be added", "ms": ms})
             return
         problems = await self._check_examples(card, job.user, {a.name for a in new})
+        raw_card: dict[str, Any] = outcome.card
         if problems and len(problems) == len([a for a in new if a.kind == "read"]):
             self.state.finish_map_job(
                 job.id,
@@ -414,6 +417,22 @@ class MapManager:
                 self.state.finish_map_job(
                     job.id, "failed", {"error": "the mapped card isn't valid", "ms": ms}
                 )
+                return
+            card = again.card
+            raw_card = kept
+        writes = {a.name for a in card.actions if a.kind == "write" and a.name not in before}
+        if writes:
+            raw, failed = await self._check_writes(raw_card, job.user, writes)
+            if failed:
+                problems = {**(problems or {}), **failed}
+            if failed and len(failed) == len(new):
+                why = {"error": "the mapped actions don't work yet", "examples": problems, "ms": ms}
+                self.state.finish_map_job(job.id, "failed", why)
+                return
+            again = validate_card(raw)
+            if not again.ok or again.card is None:
+                invalid = {"error": "the mapped card isn't valid", "ms": ms}
+                self.state.finish_map_job(job.id, "failed", invalid)
                 return
             card = again.card
         for p in card.connect_providers if stored is None else []:  # a new card's sign-in check
@@ -471,6 +490,53 @@ class MapManager:
         if resumed:
             log.info("%s signed in to %s: resuming %s", user, domain, ", ".join(resumed))
             self._wake.set()
+
+    async def _check_writes(
+        self, card: dict[str, Any], user: str, names: set[str]
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        """A write can't be tried for real before it's saved (that would send it), so everything up to the
+        send is: each new write's steps but the last, run through the executor with its params' examples,
+        on each tier from its own up. The first tier they work on is kept (a page that answers plain HTTP
+        with a 403 needs a browser's fingerprint); a write whose steps fail on every tier isn't saved.
+        Returns the card (as JSON) and the writes that failed, with why."""
+        raw = copy.deepcopy(card)
+        failed: dict[str, str] = {}
+        default = (raw.get("defaults") or {}).get("tier") or LADDER[0]
+        for i, action in enumerate(raw["actions"]):
+            if action["name"] not in names or len(action.get("steps", [])) < 2:
+                continue  # a write that is one request: nothing to try before the send
+            params = {k: v["example"] for k, v in (action.get("params") or {}).items() if "example" in v}
+            if any(v.get("required") and k not in params for k, v in (action.get("params") or {}).items()):
+                continue  # no example to try it with
+            start = action.get("tier") or default
+            why = ""
+            for tier in LADDER[LADDER.index(start) if start in LADDER else 0 :]:
+                trial = copy.deepcopy(raw)
+                trial["actions"][i] = dict(action, tier=tier, steps=action["steps"][:-1])
+                report = validate_card(trial)
+                if not report.ok or report.card is None:
+                    why = "it isn't valid without its last step"
+                    break
+                env = await self.executor.run_internal(report.card, 0, action["name"], dict(params), user)
+                if env.status == ResultCode.NEEDS_CONFIRMATION and env.confirmation is not None:
+                    # it's a write, so it asks; without its last step it can't send anything
+                    confirmed = {**params, "_confirmation_id": env.confirmation.id}
+                    env = await self.executor.run_internal(report.card, 0, action["name"], confirmed, user)
+                if env.status in (ResultCode.SUCCESS, ResultCode.EMPTY):
+                    if tier != start:
+                        action["tier"] = tier
+                        log.info("%s: the steps before the send need %s, not %s", action["name"], tier, start)
+                    why = ""
+                    break
+                why = f"the steps before the send gave {env.status.value} on {tier}"
+                if env.status in (ResultCode.BAD_PARAMS, ResultCode.PAGE_CHANGED):
+                    break  # a wrong value or a missing page: another tier won't change that
+            if why:
+                log.info("%s isn't saved: %s", action["name"], why)
+                failed[action["name"]] = why
+        if failed:
+            raw["actions"] = [a for a in raw["actions"] if a["name"] not in failed]
+        return raw, failed
 
     async def _check_examples(self, card: Card, user: str, only: set[str] | None = None) -> dict[str, str]:
         """Every read action's examples (``only``: those actions'), run through the executor as agents will
