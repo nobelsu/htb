@@ -166,6 +166,9 @@ class StateStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA_SQL)
+        columns = {r[1] for r in self._conn.execute("PRAGMA table_info(action_state)")}
+        if "never_run" not in columns:  # a write mapped from a held-back request (DECISIONS M8)
+            self._conn.execute("ALTER TABLE action_state ADD COLUMN never_run INTEGER NOT NULL DEFAULT 0")
 
     def close(self) -> None:
         self._conn.close()
@@ -211,6 +214,22 @@ class StateStore:
                 "WHERE domain = ? AND action = ?",
                 (int(degraded), reason if degraded else None, _now(), domain, action),
             )
+
+    def set_never_run(self, domain: str, action: str, never_run: bool) -> None:
+        """A write mapped from a held-back request has never been sent for real; its first confirmed
+        successful call clears the mark."""
+        with self._lock:
+            self._ensure(domain, action)
+            self._conn.execute(
+                "UPDATE action_state SET never_run = ?, updated_at = ? WHERE domain = ? AND action = ?",
+                (int(never_run), _now(), domain, action),
+            )
+
+    def is_never_run(self, domain: str, action: str) -> bool:
+        row = self._conn.execute(
+            "SELECT never_run FROM action_state WHERE domain = ? AND action = ?", (domain, action)
+        ).fetchone()
+        return bool(row and row[0])
 
     def is_degraded(self, domain: str, action: str) -> bool:
         row = self._conn.execute(

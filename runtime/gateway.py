@@ -51,7 +51,7 @@ from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
 from runtime.sessions import DevEnvSessionStore, SessionStore
 from runtime.tiers import default_tiers
 from runtime.state import StateStore
-from schema import load_card
+from schema import ResultCode, load_card
 
 log = logging.getLogger("runtime.gateway")
 
@@ -136,8 +136,8 @@ REQUEST_MAP_TOOL = types.Tool(
     "for its inputs (e.g. {\"query\": \"robotics\"}); an agent does it once on the site and turns it into "
     "an action (a few minutes). Or give only the site (and, optionally, what the user wants to do there as "
     "task) to explore it: the server finds the site's main reads itself and maps the ones that work (up to "
-    "ten minutes). Tell the user, then follow it with map_status. Only for sites with no actions yet, and "
-    "reads only for now (searching, looking things up).",
+    "ten minutes; it also maps common writes, which never reach the site while mapping). Tell the user, then "
+    "follow it with map_status. Only for sites with no actions yet; a single named action is a read.",
     input_schema={
         "type": "object",
         "properties": {
@@ -352,6 +352,17 @@ class Gateway:
             log.exception("executor crashed on %s", label)
             return _error_result(f"internal error running {label}")
         payload = env.model_dump(mode="json")
+        state = self.maps.state if self.maps is not None else self.healer.state if self.healer else None
+        found = stored.card.action(action)
+        if state is not None and found is not None and found.kind == "write":
+            if env.status == ResultCode.SUCCESS and state.is_never_run(stored.domain, action):
+                state.set_never_run(stored.domain, action, False)  # it has worked for real now
+            elif env.status == ResultCode.NEEDS_CONFIRMATION and state.is_never_run(stored.domain, action):
+                payload["never_run_for_real"] = True
+                payload["note"] = (
+                    "This action was set up without ever being sent to the site (writes are held back while "
+                    "mapping). Tell the user it's the first real try, and check the result on the site."
+                )
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=json.dumps(payload))],
             structured_content=payload,

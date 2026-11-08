@@ -417,3 +417,31 @@ async def test_the_account_page_lists_your_map_jobs(
     assert "second.test" in page and ("Queued" in page or "Setting up" in page)
     assert DOMAIN in page and ("Didn&#x27;t work" in page or "Didn't work" in page)
     assert "third.test" not in page  # bob's
+
+
+async def test_a_write_never_run_for_real_says_so_until_it_works(
+    registry: Registry, state: StateStore, executor: Executor, fixture_card: dict[str, Any]
+) -> None:
+    """A mapped write (held back while mapping) is marked; the first call says so, a success clears it."""
+    registry.save(fixture_card)
+    state.set_never_run(DOMAIN, "add_to_cart", True)
+    gateway = Gateway(registry, executor, maps=maps(registry, state, executor, StandIn()))
+
+    async def run(**args: Any) -> dict[str, Any]:
+        params = types.CallToolRequestParams(
+            name="run_action", arguments={"site": DOMAIN, "action": "add_to_cart", **args}
+        )
+        result = await gateway._call_tool(None, params)
+        assert isinstance(result, types.CallToolResult) and result.structured_content is not None
+        return result.structured_content
+
+    first = await run(params={"sku": "SKU-002"})
+    assert (
+        first["status"] == "NEEDS_CONFIRMATION"
+        and first["never_run_for_real"]
+        and "first real" in first["note"]
+    )
+    done = await run(params={"sku": "SKU-002"}, confirmation_id=first["confirmation"]["id"])
+    assert done["status"] == "SUCCESS" and not state.is_never_run(DOMAIN, "add_to_cart")
+    again = await run(params={"sku": "SKU-003"})
+    assert "never_run_for_real" not in again

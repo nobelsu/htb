@@ -160,7 +160,8 @@ async def test_explore_maps_what_passes_and_follows_up(bookshop: str, tmp_path: 
     pytest.importorskip("playwright.async_api")
     import re
 
-    from tests.flowmap.test_agent import last_page
+    from tests.flowmap.site import state as state_site
+    from tests.flowmap.test_agent import NONE, last_page
 
     seen: dict[str, str] = {}
 
@@ -178,7 +179,15 @@ async def test_explore_maps_what_passes_and_follows_up(bookshop: str, tmp_path: 
                     },
                     {
                         "action": "add_to_cart",
-                        "task": "Add a book to the cart",
+                        "kind": "write",
+                        "task": 'Add the book "b002" to the cart',
+                        "start_url": bookshop + "/book/b002",
+                        "inputs": [{"name": "book_id", "value": "b002"}],
+                    },
+                    {
+                        "action": "delete_account",
+                        "kind": "write",
+                        "task": "Delete my account",
                         "start_url": bookshop + "/",
                         "inputs": [],
                     },
@@ -217,6 +226,9 @@ async def test_explore_maps_what_passes_and_follows_up(bookshop: str, tmp_path: 
             {"name": "fill", "input": {"element": role("textbox", "Search books"), "text": "harbour"}},
             {"name": "press", "input": {"key": "Enter"}},
             done_with_headings(3),  # 4 results: no next page
+            # add_to_cart: the click is held back
+            {"name": "click", "input": {"element": role("button", "Add to cart")}},
+            {"name": "done", "input": {"summary": "added", "results": [], "next_page": NONE}},
             # get_bestsellers
             {"name": "give_up", "input": {"reason": "there is no bestseller list"}},
             follow_up,
@@ -237,13 +249,20 @@ async def test_explore_maps_what_passes_and_follows_up(bookshop: str, tmp_path: 
         out = await maps.status(job["job_id"], "alice")
         assert out is not None and out["status"] == "succeeded", out
         explored = {e["action"]: e for e in out["result"]["report"]["explored"]}
-        assert set(explored) == {"search_books", "get_bestsellers", "get_book"}  # add_to_cart never ran
+        assert set(explored) == {"search_books", "add_to_cart", "get_bestsellers", "get_book"}
+        assert explored["add_to_cart"]["kept"], explored  # delete_account is never even tried
+        assert state_site.carts == {}  # the write was held back every time: the site never got it
         assert explored["search_books"]["kept"] and explored["get_book"]["kept"]
         assert not explored["get_bestsellers"]["kept"] and "gave up" in explored["get_bestsellers"]["reason"]
         assert explored["get_book"]["round"] == 2 and not client.script
 
         stored = registry.get("bookshop.test")
-        assert stored is not None and {a.name for a in stored.card.actions} == {"search_books", "get_book"}
+        assert stored is not None
+        assert {a.name for a in stored.card.actions} == {"search_books", "add_to_cart", "get_book"}
+        cart = stored.card.action("add_to_cart")
+        assert cart is not None and cart.kind == "write" and cart.requires_confirmation
+        assert cart.steps[-1].expect.content_type == "any"  # the site's real answer is unknown
+        assert state.is_never_run("bookshop.test", "add_to_cart")
         env = await executor.run(stored, "get_book", {"book_id": "b005"}, user="bob")
         assert env.status == ResultCode.SUCCESS and env.data, env
         env = await executor.run(stored, "search_books", {"query": "garden"}, user="bob")

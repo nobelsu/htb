@@ -371,6 +371,9 @@ class MapManager:
         result: dict[str, Any] = {"actions": names, "ms": ms, "report": outcome.report}
         if problems:
             result["dropped"] = problems
+        for action in card.actions:
+            if action.kind == "write":  # mapped from a held-back request: never sent for real
+                self.state.set_never_run(job.domain, action.name, True)
         self.state.finish_map_job(job.id, "succeeded", result, new_version=version)
         log.info("map %s succeeded: %s version %d in %d ms", job.id, job.domain, version, ms)
 

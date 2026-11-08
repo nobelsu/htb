@@ -32,7 +32,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from flowmap.browser import BrowserSetup, new_page
-from flowmap.flows import Flow, FlowError, play, resolve
+from flowmap.flows import Click, Flow, FlowError, play, resolve
+from flowmap.holdback import HoldBack
 
 RECORDED_TYPES = {"xhr", "fetch", "document"}
 TEXT_TYPES = re.compile(r"json|text|javascript|xml|html|x-www-form-urlencoded", re.I)
@@ -276,8 +277,14 @@ async def capture_run(
     markers: dict[str, str],
     session: str,
     timeout_ms: int = 10_000,
+    hold_back: bool = False,
 ) -> Run:
-    """Play ``flow`` once in a new page of ``context`` (a Playwright BrowserContext) and record it."""
+    """Play ``flow`` once in a new page of ``context`` (a Playwright BrowserContext) and record it.
+    ``hold_back``: writes never reach the site (flowmap/holdback.py), armed from the flow's last click."""
+    hold = HoldBack() if hold_back else None
+    if hold is not None:
+        await hold.install(context)
+    commit = max((i for i, s in enumerate(flow.steps) if isinstance(s, Click)), default=len(flow.steps))
     page = await new_page(context)
     t0 = time.monotonic()
     rec = _Recorder(page, t0)
@@ -296,6 +303,8 @@ async def capture_run(
 
     def on_step(i: int, _step: object) -> None:
         rec.step = i
+        if hold is not None and i >= commit:
+            hold.armed = True
 
     try:
         await play(page, flow, values, on_step=on_step, timeout_ms=timeout_ms)
@@ -311,7 +320,10 @@ async def capture_run(
                 await rec.settle()
                 run.visible_page2 = await _wait_changed(page, flow, before, timeout_ms)
     except FlowError as e:
-        run.error = str(e)
+        if hold is not None and hold.held and rec.step > commit:
+            pass  # waiting for the result of a write that was held back: the page never gets one
+        else:
+            run.error = str(e)
     except Exception as e:  # the next-page click, or the page went away
         run.error = f"{type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}"
     await rec.drain()
@@ -370,6 +382,7 @@ async def capture_flow(
     real_runs: int | None = None,
     pause_s: float = 2.0,
     timeout_ms: int = 10_000,
+    hold_back: bool | None = None,
 ) -> list[Run]:
     """Run the whole capture session for ``flow``; save each run under ``root`` when given.
 
@@ -406,6 +419,7 @@ async def capture_flow(
                         markers=markers,
                         session=session,
                         timeout_ms=timeout_ms,
+                        hold_back=flow.kind == "write" if hold_back is None else hold_back,
                     )
                 finally:
                     if browser.shared is None:

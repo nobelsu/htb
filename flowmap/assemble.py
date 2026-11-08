@@ -71,6 +71,10 @@ def build_action(inferred: Inferred, labels: Labels, flow: Flow) -> dict[str, An
     }
     if flow.auth_provider:
         action["auth_provider"] = flow.auth_provider
+    if write:  # mapped from a held-back request (flowmap/holdback.py): the site's real answer is unknown
+        for step in action["steps"]:
+            if step["request"]["method"] not in ("GET", "HEAD"):
+                step["expect"] = {"status": [200, 201, 202, 204], "content_type": "any", "paths": []}
     return action
 
 

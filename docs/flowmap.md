@@ -72,6 +72,12 @@ sign-in pauses the whole job for it; it explores again once the requester has si
 runs every example and saves the actions that pass (`result.dropped` names the others). The job's report lists
 every task tried, kept or not and why.
 
+Explore also proposes up to two writes per round (add to cart, follow, post...; never delete, settings or
+payment). Writes never reach the site while mapping: `flowmap/holdback.py` holds the committing request back
+(before the commit click only PUT/PATCH/DELETE, GraphQL mutations and form posts; from it, every non-GET),
+answers it itself and keeps it, so it is still mapped. Capture holds writes back the same way. The saved write
+is marked never run for real; `run_action` says so with its confirmation, and its first real success clears it.
+
 A dropdown input needs two real values; when only one is given (as in an explore), the recorder takes another
 option of that dropdown as the second.
 
@@ -115,4 +121,5 @@ uv run python -m flowmap heal bookshop.test search_books --pause 0
 | `flowmap/heal.py` | The runtime's `Remapper`: re-captures and re-infers only the broken action |
 | `flowmap/server.py` | The runtime's `Mapper`: a map job (agent recording, capture, map) inside the gateway |
 | `flowmap/explore.py` | Explore: Claude proposes read tasks (and follow-ups from returned ids), checked in code |
+| `flowmap/holdback.py` | Holds writes back while mapping: the committing request never reaches the site |
 | `flowmap/signin.py` | A new card's sign-in check and logged-out signals, from the action mapped while signed in |

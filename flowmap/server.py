@@ -194,6 +194,7 @@ class FlowMapper:
                         domain=request.domain,
                         description=task.task,
                         auth_provider=request.sign_in,
+                        write=task.write,
                         client=self.client,
                         sign_in=sign_in,
                         on_step=step,

@@ -491,3 +491,13 @@ markers and infers the card deterministically, and the LLM only names things. We
     `{{gen.now_ms}}`, a value made fresh for each call, for what a page makes up anew for every request
     (idempotency keys, nonces). One value per name per call (all steps and retries share it). Backward
     compatible, so `schema_version` stays "0.4"; Wei Wei's mapper can emit it too.
+  - Step 3, writes built (simplified, asked to go fast): every write is held back while mapping, private or
+    not, so nothing is undone (doing private writes for real and undoing them is not built). `HoldBack`
+    (`flowmap/holdback.py`) answers held requests itself (200, `{}`, `x-flowmap-held`): before the commit
+    click only PUT/PATCH/DELETE, GraphQL mutations and form posts are held; from the commit click (a control
+    whose text reads as a change in the recorder; the flow's last click in capture) every non-GET. The
+    recorder and capture both use it, so heal re-captures writes held back too. A held write's steps expect
+    any 2xx of any type. Explore proposes up to two writes per round (never delete, settings, payment or
+    sign-out wording); the recorder gives up rather than type payment details. The runtime marks a mapped
+    write `never_run` in `action_state`; `run_action` says so on its confirmation and the first real
+    SUCCESS clears it. flowmap doesn't emit `gen` values yet.

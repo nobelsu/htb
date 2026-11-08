@@ -34,6 +34,11 @@ log = logging.getLogger("flowmap.explore")
 MAX_PER_ROUND = 4
 MAX_ACTIONS = 6
 MAX_INPUTS = 4
+MAX_WRITES = 2  # per round
+NEVER = re.compile(
+    r"\b(pay|payment|checkout|card number|delete|remove|deactivate|password|settings|sign ?out|log ?out)\b",
+    re.I,
+)
 MAX_VALUE = 200
 MAX_SAMPLE = 1_500  # characters of sample results per mapped action shown for follow-ups
 NAME = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
@@ -47,8 +52,14 @@ PROPOSE_TOOL = _tool(
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["action", "task", "start_url", "inputs"],
+                "required": ["action", "kind", "task", "start_url", "inputs"],
                 "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["read", "write"],
+                        "description": "read: changes nothing; write: changes something (add to cart, save, "
+                        "follow, post...)",
+                    },
                     "action": {"type": "string", "description": "snake_case name, e.g. search_books"},
                     "task": {
                         "type": "string",
@@ -76,9 +87,10 @@ SYSTEM = f"""You choose which actions to map on a website, so an AI agent can la
 instead of using a browser. Another agent then does each task you propose once in a real browser while its
 requests are recorded.
 
-- Propose only reads: searching, looking something up, listing, opening an item's page. Nothing that
-  changes anything (posting, buying, adding to a cart, following, messaging, settings), and never signing in
-  or out.
+- Mostly reads: searching, looking something up, listing, opening an item's page. Also up to
+  {MAX_WRITES} writes people commonly do here (add to cart, save an item, follow, send a message, post), as
+  kind "write": they are mapped without ever reaching the site, so they're safe to propose. Never deleting
+  anything, changing settings, paying, or signing in or out.
 - Pick what people most often come to this site to do. At most {MAX_PER_ROUND} tasks, most useful first, each
   different from the others and from the actions already mapped.
 - Inputs are what a caller would vary (a search query, an item id), at most {MAX_INPUTS}, each with a
@@ -94,6 +106,7 @@ class Task:
     task: str
     url: str
     inputs: dict[str, str] = field(default_factory=dict)
+    write: bool = False
 
 
 class ExploreError(AgentError):
@@ -168,8 +181,14 @@ def clean_tasks(raw: list[Any], *, start_url: str, taken: set[str]) -> list[Task
         action, task = str(item.get("action") or ""), " ".join(str(item.get("task") or "").split())
         if not NAME.match(action) or action in names or not task or len(task) > 500:
             continue
-        if _changes(action.replace("_", " ")) or _changes(task):
-            log.info("dropped %s: it looks like a change", action)
+        write = item.get("kind") == "write"
+        if NEVER.search(action.replace("_", " ")) or NEVER.search(task):
+            log.info("dropped %s: never mapped", action)
+            continue
+        if not write and (_changes(action.replace("_", " ")) or _changes(task)):
+            log.info("dropped %s: it looks like a change but isn't marked as a write", action)
+            continue
+        if write and sum(t.write for t in out) >= MAX_WRITES:
             continue
         url = str(item.get("start_url") or "")
         parts = urlsplit(url)
@@ -183,7 +202,7 @@ def clean_tasks(raw: list[Any], *, start_url: str, taken: set[str]) -> list[Task
         if len(inputs) > MAX_INPUTS:
             continue
         names.add(action)
-        out.append(Task(action, task, url, inputs))
+        out.append(Task(action, task, url, inputs, write=write))
         if len(out) == MAX_PER_ROUND:
             break
     return out

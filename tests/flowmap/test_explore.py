@@ -27,6 +27,15 @@ def test_writes_are_dropped_but_reads_about_them_stay() -> None:
         task("publish", "Write a post saying hello"),
     ]
     assert [t.action for t in clean_tasks(raw, start_url=START, taken=set())] == ["search_posts", "get_order"]
+    writes = [
+        {**task("add_to_cart", "Add the book to the cart"), "kind": "write"},
+        {**task("follow_company", "Follow the company"), "kind": "write"},
+        {**task("delete_post", "Delete my last post"), "kind": "write"},
+        {**task("checkout", "Check out the cart"), "kind": "write"},
+        {**task("send_message", "Send a message"), "kind": "write"},
+    ]
+    out = clean_tasks(writes, start_url=START, taken=set())
+    assert [(t.action, t.write) for t in out] == [("add_to_cart", True), ("follow_company", True)]  # max 2
 
 
 def test_names_pages_and_inputs_are_checked() -> None:
