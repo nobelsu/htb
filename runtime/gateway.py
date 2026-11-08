@@ -648,7 +648,10 @@ def load_into_registry(registry: Registry, path: Path) -> int | None:
 
 
 def load_remapper(
-    spec: str | None, sessions: SessionStore | None = None, captures_dir: str | Path = "captures"
+    spec: str | None,
+    sessions: SessionStore | None = None,
+    captures_dir: str | Path = "captures",
+    proxies: ProxyConfig | None = None,
 ) -> Remapper | None:
     """`mapper` -> the heal adapter (WeiWei's mapper); `flowmap` -> flowmap's flow replay (FLOWS_DIR, default
     flows/); `module.path:Name` -> an instance of Name (or Name itself if it is already an instance)."""
@@ -662,7 +665,8 @@ def load_remapper(
 
         flows_dir = os.environ.get("FLOWS_DIR", "flows")
         log.info("using flowmap to heal (flows in %s, captures in %s)", flows_dir, captures_dir)
-        return FlowRemapper(flows_dir, captures_dir, sessions=sessions)
+        channel = os.environ.get("BROWSER_CHANNEL", "chrome")
+        return FlowRemapper(flows_dir, captures_dir, sessions=sessions, proxies=proxies, channel=channel)
     module_name, _, attr = spec.partition(":")
     obj = getattr(importlib.import_module(module_name), attr)
     remapper: Remapper = obj() if isinstance(obj, type) else obj
@@ -745,7 +749,9 @@ def main() -> None:
             d.strip() for d in os.environ.get("HEALTH_CHECK_DISABLED_DOMAINS", "").split(",") if d.strip()
         ),
     )
-    remapper = load_remapper(os.environ.get("REMAPPER"), sessions, os.environ.get("CAPTURES_DIR", "./captures"))
+    remapper = load_remapper(
+        os.environ.get("REMAPPER"), sessions, os.environ.get("CAPTURES_DIR", "./captures"), proxies
+    )
     healer = HealManager(registry, StateStore(db_path), executor, remapper, config)
     gateway = Gateway(
         registry, executor, healer=healer, connections=connections, pool=pool,

@@ -16,15 +16,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from flowmap.assemble import AssembleError, build_action, merge
+from flowmap.browser import BrowserSetup, SignInMissing
 from flowmap.capture import Run, capture_flow
 from flowmap.flows import Flow, FlowError, flow_path, load_flow
 from flowmap.infer import InferError, Inferred, infer
@@ -122,29 +120,36 @@ class FlowRemapper:
         replay: Replayer | None = None,
         pause_s: float = 2.0,
         capture: Capture | None = None,
+        proxies: Any = None,
+        channel: str = "chrome",
     ) -> None:
         self.flows_dir = Path(flows_dir)
         self.captures_dir = Path(captures_dir)
         self.sessions = sessions
-        self.user = user
+        self.user = user  # whose sign-in to heal with when the heal job doesn't say
         self.headless = headless
+        self.proxies = proxies  # runtime.proxy.ProxyConfig: the sign-in's residential proxy
+        self.channel = channel
         self.replay = replay
         self.pause_s = pause_s
         self._capture: Capture = capture or capture_flow
         self._lock = asyncio.Lock()  # one browser re-capture at a time
         self.last_details: dict[str, Any] = {}
 
-    async def remap(self, card: Card, actions: list[str], reason: str) -> dict[str, Any]:
+    async def remap(
+        self, card: Card, actions: list[str], reason: str, user: str | None = None
+    ) -> dict[str, Any]:
+        """``user``: whose call found the break; their sign-in, identity and proxy are used to re-capture."""
         data = card.to_json_dict()
         details: dict[str, Any] = {}
         async with self._lock:
             for name in actions:
-                data, details[name] = await self._remap_one(card, data, name)
+                data, details[name] = await self._remap_one(card, data, name, user or self.user)
         self.last_details = details
         return data
 
     async def _remap_one(
-        self, card: Card, data: dict[str, Any], name: str
+        self, card: Card, data: dict[str, Any], name: str, user: str
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         t0 = time.monotonic()
         path = flow_path(self.flows_dir, card.domain, name)
@@ -155,20 +160,11 @@ class FlowRemapper:
         old = next((a for a in data["actions"] if a["name"] == name), None)
         if old is None:
             raise RemapError(f"{name} is not in the card")
-        state = self._storage_state(card, old)
+        setup = self._setup(card, old, user)
         try:
-            runs = await self._capture(
-                flow,
-                root=self.captures_dir,
-                headless=self.headless,
-                storage_state=state,
-                pause_s=self.pause_s,
-            )
+            runs = await self._capture(flow, root=self.captures_dir, setup=setup, pause_s=self.pause_s)
         except Exception as e:
             raise RemapError(f"replaying the flow for {name} failed: {type(e).__name__}: {e}") from e
-        finally:
-            if state is not None:
-                state.unlink(missing_ok=True)
         t_capture = time.monotonic()
         failed = [r.error for r in runs if r.error]
         if failed and len(failed) == len(runs):
@@ -211,21 +207,22 @@ class FlowRemapper:
         log.info("re-mapped %s.%s in %d ms (%d changes)", card.domain, name, info["total_ms"], len(diff))
         return new_card, info
 
-    def _storage_state(self, card: Card, old: dict[str, Any]) -> Path | None:
-        """The user's sign-in as a Playwright storage state (0600 temp file), for actions that need one."""
+    def _setup(self, card: Card, old: dict[str, Any], user: str) -> BrowserSetup:
+        """The browser to re-capture with: the user's sign-in (for actions that need one), its device identity
+        and proxy, in installed Chrome. Cookies go straight into the browser, never into a file."""
         provider = old.get("auth_provider") or card.defaults.auth_provider
-        if provider is None or self.sessions is None:
-            return None
-        cookies = self.sessions.get(self.user, card.domain, provider)
-        if not cookies:
-            raise RemapError(f"no sign-in for {card.domain} to replay {old['name']} with")
-        host = urlsplit(card.base_url).hostname or card.domain
-        state = {
-            "cookies": [{"name": k, "value": v, "domain": host, "path": "/"} for k, v in cookies.items()],
-            "origins": [],
-        }
-        fd, name = tempfile.mkstemp(prefix="flowmap-state-", suffix=".json")
-        with os.fdopen(fd, "w") as f:
-            json.dump(state, f)
-        os.chmod(name, 0o600)
-        return Path(name)
+        if provider is None:
+            return BrowserSetup(channel=self.channel, headless=self.headless)
+        try:
+            return BrowserSetup.for_sign_in(
+                self.sessions,
+                user,
+                card.domain,
+                provider,
+                card.base_url,
+                proxies=self.proxies,
+                channel=self.channel,
+                headless=self.headless,
+            )
+        except SignInMissing as e:
+            raise RemapError(f"can't replay {old['name']}: {e}") from e

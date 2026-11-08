@@ -18,7 +18,9 @@ OLD, NEW = "/api/items/", "/api/v2/items/"
 
 
 class FixtureRemapper:
-    async def remap(self, card: Card, actions: list[str], reason: str) -> dict[str, Any]:
+    async def remap(
+        self, card: Card, actions: list[str], reason: str, user: str | None = None
+    ) -> dict[str, Any]:
         async with httpx.AsyncClient(base_url=card.base_url, timeout=5) as client:
             working = [p for p in (OLD, NEW) if (await client.get(f"{p}p1")).status_code == 200]
         if not working:

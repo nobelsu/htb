@@ -31,6 +31,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from flowmap.browser import BrowserSetup, new_page
 from flowmap.flows import Flow, FlowError, play, resolve
 
 RECORDED_TYPES = {"xhr", "fetch", "document"}
@@ -277,7 +278,7 @@ async def capture_run(
     timeout_ms: int = 10_000,
 ) -> Run:
     """Play ``flow`` once in a new page of ``context`` (a Playwright BrowserContext) and record it."""
-    page = await context.new_page()
+    page = await new_page(context)
     t0 = time.monotonic()
     rec = _Recorder(page, t0)
     started = datetime.now(UTC)
@@ -361,6 +362,7 @@ async def capture_flow(
     flow: Flow,
     *,
     root: Path | None = None,
+    setup: BrowserSetup | None = None,
     headless: bool = True,
     profile_dir: Path | None = None,
     storage_state: Path | None = None,
@@ -371,32 +373,29 @@ async def capture_flow(
 ) -> list[Run]:
     """Run the whole capture session for ``flow``; save each run under ``root`` when given.
 
-    ``profile_dir`` keeps a persistent browser profile (a login done once stays); ``storage_state`` loads
-    saved cookies instead. ``pause_s`` waits between runs, to stay polite to real sites.
+    ``setup`` is the browser to use (flowmap/browser.py: installed Chrome, a stored sign-in, its device
+    identity and proxy). Without one, Playwright's Chromium is used with ``headless``, ``profile_dir`` (a
+    persistent profile: a login done once stays) or ``storage_state`` (saved cookies). ``pause_s`` waits
+    between runs, to stay polite to real sites.
     """
     from playwright.async_api import async_playwright
 
+    if setup is None:
+        setup = BrowserSetup(
+            channel="chromium", headless=headless, profile_dir=profile_dir, storage_state=storage_state
+        )
     session = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(2)
     runs: list[Run] = []
     async with async_playwright() as p:
-        browser = None
-        shared = None  # a persistent profile is one context for every run
-        if profile_dir is not None:
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            shared = await p.chromium.launch_persistent_context(str(profile_dir), headless=headless)
-        else:
-            browser = await p.chromium.launch(headless=headless)
-            user_agent = await _plain_user_agent(browser) if headless else None
+        browser = await setup.launch(p)
         try:
             for i, (kind, values, markers) in enumerate(run_plan(flow, marker_runs, real_runs)):
                 if i and pause_s:
                     await asyncio.sleep(pause_s)
                 n = sum(1 for r in runs if r.kind == kind)
-                # Otherwise a fresh context per run: cookies the site sets differ between runs, so inference
-                # can tell where they come from.
-                context = shared or await browser.new_context(  # type: ignore[union-attr]
-                    storage_state=str(storage_state) if storage_state else None, user_agent=user_agent
-                )
+                # A fresh context per run (unless a persistent profile is used): cookies the site sets differ
+                # between runs, so inference can tell where they come from.
+                context = await browser.new_context()
                 try:
                     run = await capture_run(
                         context,
@@ -409,25 +408,14 @@ async def capture_flow(
                         timeout_ms=timeout_ms,
                     )
                 finally:
-                    if shared is None:
+                    if browser.shared is None:
                         await context.close()
                 runs.append(run)
                 if root is not None:
                     save_run(run, root)
         finally:
-            if shared is not None:
-                await shared.close()
-            if browser is not None:
-                await browser.close()
+            await browser.close()
     return runs
-
-
-async def _plain_user_agent(browser: Any) -> str:
-    """Headless Chromium says "HeadlessChrome" in its user agent, which sites block; say "Chrome"."""
-    page = await browser.new_page()
-    ua = str(await page.evaluate("navigator.userAgent"))
-    await page.close()
-    return ua.replace("HeadlessChrome", "Chrome")
 
 
 # ---------- files ----------

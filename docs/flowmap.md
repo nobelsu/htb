@@ -28,8 +28,13 @@ uv run python -m flowmap heal example.com search_things
 
 - `--input name=value`: a value you typed while recording becomes an input. `--example` adds another real
   value. Dropdowns need two values (they can't take a marker).
-- Signed-in sites: `--auth <provider>` when recording, `--profile <dir>` when mapping (a persistent browser
-  profile), or the user's sign-in from the session store when healing.
+- Signed-in sites: sign in once through the gateway (its Connect page, where Google sign-in works), then pass
+  `--user <name>` to `record --agent`, `map` and `heal` (with `--auth <provider>` when recording). Flowmap then
+  uses that sign-in's cookies, device identity and residential proxy (`PROXY_URL`), as the gateway does; the
+  cookies go straight into the browser, never into a file. `--profile <dir>` (a persistent profile you sign in
+  to by hand) still works. Heal inside the gateway uses the sign-in of the user whose call broke.
+- The browser is your installed Google Chrome without the automation flag (`--channel chromium` for
+  Playwright's own); it falls back to Chromium when Chrome isn't installed.
 - Writes on real sites ask before they are replayed (`--yes` skips the question).
 - `--agent "task"`: Claude does the task once in a browser, one step at a time from the page's accessibility
   tree, and names the results and the next-page control; you don't pass `--results` or `--next`. It never
@@ -54,6 +59,7 @@ uv run python -m flowmap heal bookshop.test search_books --pause 0
 |---|---|
 | `flowmap/flows.py` | The flow format (`flows/{domain}/{action}.json`), replay, the codegen converter |
 | `flowmap/agent.py` | `record --agent`: Claude does the action once; its steps become the flow |
+| `flowmap/browser.py` | The browser flowmap drives, set up like the gateway's: Chrome, a stored sign-in, identity, proxy |
 | `flowmap/capture.py` | Marker and real runs in Playwright; traffic tagged by step; secrets hashed |
 | `flowmap/infer.py` | Picks the request, templates it by comparing runs, finds the output, pagination, writes |
 | `flowmap/minimise.py` | Cheapest tier and fewest headers, by replaying with the executor |

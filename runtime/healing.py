@@ -37,13 +37,18 @@ class Remapper(Protocol):
 
     Return the whole proposed card (a `Card` or its JSON dict). Unchanged actions should be returned as-is;
     the runtime decides, action by action, what goes into the new version. Raise `RemapError` on failure.
+    `user` is whose call found the break: re-capture with their sign-in.
     """
 
-    async def remap(self, card: Card, actions: list[str], reason: str) -> Card | dict[str, Any]: ...
+    async def remap(
+        self, card: Card, actions: list[str], reason: str, user: str | None = None
+    ) -> Card | dict[str, Any]: ...
 
 
 class NoRemapper:
-    async def remap(self, card: Card, actions: list[str], reason: str) -> Card | dict[str, Any]:
+    async def remap(
+        self, card: Card, actions: list[str], reason: str, user: str | None = None
+    ) -> Card | dict[str, Any]:
         raise RemapError("no remapper is configured")
 
 
@@ -185,7 +190,7 @@ class HealManager:
         started = time.monotonic()
         self.state.add_event(job.id, job.domain, "remap_start", {"actions": broken, "reason": job.reason})
         try:
-            proposed = await self.remapper.remap(card, broken, job.reason)
+            proposed = await self.remapper.remap(card, broken, job.reason, user=job.user)
         except RemapError as e:
             ms = int((time.monotonic() - started) * 1000)
             failed = {"actions": broken, "ms": ms, "error": str(e)}

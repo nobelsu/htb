@@ -99,6 +99,7 @@ async def _record_agent(args: argparse.Namespace) -> int:
     from playwright.async_api import async_playwright
 
     from flowmap.agent import AgentError, record_with_agent
+    from flowmap.browser import SignInMissing, new_page
     from flowmap.infer import registrable
 
     inputs = {k: v[0] for k, v in _pairs(args.input, "--input").items()}
@@ -110,22 +111,32 @@ async def _record_agent(args: argparse.Namespace) -> int:
             return 1
 
     async def sign_in() -> None:
+        if args.user:
+            raise AgentError(
+                f"{domain} still wants a sign-in with {args.user}'s stored session: sign in again through "
+                "the gateway (Connect), then record again"
+            )
         if not args.headed:
-            raise AgentError(f"{domain} wants a sign-in: record again with --headed --profile and sign in")
+            raise AgentError(
+                f"{domain} wants a sign-in: record with --user (a sign-in made through the gateway), or with "
+                "--headed --profile and sign in in the window"
+            )
         print(f"Sign in to {domain} in the browser window, then press Enter here.", file=sys.stderr)
         await asyncio.to_thread(input)
 
+    try:
+        setup = _setup(args, domain, args.auth, args.url)
+    except SignInMissing as e:
+        print(f"Couldn't record: {e}", file=sys.stderr)
+        return 1
+    if not args.user:
+        setup.profile_dir = Path(args.profile) / domain if args.profile else None
+        setup.storage_state = Path(args.profile_state) if args.profile_state else None
     async with async_playwright() as p:
-        if args.profile:
-            profile = Path(args.profile) / domain
-            profile.mkdir(parents=True, exist_ok=True)
-            context = await p.chromium.launch_persistent_context(str(profile), headless=not args.headed)
-            browser = None
-        else:
-            browser = await p.chromium.launch(headless=not args.headed)
-            context = await browser.new_context(storage_state=args.profile_state or None)
+        browser = await setup.launch(p)
+        context = await browser.new_context()
         try:
-            page = context.pages[0] if context.pages else await context.new_page()
+            page = await new_page(context)
             recording = await record_with_agent(
                 page,
                 url=args.url,
@@ -145,9 +156,7 @@ async def _record_agent(args: argparse.Namespace) -> int:
             print(f"Couldn't record: {e}", file=sys.stderr)
             return 1
         finally:
-            await context.close()
-            if browser is not None:
-                await browser.close()
+            await browser.close()
     flow = recording.flow
     path = save_flow(flow, Path(args.flows))
     print(
@@ -161,27 +170,65 @@ async def _record_agent(args: argparse.Namespace) -> int:
 # ---------- shared runtime pieces ----------
 
 
+def _proxies() -> Any:
+    from runtime.proxy import ProxyConfig
+
+    return ProxyConfig(os.environ["PROXY_URL"]) if os.environ.get("PROXY_URL") else None
+
+
+def _sessions(db: str) -> Any:
+    from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
+    from runtime.sessions import DevEnvSessionStore
+
+    stores: list[Any] = []
+    if os.environ.get("SESSION_KEY"):
+        stores.append(EncryptedSessionStore(db, os.environ["SESSION_KEY"]))
+    stores.append(DevEnvSessionStore(os.environ.get("DEV_SESSION_COOKIES")))
+    return ChainedSessionStore(*stores) if len(stores) > 1 else stores[0]
+
+
+def _setup(args: argparse.Namespace, domain: str, provider: str | None, url: str) -> Any:
+    """The browser for a command: with ``--user``, that user's sign-in made through the gateway (cookies,
+    device identity, proxy); otherwise a plain one. Installed Chrome unless ``--channel chromium``."""
+    from flowmap.browser import BrowserSetup
+
+    headless = not getattr(args, "headed", False)
+    if getattr(args, "user", None) and provider:
+        origin = "{0.scheme}://{0.netloc}".format(urlsplit(url))
+        return BrowserSetup.for_sign_in(
+            _sessions(args.db),
+            args.user,
+            domain,
+            provider,
+            origin,
+            proxies=_proxies(),
+            channel=args.channel,
+            headless=headless,
+        )
+    if getattr(args, "user", None) and not provider:
+        raise SystemExit("--user needs to know which sign-in: give --auth <provider> (or set it in the flow)")
+    return BrowserSetup(channel=args.channel, headless=headless)
+
+
 def _runtime(db: str) -> tuple[Any, Any, Any]:
     """(registry, sessions, make_executor) built like the gateway's."""
     from runtime.confirm import Confirmer
     from runtime.executor import Executor
     from runtime.registry import Registry
-    from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
-    from runtime.sessions import DevEnvSessionStore
     from runtime.tiers import HttpTier, ImpersonateTier
 
     registry = Registry(db)
-    stores: list[Any] = []
-    if os.environ.get("SESSION_KEY"):
-        stores.append(EncryptedSessionStore(db, os.environ["SESSION_KEY"]))
-    stores.append(DevEnvSessionStore(os.environ.get("DEV_SESSION_COOKIES")))
-    sessions = ChainedSessionStore(*stores) if len(stores) > 1 else stores[0]
+    sessions = _sessions(db)
+    proxies = _proxies()
     confirm_secret = os.environ.get("CONFIRMATION_SECRET") or "flowmap-local-replays-only"
 
     def make_executor(tier: Any = None) -> Executor:
         clients: dict[str, Any] = {"http": HttpTier(), "impersonate": ImpersonateTier()}
         return Executor(
-            sessions, Confirmer(confirm_secret), tiers=clients if tier is None else {tier: clients[tier]}
+            sessions,
+            Confirmer(confirm_secret),
+            tiers=clients if tier is None else {tier: clients[tier]},
+            proxies=proxies,
         )
 
     return registry, sessions, make_executor
@@ -202,6 +249,7 @@ def _confirm_write(flow: Any, yes: bool) -> bool:
 
 async def _map(args: argparse.Namespace) -> int:
     from flowmap.assemble import AssembleError, map_action
+    from flowmap.browser import SignInMissing
     from flowmap.capture import capture_flow, load_runs
     from flowmap.infer import InferError
     from flowmap.minimise import executor_replayer
@@ -218,7 +266,7 @@ async def _map(args: argparse.Namespace) -> int:
     registry, _sessions, make_executor = _runtime(args.db)
     stored = registry.get(args.domain)
     existing = stored.card.to_json_dict() if stored else None
-    replay = executor_replayer(make_executor)
+    replay = executor_replayer(make_executor, args.user or "default")
     failures = 0
     for path in paths:
         try:
@@ -233,14 +281,19 @@ async def _map(args: argparse.Namespace) -> int:
         if args.reuse_captures and (runs := load_runs(captures, flow.domain, flow.action)):
             print(f"{flow.action}: using capture {runs[0].session}")
         else:
-            print(f"{flow.action}: capturing ({'headed' if args.headed else 'headless'})")
-            runs = await capture_flow(
-                flow,
-                root=captures,
-                headless=not args.headed,
-                profile_dir=Path(args.profile) / flow.domain if args.profile else None,
-                pause_s=args.pause,
-            )
+            first = next(s.url for s in flow.steps if s.op == "goto")
+            try:
+                setup = _setup(args, flow.domain, flow.auth_provider, first)
+            except SignInMissing as e:
+                print(f"{flow.action}: {e}", file=sys.stderr)
+                failures += 1
+                continue
+            if args.profile and not args.user:
+                setup.profile_dir = Path(args.profile) / flow.domain
+            who = f", as {args.user}" if args.user and flow.auth_provider else ""
+            mode = "headed" if args.headed else "headless"
+            print(f"{flow.action}: capturing ({mode}, {setup.channel}{who})")
+            runs = await capture_flow(flow, root=captures, setup=setup, pause_s=args.pause)
         try:
             mapped = await map_action(
                 flow,
@@ -284,12 +337,15 @@ async def _heal(args: argparse.Namespace) -> int:
         args.flows,
         args.captures,
         sessions=sessions,
+        user=args.user or "default",
         headless=not args.headed,
         pause_s=args.pause,
-        replay=executor_replayer(make_executor),
+        replay=executor_replayer(make_executor, args.user or "default"),
+        proxies=_proxies(),
+        channel=args.channel,
     )
     healer = HealManager(registry, state, make_executor(), remapper, HealConfig(cooldown_s=0))
-    heal = healer.page_changed(args.domain, args.action, "manual heal (flowmap heal)", "default")
+    heal = healer.page_changed(args.domain, args.action, "manual heal (flowmap heal)", args.user or "default")
     assert heal is not None
     await healer.drain()
     job = state.get_job(heal.job_id)
@@ -385,6 +441,9 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--agent", metavar="TASK", help="have Claude do this task instead of you")
     r.add_argument("--headed", action="store_true", help="show the agent's browser (needed to sign in)")
     r.add_argument("--profile", help="folder for persistent browser profiles, as map --profile takes")
+    r.add_argument("--user", help="use this user's sign-in made through the gateway (needs --auth)")
+    r.add_argument("--channel", default=env("BROWSER_CHANNEL", "chrome"), help="chrome (default) or chromium")
+    r.add_argument("--db", default=env("REGISTRY_DB", "./runtime.db"))
     r.add_argument("--yes", action="store_true", help="don't ask before an agent does a write on a real site")
     r.add_argument("--flows", default=env("FLOWS_DIR", "./flows"))
 
@@ -394,6 +453,8 @@ def parser() -> argparse.ArgumentParser:
     paths(m)
     m.add_argument("--headed", action="store_true")
     m.add_argument("--profile", help="folder for persistent browser profiles (one per domain)")
+    m.add_argument("--user", help="use this user's sign-in made through the gateway, for flows with auth")
+    m.add_argument("--channel", default=env("BROWSER_CHANNEL", "chrome"), help="chrome (default) or chromium")
     m.add_argument("--pause", type=float, default=2.0, help="seconds between requests to the site")
     m.add_argument("--reuse-captures", action="store_true", help="map the latest saved capture again")
     m.add_argument("--no-llm", action="store_true", help="name things by rules only")
@@ -406,6 +467,8 @@ def parser() -> argparse.ArgumentParser:
     paths(h)
     h.add_argument("--headed", action="store_true")
     h.add_argument("--pause", type=float, default=2.0)
+    h.add_argument("--user", help="heal with this user's sign-in (default: default)")
+    h.add_argument("--channel", default=env("BROWSER_CHANNEL", "chrome"), help="chrome (default) or chromium")
 
     s = sub.add_parser("show", help="show a site's active card and heal timings")
     s.add_argument("domain")

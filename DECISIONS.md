@@ -459,3 +459,7 @@ markers and infers the card deterministically, and the LLM only names things. We
     explore) carries on for the user once the heal is done.
   - Map jobs run in the gateway process, one at a time, separate from heal jobs; a worker of their own later.
   - Flowmap first; Wei Wei's mapper can plug in through the same `Remapper`-style seam later.
+  - Step 1 built: `flowmap/browser.py` (`BrowserSetup`) opens installed Chrome without the automation flag,
+    with a user's stored sign-in, its device identity and proxy; capture, `record --agent`, `map` and `heal`
+    take `--user`. `Remapper.remap` gained `user=`: HealManager passes whoever's call found the break (it used
+    to heal with the `default` user's sign-in).

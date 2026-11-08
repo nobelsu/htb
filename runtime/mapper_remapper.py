@@ -52,14 +52,16 @@ class MapperRemapper:
         self._map_domain = map_domain
         self._lock = asyncio.Lock()  # one re-record at a time: the mapper stages bundles in a shared folder
 
-    async def remap(self, card: Card, actions: list[str], reason: str) -> dict[str, Any]:
+    async def remap(
+        self, card: Card, actions: list[str], reason: str, user: str | None = None
+    ) -> dict[str, Any]:
         domain_dir = self.captures_dir / card.domain
         if not domain_dir.is_dir():
             raise RemapError(f"no recordings for {card.domain} under {self.captures_dir}")
         missing = [a for a in actions if not (domain_dir / a).is_dir()]
         if missing:
             raise RemapError(f"no recording for {', '.join(missing)} under {domain_dir}")
-        sign_ins = {a: self._sign_in(card, a) for a in actions}
+        sign_ins = {a: self._sign_in(card, a, user or self.user) for a in actions}
         log.info("re-recording %s %s with the mapper (%s)", card.domain, ", ".join(actions), reason)
         async with self._lock:
             try:
@@ -69,12 +71,12 @@ class MapperRemapper:
             except Exception as e:  # the mapper's own errors (goal not found, replay failed...)
                 raise RemapError(f"{type(e).__name__}: {e}") from e
 
-    def _sign_in(self, card: Card, action_name: str) -> Cookies | None:
+    def _sign_in(self, card: Card, action_name: str, user: str) -> Cookies | None:
         action = card.action(action_name)
         provider = action.effective_auth_provider(card.defaults) if action is not None else None
         if provider is None or self.sessions is None:
             return None
-        return self.sessions.get(self.user, card.domain, provider)
+        return self.sessions.get(user, card.domain, provider)
 
     def _heal(
         self, card: Card, domain_dir: Path, actions: list[str], sign_ins: dict[str, Cookies | None]
