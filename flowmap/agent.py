@@ -367,13 +367,43 @@ async def results_selector(page: Any, texts: list[str]) -> str:
 # ---------- the page ----------
 
 
+LEFT_OUT = re.compile(r"^(\s*)- (navigation|complementary|contentinfo)\b")
+
+
+def shorten(tree: str, limit: int = MAX_SNAPSHOT) -> str:
+    """A page's tree, made to fit: a long page (Amazon's menus fill the first 16k characters before the
+    first product) first loses its links' addresses, then its menus, sidebars and footer (the header with
+    the search box stays), and only then is cut."""
+    if len(tree) <= limit:
+        return tree
+    lines = [ln for ln in tree.splitlines() if not ln.lstrip().startswith("- /url:")]
+    if len("\n".join(lines)) > limit:
+        kept: list[str] = []
+        skip_deeper: int | None = None
+        for ln in lines:
+            depth = len(ln) - len(ln.lstrip())
+            if skip_deeper is not None and depth > skip_deeper:
+                continue
+            skip_deeper = None
+            m = LEFT_OUT.match(ln)
+            if m:
+                kept.append(f"{m.group(1)}- {m.group(2)} (left out to fit)")
+                skip_deeper = depth
+                continue
+            kept.append(ln)
+        lines = kept
+    out = "\n".join(lines)
+    if len(out) > limit:
+        out = out[:limit] + "\n... (the rest of the page was cut)"
+    return out
+
+
 async def snapshot(page: Any) -> str:
     try:
         tree = await page.locator("body").aria_snapshot(timeout=5_000)
     except Exception as e:
         tree = f"(the page couldn't be read: {type(e).__name__})"
-    if len(tree) > MAX_SNAPSHOT:
-        tree = tree[:MAX_SNAPSHOT] + "\n... (the rest of the page was cut)"
+    tree = shorten(tree)
     try:
         title = await page.title()
     except Exception:
