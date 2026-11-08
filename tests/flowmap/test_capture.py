@@ -23,7 +23,7 @@ from flowmap.capture import (
     secret_values,
 )
 from tests.flowmap.conftest import book_flow, cart_flow, search_flow
-from tests.flowmap.site import BOOKS
+from tests.sites.bookshop import BOOKS
 
 # ---------- pure ----------
 

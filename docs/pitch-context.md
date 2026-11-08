@@ -122,7 +122,7 @@ agent (Claude) ──MCP──▶ spider gateway ──▶ executor ──▶ th
 
 ## Design profile (use for the deck's look)
 
-From the product's own pages (`runtime/ui.py`) and Nobel's design rules.
+From the product's own pages (`runtime/web/ui.py`) and Nobel's design rules.
 
 - **Name:** spider, always lowercase, as a wordmark. Theme: web crawling, spiders, orb webs. ("Silk Road"
   was rejected.)

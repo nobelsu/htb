@@ -52,8 +52,8 @@ from flowmap.infer import InferError, candidates, registrable, request_sig
 from flowmap.minimise import executor_replayer
 from flowmap.privacy import PrivacyReport, public_examples
 from flowmap.signin import SignInCheckError, infer_sign_in, placeholder_provider
-from runtime.executor import Executor
-from runtime.mapping import MapError, MapOutcome, MapRequest, SignInNeeded
+from runtime.jobs.mapping import MapError, MapOutcome, MapRequest, SignInNeeded
+from runtime.run.executor import Executor
 from schema import validate_card
 
 log = logging.getLogger("flowmap.server")

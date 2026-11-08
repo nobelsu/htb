@@ -42,16 +42,21 @@ agent (Claude) --MCP--> gateway --> executor --> the site's own HTTP endpoints
 |---|---|---|
 | `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card | shared |
 | `schema/` | Card and result models, `validate_card()`, placeholders | Nobel |
-| `runtime/` | Executor, registry, MCP gateway, sign-in, healing, map jobs, web pages | Nobel |
-| `runtime/browser/` | The browser tier (real Chrome tabs, one profile per sign-in) | Nobel |
-| `runtime/neko/` | Remote sign-in browsers (Neko in Docker, streamed over WebRTC) | Nobel |
+| `runtime/gateway.py` | The MCP gateway: tools, pages and jobs wired together (`python -m runtime.gateway`) | Nobel |
+| `runtime/run/` | Running an action: executor, templates, extraction, signals, tiers, `browser/` (real Chrome tabs), confirmation ids, redaction | Nobel |
+| `runtime/signin/` | Sign-in: the connect flow, `neko/` (remote sign-in browsers), encrypted sessions, device identity, proxy | Nobel |
+| `runtime/jobs/` | Heal jobs and map jobs, and the adapter to Wei Wei's mapper | Nobel |
+| `runtime/store/` | SQLite: card registry and search, users and API keys, job state | Nobel |
+| `runtime/web/` | The gateway's pages and the OAuth sign-in for regular Claude | Nobel |
 | `flowmap/` | The mapper the product runs: record, replay, infer, assemble, heal, explore | Nobel |
 | `mapper/` | Wei Wei's mapper: capture pipeline and explorer | Wei Wei |
 | `tools/check_card.py` | Standalone card checker | Nobel |
-| `tests/` | Tests; `tests/fixture_site/` is the demo shop, `tests/flowmap/site.py` the bookshop | both |
+| `tests/runtime/`, `tests/flowmap/`, `tests/mapper/` | Tests for each package | both |
+| `tests/sites/` | Test sites: the demo shop (`fixture_site/`, card `fixture_site.json`) and the bookshop | Nobel |
 | `flows/bookshop.test/` | Example flowmap recordings | Nobel |
 | `docs/` | Mapper designs and the pitch context | both |
 
+`runtime/registry.py`, `executor.py`, `confirm.py` and `sessions.py` are old import paths kept for `mapper/`.
 `DECISIONS.md` records every judgement call made while building (L-series runtime and sign-in, M-series mapper).
 
 ## Quick start
@@ -65,14 +70,14 @@ cp .env.example .env
 ```
 
 Set `GATEWAY_API_KEY` and `CONFIRMATION_SECRET` in `.env`, and `SESSION_KEY`
-(`uv run python -m runtime.session_store` prints one). Then run the demo shop and the gateway, in two terminals:
+(`uv run python -m runtime.signin.session_store` prints one). Then run the demo shop and the gateway, in two terminals:
 
 ```bash
-uv run uvicorn tests.fixture_site.app:app --port 8900
+uv run uvicorn tests.sites.fixture_site.app:app --port 8900
 ```
 
 ```bash
-uv run python -m runtime.gateway --load tests/fixture_site.json
+uv run python -m runtime.gateway --load tests/sites/fixture_site.json
 ```
 
 Add it to Claude Code:
@@ -83,7 +88,7 @@ claude mcp add --transport http spider http://127.0.0.1:8765/mcp --header "Autho
 
 Then ask Claude: "use spider to search the fixture.test shop for lamps".
 
-The demo shop (`tests/fixture_site/`) has 21 actions covering every runtime case: reads, writes that need
+The demo shop (`tests/sites/fixture_site/`) has 21 actions covering every runtime case: reads, writes that need
 confirmation, rate limits, bot challenges, browser-only endpoints, and a sign-in (`demo` / `demo-password`).
 `POST http://127.0.0.1:8900/_admin/break` moves one endpoint so you can watch an action heal;
 `/_admin/reset` puts it back.
@@ -114,7 +119,7 @@ In Claude: Customize, Connectors, Add custom connector, URL `<PUBLIC_BASE_URL>/m
 itself and opens spider's sign-in page (password, an API key, or a new account with the invite code).
 `PUBLIC_BASE_URL` must be the https address people reach, for example an ngrok domain.
 
-The gateway serves its own pages (`runtime/ui.py`): home `/`, sign-up `/signup`, sign-in `/account/login`, the
+The gateway serves its own pages (`runtime/web/ui.py`): home `/`, sign-up `/signup`, sign-in `/account/login`, the
 account page `/account` (waiting sign-ins, sites, connected apps, API key), Claude's sign-in `/oauth/login`, and
 the website sign-in `/connect/<token>`. `PRODUCT_NAME` sets the name shown on them.
 
@@ -125,7 +130,7 @@ identity. `GATEWAY_API_KEY` is user `default`. Everyone else gets their own key:
 
 - **Sign-up page:** set `SIGNUP_CODE` and share it; people open `/signup`, enter the code, a name and an email,
   and get their key once with the `claude mcp add` line. Wrong codes are rate limited.
-- **Command line:** `uv run python -m runtime.keys add alice --email alice@example.com` (also `list`, `reissue`,
+- **Command line:** `uv run python -m runtime.store.keys add alice --email alice@example.com` (also `list`, `reissue`,
   `revoke`, `set-password`). Keys are shown once; only their SHA-256 is stored.
 
 ## Setting up a new site
@@ -142,7 +147,7 @@ commit it is held back, and before the write is saved, its steps up to the send 
 one that works.
 
 `MAP_ALLOW_LOCAL=1` also allows sites on this machine (the bookshop test site:
-`uv run uvicorn tests.flowmap.site:app --port 8911`).
+`uv run uvicorn tests.sites.bookshop:app --port 8911`).
 
 ### From the command line (flowmap)
 
@@ -167,7 +172,7 @@ the action's `examples` and saved as a new version. `REMAPPER` picks the remappe
 
 - `flowmap`: replays the action's recording from `FLOWS_DIR/<domain>/<action>.json`.
 - `mapper`: Wei Wei's mapper, replaying recordings from `CAPTURES_DIR/<domain>/`.
-- `tests.fixture_site.remapper:FixtureRemapper`: a stand-in for the demo shop.
+- `tests.sites.fixture_site.remapper:FixtureRemapper`: a stand-in for the demo shop.
 
 ## Sign-in and the browser tier
 
@@ -208,4 +213,4 @@ git-ignored and must never be committed. Logs show cookie, csrf and auth header 
 - An action is set up from one real example, so a page layout the example didn't show can come back empty.
 - Pages about a single item (a product page) yield one field so far.
 - Writes on real sites are early: the safety path is tested on the demo shop and on LinkedIn.
-- No per-user quotas, response cache or outgoing rate limit yet (`TODO`s in `runtime/executor.py`).
+- No per-user quotas, response cache or outgoing rate limit yet (`TODO`s in `runtime/run/executor.py`).

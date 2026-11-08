@@ -664,7 +664,7 @@ def stream(found: list[str]) -> str:
 def test_a_streamed_answer_is_read_with_resolve_rows() -> None:
     """LinkedIn's newer pages answer with streamed rows that point to each other: the rows are filled in,
     the results found in them, and the extract reads them the same way (Wei Wei's resolve: "rows")."""
-    from runtime.extract import ResponseView, run_extract
+    from runtime.run.extract import ResponseView, run_extract
     from schema.card import Extract
 
     def make(b: Builder, v: str, i: int, kind: str) -> None:

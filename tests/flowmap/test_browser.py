@@ -16,10 +16,10 @@ from starlette.routing import Route
 
 from flowmap.browser import BrowserSetup, SignInMissing, new_page
 from flowmap.heal import FlowRemapper
-from runtime.healing import RemapError
-from runtime.identity import BrowserIdentity
-from runtime.proxy import ProxyConfig
-from runtime.sessions import InMemorySessionStore
+from runtime.jobs.healing import RemapError
+from runtime.signin.identity import BrowserIdentity
+from runtime.signin.proxy import ProxyConfig
+from runtime.signin.sessions import InMemorySessionStore
 from schema import Card
 from tests.conftest import LiveServer
 

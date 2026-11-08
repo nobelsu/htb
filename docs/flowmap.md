@@ -118,7 +118,7 @@ values never go into the card. On the test bookshop, `/orders` is behind a sign-
 ## Try it on the test bookshop
 
 ```bash
-uv run uvicorn tests.flowmap.site:app --port 8910
+uv run uvicorn tests.sites.bookshop:app --port 8910
 uv run python -m flowmap map bookshop.test --no-llm --pause 0
 curl -X POST http://127.0.0.1:8910/_admin/break/endpoint      # or nested, param, field
 uv run python -m flowmap heal bookshop.test search_books --pause 0

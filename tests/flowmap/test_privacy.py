@@ -6,9 +6,9 @@ import copy
 from typing import Any
 
 from flowmap.privacy import by_rule, public_examples
-from runtime.confirm import Confirmer
-from runtime.executor import Executor
-from runtime.sessions import InMemorySessionStore
+from runtime.run.confirm import Confirmer
+from runtime.run.executor import Executor
+from runtime.signin.sessions import InMemorySessionStore
 
 
 class Checker:

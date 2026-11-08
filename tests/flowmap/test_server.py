@@ -11,12 +11,12 @@ import pytest
 
 from flowmap.flows import flow_path, load_flow
 from flowmap.server import FlowMapper
-from runtime.confirm import Confirmer
-from runtime.executor import Executor
-from runtime.mapping import MapConfig, MapManager
-from runtime.registry import Registry
-from runtime.sessions import InMemorySessionStore
-from runtime.state import StateStore
+from runtime.jobs.mapping import MapConfig, MapManager
+from runtime.run.confirm import Confirmer
+from runtime.run.executor import Executor
+from runtime.signin.sessions import InMemorySessionStore
+from runtime.store.registry import Registry
+from runtime.store.state import StateStore
 from schema import ResultCode
 from tests.flowmap.conftest import search_flow
 from tests.flowmap.test_agent import FakeClient, done_with_headings, role
@@ -89,7 +89,7 @@ async def test_a_map_job_behind_a_sign_in(bookshop: str, tmp_path: Path) -> None
     pytest.importorskip("playwright.async_api")
     import httpx
 
-    from runtime.mapping import provider_for
+    from runtime.jobs.mapping import provider_for
 
     client = FakeClient(
         [
@@ -161,8 +161,8 @@ async def test_explore_maps_what_passes_and_follows_up(bookshop: str, tmp_path: 
     pytest.importorskip("playwright.async_api")
     import re
 
-    from tests.flowmap.site import state as state_site
     from tests.flowmap.test_agent import NONE, last_page
+    from tests.sites.bookshop import state as state_site
 
     seen: dict[str, str] = {}
 
@@ -474,8 +474,8 @@ async def test_a_named_write_is_held_back_and_saved_never_run(bookshop: str, tmp
     """request_map with write: the agent clicks the committing button, the site never gets it, and the
     action is saved as a write that asks for confirmation and is marked never run for real."""
     pytest.importorskip("playwright.async_api")
-    from tests.flowmap.site import state as state_site
     from tests.flowmap.test_agent import NONE
+    from tests.sites.bookshop import state as state_site
 
     client = FakeClient(
         [

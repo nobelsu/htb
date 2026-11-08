@@ -14,11 +14,11 @@ from flowmap.flows import Flow, Goto, Input
 from flowmap.infer import Inferred
 from flowmap.label import Labels
 from flowmap.minimise import Replayer, executor_replayer, minimise
-from runtime.confirm import Confirmer
-from runtime.executor import Executor
-from runtime.registry import Registry, StoredCard
-from runtime.sessions import InMemorySessionStore
-from runtime.tiers import HttpTier, ImpersonateTier
+from runtime.run.confirm import Confirmer
+from runtime.run.executor import Executor
+from runtime.run.tiers import HttpTier, ImpersonateTier
+from runtime.signin.sessions import InMemorySessionStore
+from runtime.store.registry import Registry, StoredCard
 from schema import validate_card
 from schema.envelope import Envelope, Meta, ResultCode
 

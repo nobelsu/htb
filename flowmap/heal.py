@@ -1,7 +1,7 @@
 """Heal: the runtime's ``Remapper``, done by replaying the person's recorded flow (``REMAPPER=flowmap``).
 
-HealManager (runtime/healing.py) owns the CARD_SPEC Healing steps around this: the pre-check (blocks, logins
-and rate limits cancel the heal), validating the changed actions against their examples, saving the new
+HealManager (runtime/jobs/healing.py) owns the CARD_SPEC Healing steps around this: the pre-check (blocks,
+logins and rate limits cancel the heal), validating the changed actions against their examples, saving the new
 version (healed writes go live, DECISIONS M2) and marking ``degraded`` when a heal fails. It also records
 ``remap_start`` / ``remap_done`` / ``heal_done`` events with timings in ``heal_events``.
 
@@ -28,8 +28,8 @@ from flowmap.flows import Flow, FlowError, flow_path, load_flow
 from flowmap.infer import InferError, Inferred, infer
 from flowmap.label import Labels, rule_labels
 from flowmap.minimise import Replayer, minimise
-from runtime.healing import RemapError
-from runtime.sessions import SessionStore
+from runtime.jobs.healing import RemapError
+from runtime.signin.sessions import SessionStore
 from schema import Card
 
 log = logging.getLogger("flowmap.heal")
@@ -128,7 +128,7 @@ class FlowRemapper:
         self.sessions = sessions
         self.user = user  # whose sign-in to heal with when the heal job doesn't say
         self.headless = headless
-        self.proxies = proxies  # runtime.proxy.ProxyConfig: the sign-in's residential proxy
+        self.proxies = proxies  # runtime.signin.proxy.ProxyConfig: the sign-in's residential proxy
         self.channel = channel
         self.replay = replay
         self.pause_s = pause_s

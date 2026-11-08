@@ -62,10 +62,10 @@ ignore = ["SIM105"]  # try/except/pass is kept as written
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["F811"]  # pytest fixtures used as parameters
 # HTML, CSS, JS and SQL templates keep their long lines; wrapping them would change the page source
-"runtime/ui.py" = ["E501"]
-"runtime/account_page.py" = ["E501"]
-"runtime/connect_page.py" = ["E501"]
-"runtime/neko/manager.py" = ["E501"]
-"runtime/session_store.py" = ["E501"]
-"runtime/state.py" = ["E501"]
-"tests/fixture_site/app.py" = ["E501"]
+"runtime/web/ui.py" = ["E501"]
+"runtime/web/account_page.py" = ["E501"]
+"runtime/web/connect_page.py" = ["E501"]
+"runtime/signin/neko/manager.py" = ["E501"]
+"runtime/signin/session_store.py" = ["E501"]
+"runtime/store/state.py" = ["E501"]
+"tests/sites/fixture_site/app.py" = ["E501"]

@@ -8,10 +8,10 @@ import httpx
 import pytest
 
 from flowmap.signin import SignInCheckError, _fill, infer_sign_in, signals_between
-from runtime.confirm import Confirmer
-from runtime.executor import Executor
-from runtime.sessions import InMemorySessionStore
-from runtime.tiers import HttpResponse
+from runtime.run.confirm import Confirmer
+from runtime.run.executor import Executor
+from runtime.run.tiers import HttpResponse
+from runtime.signin.sessions import InMemorySessionStore
 
 
 def test_only_params_are_filled_in() -> None:

@@ -171,14 +171,14 @@ async def _record_agent(args: argparse.Namespace) -> int:
 
 
 def _proxies() -> Any:
-    from runtime.proxy import ProxyConfig
+    from runtime.signin.proxy import ProxyConfig
 
     return ProxyConfig(os.environ["PROXY_URL"]) if os.environ.get("PROXY_URL") else None
 
 
 def _sessions(db: str) -> Any:
-    from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
-    from runtime.sessions import DevEnvSessionStore
+    from runtime.signin.session_store import ChainedSessionStore, EncryptedSessionStore
+    from runtime.signin.sessions import DevEnvSessionStore
 
     stores: list[Any] = []
     if os.environ.get("SESSION_KEY"):
@@ -212,10 +212,10 @@ def _setup(args: argparse.Namespace, domain: str, provider: str | None, url: str
 
 def _runtime(db: str) -> tuple[Any, Any, Any]:
     """(registry, sessions, make_executor) built like the gateway's."""
-    from runtime.confirm import Confirmer
-    from runtime.executor import Executor
-    from runtime.registry import Registry
-    from runtime.tiers import HttpTier, ImpersonateTier
+    from runtime.run.confirm import Confirmer
+    from runtime.run.executor import Executor
+    from runtime.run.tiers import HttpTier, ImpersonateTier
+    from runtime.store.registry import Registry
 
     registry = Registry(db)
     sessions = _sessions(db)
@@ -325,8 +325,8 @@ async def _map(args: argparse.Namespace) -> int:
 async def _heal(args: argparse.Namespace) -> int:
     from flowmap.heal import FlowRemapper
     from flowmap.minimise import executor_replayer
-    from runtime.healing import HealConfig, HealManager
-    from runtime.state import StateStore
+    from runtime.jobs.healing import HealConfig, HealManager
+    from runtime.store.state import StateStore
 
     registry, sessions, make_executor = _runtime(args.db)
     if registry.get(args.domain) is None:
@@ -374,8 +374,8 @@ async def _heal(args: argparse.Namespace) -> int:
 
 
 def cmd_show(args: argparse.Namespace) -> int:
-    from runtime.registry import Registry
-    from runtime.state import StateStore
+    from runtime.store.registry import Registry
+    from runtime.store.state import StateStore
 
     registry = Registry(args.db)
     stored = registry.get(args.domain)

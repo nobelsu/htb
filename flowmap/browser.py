@@ -38,8 +38,8 @@ class BrowserSetup:
     headless: bool = True
     cookies: dict[str, str] = field(default_factory=dict, repr=False)  # a stored sign-in; values are secret
     cookie_url: str | None = None  # the site the cookies belong to
-    identity: Any = None  # runtime.identity.BrowserIdentity
-    proxy: Any = None  # runtime.proxy.ProxySpec
+    identity: Any = None  # runtime.signin.identity.BrowserIdentity
+    proxy: Any = None  # runtime.signin.proxy.ProxySpec
     storage_state: Path | None = None  # a Playwright storage state file (tests, older callers)
     profile_dir: Path | None = None  # a persistent profile: one context for every run (signing in by hand)
 

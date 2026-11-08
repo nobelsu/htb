@@ -18,7 +18,7 @@ from flowmap.agent import (
     template,
 )
 from flowmap.flows import Fill, Goto, LocatorCall, Press, Select
-from tests.flowmap.site import state
+from tests.sites.bookshop import state
 
 Policy = Callable[[list[dict[str, Any]]], dict[str, Any]]
 

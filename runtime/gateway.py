@@ -1,7 +1,7 @@
 """MCP server: a fixed set of generic tools (find_actions, run_action, sign-in, heal, map) over every active
 card, served over Streamable HTTP with Bearer-key auth.
 
-Run:  uv run python -m runtime.gateway --load tests/fixture_site.json
+Run:  uv run python -m runtime.gateway --load tests/sites/fixture_site.json
 """
 
 from __future__ import annotations
@@ -33,35 +33,37 @@ from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from pydantic import AnyHttpUrl
 from starlette.routing import BaseRoute
 
-from runtime.account_page import routes as account_routes
-from runtime.account_page import session_cookie
-from runtime.browser.pool import BrowserConfig, BrowserPool
-from runtime.browser.tier import BrowserTier
-from runtime.catalog import find_actions
-from runtime.confirm import Confirmer
-from runtime.connect import ConnectionManager
-from runtime.connect_page import routes as connect_routes
-from runtime.executor import Executor
-from runtime.healing import HealConfig, HealManager, Remapper
-from runtime.home_page import routes as home_routes
-from runtime.keys import ENV_KEY_USER, KeyStore
-from runtime.mapper_remapper import MapperRemapper
-from runtime.mapping import MapConfig, MapManager, Mapper
-from runtime.neko.manager import NekoConfig, NekoManager
-from runtime.oauth import OAuth
-from runtime.proxy import ProxyConfig
-from runtime.registry import Registry, StoredCard
-from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
-from runtime.sessions import DevEnvSessionStore, SessionStore
-from runtime.signup_page import routes as signup_routes
-from runtime.state import StateStore
-from runtime.tiers import default_tiers
-from runtime.ui import PRODUCT_NAME
+from runtime.jobs.healing import HealConfig, HealManager, Remapper
+from runtime.jobs.mapper_remapper import MapperRemapper
+from runtime.jobs.mapping import MapConfig, MapManager, Mapper
+from runtime.run.browser.pool import BrowserConfig, BrowserPool
+from runtime.run.browser.tier import BrowserTier
+from runtime.run.confirm import Confirmer
+from runtime.run.executor import Executor
+from runtime.run.tiers import default_tiers
+from runtime.signin.connect import ConnectionManager
+from runtime.signin.neko.manager import NekoConfig, NekoManager
+from runtime.signin.proxy import ProxyConfig
+from runtime.signin.session_store import ChainedSessionStore, EncryptedSessionStore
+from runtime.signin.sessions import DevEnvSessionStore, SessionStore
+from runtime.store.catalog import find_actions
+from runtime.store.keys import ENV_KEY_USER, KeyStore
+from runtime.store.registry import Registry, StoredCard
+from runtime.store.state import StateStore
+from runtime.web.account_page import routes as account_routes
+from runtime.web.account_page import session_cookie
+from runtime.web.connect_page import routes as connect_routes
+from runtime.web.home_page import routes as home_routes
+from runtime.web.oauth import OAuth
+from runtime.web.signup_page import routes as signup_routes
+from runtime.web.ui import PRODUCT_NAME
 from schema import ResultCode, load_card
 
 log = logging.getLogger("runtime.gateway")
 
-DEFAULT_USER = ENV_KEY_USER  # the .env key's user; other keys belong to their own users (runtime/keys.py)
+DEFAULT_USER = (
+    ENV_KEY_USER  # the .env key's user; other keys belong to their own users (runtime/store/keys.py)
+)
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]

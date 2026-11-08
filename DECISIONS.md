@@ -21,7 +21,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **D8 Sessions (asked).** A `SessionStore` interface keyed by (user, domain, provider id). Tests use an in-memory
   store; for local dev, cookies can be loaded from `.env` (`DEV_SESSION_COOKIES`,
   `{"<domain>": {"<provider_id>": {"<cookie>": "<value>"}}}`). The remote-login flow will fill the store later
-  (*since built:* L1 and L4, the encrypted store in `runtime/session_store.py`).
+  (*since built:* L1 and L4, the encrypted store in `runtime/signin/session_store.py`).
 
 ## Schema / validation
 - Card models use `extra="forbid"`: unknown fields are rejected at save time, so typos surface early.
@@ -63,9 +63,9 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - A string body (not an object/array) is sent as text with its placeholders substituted.
 - Filter failures (e.g. `int` on `"abc"`) are `TemplateError` → `ERROR` with the message.
 
-## Fixture site (`tests/fixture_site/`)
+## Fixture site (`tests/sites/fixture_site/`)
 - `fixture_site.json` hard-codes `base_url: http://127.0.0.1:8900` for manual runs
-  (`uv run uvicorn tests.fixture_site.app:app --port 8900`); tests start the site on a free port and patch `base_url`.
+  (`uv run uvicorn tests.sites.fixture_site.app:app --port 8900`); tests start the site on a free port and patch `base_url`.
 - The break switch (`POST /_admin/break`) moves `/api/items/{id}` to `/api/v2/items/{id}`, so `shop_get_item`
   goes from `ERROR` (unknown id, probe passes) to `PAGE_CHANGED` (probe gets the same 404).
 - `add_to_cart` SKU prefixes drive write outcomes: `SLOW-` stores then stalls past the timeout, `FAIL-` 500s without
@@ -106,7 +106,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   Envelopes never include headers or cookies.
 - **Out of scope stubs.** `NoHealQueue` (PAGE_CHANGED → `heal: null`), and TODOs for cache, rate limits,
   EMPTY tracking, ladder escalation and the impersonate/browser tiers (*since built:* healing, the ladder
-  and both tiers; cache and rate limits are still TODOs in `runtime/executor.py`).
+  and both tiers; cache and rate limits are still TODOs in `runtime/run/executor.py`).
 
 ## Gateway (mcp SDK 2.3.0)
 - **Low-level `Server`** with `on_list_tools` / `on_call_tool`. *Superseded:* the first version exposed one MCP tool
@@ -132,9 +132,9 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   never holds the approval; the HMAC id flow stays as the fallback for clients without elicitation.
 
 ## Healing
-- **H1 Mapper hand-off (asked).** A Python interface, `runtime.healing.Remapper`:
+- **H1 Mapper hand-off (asked).** A Python interface, `runtime.jobs.healing.Remapper`:
   `async remap(card, actions, reason) -> Card | dict`. It returns the whole proposed card; the runtime picks what
-  to activate. Configured with `REMAPPER=module:Class`. `tests/fixture_site/remapper.py:FixtureRemapper` is a
+  to activate. Configured with `REMAPPER=module:Class`. `tests/sites/fixture_site/remapper.py:FixtureRemapper` is a
   stand-in for the fixture shop (asked) that probes which item endpoint answers.
 - **H2 Repeat PAGE_CHANGED (asked).** While a job for the site covers the action, every PAGE_CHANGED returns that
   job's id. A different action gets its own job. One worker runs jobs one at a time, so at most one job per
@@ -159,7 +159,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   post/buy/follow, and writes usually have no examples), so the job result lists them under `unvalidated`. The
   `heal_candidates` table is no longer written; it stays in the schema for history. `CARD_SPEC.md` "Healing" is
   updated to match.
-- **H5 Heal adapter (asked).** `runtime/mapper_remapper.py` is the `Remapper` done by WeiWei's mapper; Nobel builds
+- **H5 Heal adapter (asked).** `runtime/jobs/mapper_remapper.py` is the `Remapper` done by WeiWei's mapper; Nobel builds
   it (runtime side), calling the mapper's own `recapture` and `map_domain` without changing `mapper/`. Turned on
   with `REMAPPER=mapper`; recordings are read from `CAPTURES_DIR/<domain>/<action>/`.
   - **Only the broken actions are re-recorded (asked).** Each broken action's recordings are replayed, then the
@@ -332,7 +332,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   - **The .env key stays user `default` (asked),** so existing sign-ins keep working.
   - **Keys come from a sign-up page (asked) behind an invite code (asked)**, `SIGNUP_CODE` in `.env`; empty = no
     page (404). The form asks for a name and an email (asked; the email isn't verified, we don't send mail). The
-    key is shown once with the `claude mcp add` line. Also a command line: `python -m runtime.keys add | list |
+    key is shown once with the `claude mcp add` line. Also a command line: `python -m runtime.store.keys add | list |
     reissue | revoke`.
   - Judgement calls: names are 2-32 of `a-z 0-9 - _` (they end up in profile folder names); `default`, `_shared`,
     `admin`, `root` are reserved. Keys are `htb_` + 32 random bytes; only their SHA-256 is stored (high-entropy
@@ -367,7 +367,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **L11 Sign-in for regular Claude (OAuth) and the account page (asked).** Regular Claude (web, desktop, phone)
   adds a server as a custom connector and signs in with OAuth; its API-key header option is a limited beta. So the
   gateway is also an OAuth authorization server: the MCP SDK serves discovery, Dynamic Client Registration,
-  /authorize, /token (PKCE) and /revoke; `runtime/oauth.py` is the provider and `runtime/account_page.py` the
+  /authorize, /token (PKCE) and /revoke; `runtime/web/oauth.py` is the provider and `runtime/web/account_page.py` the
   pages. `BearerAuth` accepts OAuth access tokens next to API keys, and its 401 names the resource metadata
   (RFC 9728), which is how Claude finds the sign-in server. The SDK has no Client ID Metadata Document support, so
   Claude uses "Register automatically" (DCR).
@@ -385,7 +385,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
     It's a cookie session (HttpOnly, SameSite=Lax, Secure on https), 30 days; POSTs from another origin are refused.
     Signing in for an app or signing up also signs you in to the account page.
 - **L12 Page design: Spine (asked, after wireframes).** Every page the gateway serves (home, sign-up, sign-in for
-  the account and for apps, account, change password, website sign-in, errors) shares `runtime/ui.py`: a full-height
+  the account and for apps, account, change password, website sign-in, errors) shares `runtime/web/ui.py`: a full-height
   black spine on the left with the page name rotated and huge, giant stacked type on the right (fields use
   placeholders, not labels), and the main action as a full-width black bar at the bottom. Black and white, Inter
   Tight (IBM Plex Mono only for URLs and commands), stroke icons instead of symbols, no subtitles or helper lines;
@@ -404,7 +404,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
     and the placeholder slides out as you type, bar arrows nudge, the spine word drifts on scroll. All of it is off
     under prefers-reduced-motion.
 - **L13 Page design: Margin in Linen, named spider (asked, after wireframes: https://claude.ai/artifact/L1o9JnahEtjbWSh57nLBEm).**
-  Replaces Spine (L12), which Nobel found too loud. Every page (`runtime/ui.py`): a left art panel where a spider
+  Replaces Spine (L12), which Nobel found too loud. Every page (`runtime/web/ui.py`): a left art panel where a spider
   spins orb webs (radials in a scrambled order, frame, spiral; it rests, wanders off and spins the next; old webs
   stay and fade back, the oldest go; never quite regular), a hairline, and a calm column of small IBM Plex Sans on
   the right, centred vertically. Linen palette: paper #F5EDE2, ink #2A2421, umber #6B5A35 for actions, brick
@@ -426,7 +426,7 @@ markers and infers the card deterministically, and the LLM only names things. We
 - **M1 Where (default).** A new package `flowmap/` (tests in `tests/flowmap/`, CLI `python -m flowmap
   record|map|heal|show`) on branch `mapper-v2`. The brief's `mapper/flows.py`, `mapper/capture.py` and
   `mapper/cli.py` would clash with Wei Wei's package (`mapper/capture/` is a package, his CLI already has `map` and
-  `heal`, and `runtime/mapper_remapper.py` imports his code).
+  `heal`, and `runtime/jobs/mapper_remapper.py` imports his code).
 - **M2 Healed writes (asked: follow the spec).** The brief said healed writes go to `heal_candidates`; CARD_SPEC
   Healing (H4) says they go live as a new version, with `requires_confirmation` still true so every run asks.
   The spec wins: no `heal_candidates`.
@@ -480,7 +480,7 @@ markers and infers the card deterministically, and the LLM only names things. We
     with a user's stored sign-in, its device identity and proxy; capture, `record --agent`, `map` and `heal`
     take `--user`. `Remapper.remap` gained `user=`: HealManager passes whoever's call found the break (it used
     to heal with the `default` user's sign-in).
-  - Step 2 built: map jobs (`runtime/mapping.py`, `map_jobs` table, `flowmap/server.py`, `MAPPER=flowmap`).
+  - Step 2 built: map jobs (`runtime/jobs/mapping.py`, `map_jobs` table, `flowmap/server.py`, `MAPPER=flowmap`).
     Agents call `request_map(site, task, action, inputs)` and `map_status(job_id, wait_seconds)`; the account
     page lists the user's last five. The requesting agent names the action and gives the input values (no
     planning call). The runtime validates the mapped card and runs every read example through the executor
@@ -569,7 +569,7 @@ markers and infers the card deterministically, and the LLM only names things. We
   - The live page isn't the HTML (2026-11-08, from LinkedIn's profiles): a site's scripts can restructure
     the page after it loads, so the recorder's selector (from the live page) can find nothing in the HTML a
     plain request gets, though the data is there. When it finds too little, a selector is built from the
-    HTML itself with the same rules (`runtime/extract.py html_selector`), for scoring candidates and for the
+    HTML itself with the same rules (`runtime/run/extract.py html_selector`), for scoring candidates and for the
     card. Data kept only inside scripts (no elements) is still not read.
   - Named writes (asked, 2026-11-08): `request_map` takes `write: true` with a named action (send a connect
     request, follow, add to cart). It's recorded like explore's writes: the committing click is held back,
@@ -588,5 +588,5 @@ markers and infers the card deterministically, and the LLM only names things. We
     inputs shows is read from that page, since every run following the same company left it unchanged
     (flowmap/infer.py `_ids_from_page`); and before a new write is saved, its steps but the send run through
     the executor on each tier from its own up, keeping the first that works, or the write isn't saved
-    (runtime/mapping.py `_check_writes`). LinkedIn answered a follow from the impersonate tier with 200 and
+    (runtime/jobs/mapping.py `_check_writes`). LinkedIn answered a follow from the impersonate tier with 200 and
     didn't follow; its writes need the browser tier.

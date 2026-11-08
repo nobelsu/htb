@@ -31,8 +31,8 @@ from urllib.parse import quote, unquote, urlsplit
 
 from flowmap.agent import _get, _has_credentials, _tool
 from flowmap.label import DEFAULT_MODEL, FALLBACK_BETA, FALLBACK_MODELS
-from runtime.executor import Executor
-from runtime.healing import example_passes
+from runtime.jobs.healing import example_passes
+from runtime.run.executor import Executor
 from schema import validate_card
 
 log = logging.getLogger("flowmap.privacy")

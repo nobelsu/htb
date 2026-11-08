@@ -38,7 +38,7 @@ def test_the_first_click_that_reads_like_a_change_arms_it() -> None:
 @pytest.mark.browser
 async def test_every_change_click_is_held_back_on_replay(bookshop: str, tmp_path: Path) -> None:
     pytest.importorskip("playwright.async_api")
-    from tests.flowmap.site import state as site
+    from tests.sites.bookshop import state as site
 
     before = {k: list(v) for k, v in site.carts.items()}
     runs = await capture_flow(

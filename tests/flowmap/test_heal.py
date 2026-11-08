@@ -15,13 +15,13 @@ from flowmap.flows import Flow, Goto, Input, save_flow
 from flowmap.heal import FlowRemapper, diff_actions, keep_labels
 from flowmap.infer import Inferred
 from flowmap.minimise import executor_replayer
-from runtime.confirm import Confirmer
-from runtime.executor import Executor
-from runtime.healing import HealConfig, HealManager
-from runtime.registry import Registry
-from runtime.sessions import InMemorySessionStore
-from runtime.state import StateStore
-from runtime.tiers import HttpTier, ImpersonateTier
+from runtime.jobs.healing import HealConfig, HealManager
+from runtime.run.confirm import Confirmer
+from runtime.run.executor import Executor
+from runtime.run.tiers import HttpTier, ImpersonateTier
+from runtime.signin.sessions import InMemorySessionStore
+from runtime.store.registry import Registry
+from runtime.store.state import StateStore
 from schema.envelope import ResultCode
 from tests.flowmap.conftest import book_flow, search_flow
 

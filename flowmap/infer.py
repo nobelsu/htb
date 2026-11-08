@@ -30,7 +30,7 @@ from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlsplit
 from flowmap.capture import SECRET, Exchange, Run
 from flowmap.flows import Flow, Goto, Select, placeholders, render
 from flowmap.holdback import HELD_HEADER
-from runtime.extract import STREAM_ROW, css_items, html_selector, resolve_rows, stream_rows
+from runtime.run.extract import STREAM_ROW, css_items, html_selector, resolve_rows, stream_rows
 
 # Endpoints that sound like the page's background chatter, not an action: only ever a tie-breaker.
 BACKGROUND = re.compile(

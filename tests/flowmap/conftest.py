@@ -6,7 +6,7 @@ import pytest
 
 from flowmap.flows import Click, Fill, Flow, Goto, Input, LocatorCall, Press, Select, WaitFor
 from tests.conftest import LiveServer
-from tests.flowmap.site import app, state
+from tests.sites.bookshop import app, state
 
 
 @pytest.fixture(autouse=True)
