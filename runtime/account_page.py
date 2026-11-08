@@ -354,8 +354,9 @@ def routes(
             for s in sites
         )
         app_rows = "".join(
-            f'<div class="row"><span class="big">{icon("link", 44, label="Connected app")}{esc(a["name"])}'
-            f'<span class="mono">{esc(_app_detail(a))}</span></span>'
+            f'<div class="row"><span class="big">{icon("link", 44, label="Connected app")}'
+            f'<span class="stack"><span>{esc(a["name"])}</span>'
+            f'<span class="mono">{esc(_app_detail(a))}</span></span></span>'
             + square("/account/apps/revoke", "client_id", a["client_id"], f"Disconnect {a['name']}")
             + "</div>"
             for a in apps

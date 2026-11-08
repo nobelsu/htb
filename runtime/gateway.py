@@ -332,7 +332,9 @@ class Gateway:
         query, site = args.get("query"), args.get("site")
         if (query is not None and not isinstance(query, str)) or (site is not None and not isinstance(site, str)):
             return _error_result("query and site must be strings")
-        out = find_actions(self.registry.active_cards(), query or None, site or None)
+        out = find_actions(
+            self.registry.active_cards(), query or None, site or None, can_map=self.maps is not None
+        )
         if "error" in out:
             return _error_result(str(out["error"]))
         return _json_result(out)

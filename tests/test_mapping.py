@@ -379,6 +379,12 @@ async def test_gateway_map_tools(
     done = await call("map_status", job_id=job_id, wait_seconds=0)
     assert not done.is_error and done.structured_content is not None
     assert done.structured_content["status"] == "succeeded"
+    new = await call("find_actions", site="https://www.brand-new.example/search")  # not set up: say how
+    assert not new.is_error and new.structured_content is not None
+    assert new.structured_content["site"] == "brand-new.example" and new.structured_content["set_up"] is False
+    assert "request_map(site='brand-new.example')" in new.structured_content["next_step"]
+    www = (await call("find_actions", site=f"https://www.{DOMAIN}/x")).structured_content
+    assert www is not None and www["actions"]  # the address finds the mapped site
     found = await call("find_actions", site=DOMAIN)
     assert "search_products" in found.content[0].text  # type: ignore[union-attr]
     assert (await call("map_status", job_id="m_nope")).is_error

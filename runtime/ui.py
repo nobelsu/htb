@@ -41,7 +41,7 @@ a{color:inherit}
 .foot a,.foot button{font:inherit;color:var(--action);background:none;border:0;padding:0;cursor:pointer;
   text-decoration:underline;text-underline-offset:3px}
 .hair{flex:none;width:1px;background:var(--ink);opacity:.18}
-.main{flex:0 1 460px;min-width:0;display:flex;flex-direction:column;justify-content:center;padding:64px 56px}
+.main{flex:0 1 640px;min-width:0;display:flex;flex-direction:column;justify-content:center;padding:64px 56px}
 .wrap.wide .art{flex:0 0 140px}
 .wrap.wide .main{flex:1 1 auto}
 .title,.headline,.giant{margin:0 0 20px;font-size:15px;font-weight:500;line-height:1.4;overflow-wrap:anywhere}
@@ -50,7 +50,9 @@ a{color:inherit}
 .row{display:flex;justify-content:space-between;align-items:center;gap:16px;min-height:48px;
   border-bottom:1px solid var(--line);text-decoration:none;color:inherit}
 .row.strong{background:var(--tint);border-bottom:0;padding:6px 6px 6px 14px;margin-bottom:6px}
-.big,.mid{display:flex;align-items:center;gap:10px;min-width:0;overflow-wrap:anywhere}
+.big,.mid{display:flex;align-items:center;gap:10px;min-width:0;overflow-wrap:break-word}
+.stack{display:flex;flex-direction:column;gap:2px;min-width:0}
+.stack .mono{white-space:normal}
 .struck{text-decoration:line-through;opacity:.5}
 .mono{font-family:'IBM Plex Mono',monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   min-width:0;color:var(--muted)}
