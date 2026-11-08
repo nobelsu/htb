@@ -262,8 +262,9 @@ async def test_account_page_needs_signing_in(env: Env) -> None:
         await account_session(env, http)
         page = await http.get(f"{env.base}/account")
     assert page.status_code == 200 and "<title>Account, alice</title>" in page.text
-    for tile in ("Connector", "New key", "Password", "Alerts"):
+    for tile in ("Connector", "New key", "Password"):
         assert f"<span>{tile}</span>" in page.text
+    assert "Alerts" not in page.text and "Notification" not in page.text
     assert "Nothing yet" in page.text  # no sites or apps yet
     assert f'data-copy="{env.base}/mcp"' in page.text  # the connector URL, one click to copy
 

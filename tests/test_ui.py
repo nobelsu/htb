@@ -15,7 +15,7 @@ from tests.test_oauth import PASSWORD, Env, account_session, env  # noqa: F401  
 async def test_home_page_is_public_but_only_at_the_root(env: Env) -> None:
     async with httpx.AsyncClient(follow_redirects=False) as http:
         home = await http.get(f"{env.base}/")
-        assert home.status_code == 200 and "Your agent, signed in." in home.text
+        assert home.status_code == 200 and "Websites your agent can call." in home.text and "linkedin_search_companies" in home.text
         assert 'href="/signup"' in home.text  # sign-up is open in this fixture
         assert (await http.get(f"{env.base}/anything-else")).status_code == 401  # "/" exempts only "/"
         assert (await http.post(f"{env.base}/mcp", json={})).status_code == 401
