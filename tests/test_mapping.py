@@ -119,6 +119,8 @@ async def test_requests_are_checked(registry: Registry, state: StateStore, execu
     assert "snake_case" in (await lenient.request("alice", "shop.test", "search", "Search Things"))["error"]
     assert "task" in (await lenient.request("alice", "shop.test", "   ", "search"))["error"]
     assert "named action" in (await lenient.request("alice", "shop.test", write=True))["error"]
+    url = await lenient.request("alice", "shop.test", "open", "open_page", {"page": "https://shop.test/p/1"})
+    assert "whole address" in url["error"]
     bad = await lenient.request("alice", "shop.test", "search", "search", {"query": {"nested": 1}})
     assert "inputs" in bad["error"]
     assert state.open_map_job_for(DOMAIN) is None  # nothing was queued

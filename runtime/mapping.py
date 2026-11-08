@@ -183,6 +183,12 @@ class MapManager:
             if not ACTION_NAME.match(name) or isinstance(value, (dict, list)) or value is None:
                 return {"error": 'inputs must map snake_case names to the values to use, e.g. {"query": "x"}'}
             values[name] = str(value).lower() if isinstance(value, bool) else str(value)
+            if re.match(r"\s*https?://", values[name]):
+                return {
+                    "error": f"input {name} is a whole address; give the part that identifies it",
+                    "hint": "e.g. for https://www.linkedin.com/company/anthropicresearch/ use "
+                    '{"company_slug": "anthropicresearch"}, and pass the address as site',
+                }
         if len(values) > MAX_INPUTS:
             return {"error": f"at most {MAX_INPUTS} inputs"}
 
