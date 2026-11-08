@@ -431,3 +431,18 @@ markers and infers the card deterministically, and the LLM only names things. We
   sign-out/delete clicks, no data-changing clicks unless `--write` (which asks first on real sites), no
   sign-in (the person signs in in the window; the recording restarts). Older page snapshots are dropped
   from the conversation to keep it small.
+- **M8 Mapping runs on the server (asked, 2026-11-08; not built yet).** Map jobs run inside the gateway next to
+  heal jobs, using its stored sessions, `BrowserPool`, proxy and identity (so sign-in goes through Connect,
+  where Google works). Build order: flowmap on the runtime's browser and sessions; map jobs
+  (`request_map`, status); explore as a map job (Claude proposes tasks, each is recorded, mapped and kept
+  only if it passes; follow-ups come from returned ids). Decisions:
+  - Any signed-up user may request a map, but only when the site has no card or a heal is needed (then the
+    request starts the heal).
+  - A site behind a login is mapped with the requester's session; examples on the shared card hold no
+    personal data, and raw captures are deleted after mapping.
+  - Explore tries writes too, but stops at the action it suspects would really commit the write (the final
+    click): that action is not allowed to reach the site.
+  - Whoever hits a broken action, the heal starts automatically, and the work it interrupted (a map job, an
+    explore) carries on for the user once the heal is done.
+  - Map jobs run in the gateway process, one at a time, separate from heal jobs; a worker of their own later.
+  - Flowmap first; Wei Wei's mapper can plug in through the same `Remapper`-style seam later.
