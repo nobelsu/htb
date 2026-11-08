@@ -60,6 +60,7 @@ Syntax: `{{namespace.path}}`, `{{namespace.path | filter}}`, `{{x | filter1 | fi
 | `params.X` | Agent input, after defaults are applied |
 | `session.cookies.X` | Current cookie value (see Cookies) |
 | `steps.ID.X` | Value extracted by an earlier step (must be a single value, see Extraction) |
+| `gen.uuid`, `gen.hex`, `gen.now_ms` | A value made fresh for each call: a random UUID v4, 32 random hex characters, the current time in milliseconds (an integer). Added 2026-11-08, see below |
 
 Filters (a fixed set, nothing else allowed):
 
@@ -70,6 +71,13 @@ Filters (a fixed set, nothing else allowed):
 | `int` | Converts to an integer |
 | `offset:N` | 1-based page to result offset: `(value - 1) * N` |
 | `escape_restli` | Percent-encodes `% ( ) , : '` and spaces, for LinkedIn's Rest.li syntax |
+
+**Values made fresh for each call (`gen`)** are for what a page makes up anew for every request:
+idempotency keys, nonces, client request ids, timestamps. The mapper writes `{{gen.uuid}}` (or `hex`,
+`now_ms`) where a captured value was such a value, instead of turning it into a param or copying a recorded one.
+One value per name per call: every `{{gen.uuid}}` in one call (every step, header and body, and its retries)
+has the same value, and the next call gets a new one. Filters apply as usual. Added to v0.4 on 2026-11-08,
+backward compatible: cards without `gen` are unchanged.
 
 Rules:
 1. Resolve placeholders with a small custom resolver. **Never a template engine.**

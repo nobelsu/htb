@@ -106,9 +106,10 @@ class _Run:
     identity: BrowserIdentity | None = None  # the sign-in's device identity; every tier presents it
     proxy: ProxySpec | None = None  # the sign-in's residential proxy session; every tier uses it
     steps: dict[tuple[str, str], list[Any]] = field(default_factory=dict)
+    generated: dict[str, Any] = field(default_factory=dict)  # gen.* values: one per name for the whole call
 
     def context(self) -> Context:
-        return Context(self.card.base_url, self.params, self.session.cookies, self.steps)
+        return Context(self.card.base_url, self.params, self.session.cookies, self.steps, self.generated)
 
     def headers_for(self, req: Request) -> dict[str, str]:
         return merge_headers(self.card.defaults.headers, self.action.headers, req.headers)

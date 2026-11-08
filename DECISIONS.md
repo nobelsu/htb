@@ -487,3 +487,7 @@ markers and infers the card deterministically, and the LLM only names things. We
     sign-in pauses the whole job. The runtime now keeps the actions whose examples pass and drops the rest
     (`result.dropped`), for single-action jobs too (a lone failing action still fails the job). Writes
     (hold-back, undo, never run for real) are the next piece.
+  - Spec addition (asked, 2026-11-08: "Add to the spec"): placeholders `{{gen.uuid}}`, `{{gen.hex}}` and
+    `{{gen.now_ms}}`, a value made fresh for each call, for what a page makes up anew for every request
+    (idempotency keys, nonces). One value per name per call (all steps and retries share it). Backward
+    compatible, so `schema_version` stays "0.4"; Wei Wei's mapper can emit it too.
