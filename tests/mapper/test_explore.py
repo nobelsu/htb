@@ -636,3 +636,19 @@ def test_a_task_list_is_explored_and_mapped(chromium, site, logged_in, tmp_path)
     assert live == dict.fromkeys(
         ["get_me", "get_company", "list_conversations", "get_conversation_messages"], "SUCCESS"
     )
+
+
+@pytest.mark.browser
+def test_a_signed_out_session_stops_before_any_task(chromium, site, tmp_path):
+    """LinkedIn signed the session out mid-run and the explorer kept opening browsers. Signed out (the
+    start page sends us to /login), it stops at once, also when the look-around is reused from disk."""
+    from mapper.explore.explorer import SURVEY_FILE, PlanError
+
+    start = site.url + "/search"
+    domain_dir = tmp_path / "captures" / "127.0.0.1"
+    domain_dir.mkdir(parents=True)
+    (domain_dir / SURVEY_FILE).write_text(json.dumps({"start_url": start, "site": "x", "pages": [start]}))
+    brain = Brain([NOTE_TASK], {}, {})
+    with pytest.raises(PlanError, match="not signed in"):
+        explore(start, state=None, out=tmp_path / "captures", llm=_llm(brain), step_timeout_ms=1500)
+    assert brain.prompts == []  # no task was planned or started

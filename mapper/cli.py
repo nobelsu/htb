@@ -103,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument(
         "--resurvey", action="store_true", help="redo the look-around even if a recent one is saved"
     )
+    ex.add_argument("--batch", type=int, help="explore only the next N tasks not yet recorded (one go)")
+    ex.add_argument("--redo", action="store_true", help="explore tasks again even if already recorded")
+    ex.add_argument(
+        "--pause", type=float, default=0, help="seconds to wait after each task (slower is less bot-like)"
+    )
     ex.add_argument("--parallel", type=int, default=4, help="tasks explored at the same time (default 4)")
     ex.add_argument(
         "--max-browsers", type=int, default=8, help="most browsers open at once, in total (default 8)"

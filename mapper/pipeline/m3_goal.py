@@ -157,11 +157,23 @@ def find_read_goal(bundle: Bundle, values: dict[str, str] | None = None, mark_in
     return Goal(chosen, reason, window, tie, typed, mark)
 
 
+WRITE_GRACE = timedelta(milliseconds=500)  # the mark is taken just after the click that sends
+
+
 def find_write_goal(bundle: Bundle, mark_index: int = 0) -> Goal:
     writes = [e for e in bundle.entries if e.method not in ("GET", "HEAD")]
     if not writes:
         raise GoalNotFound(f"{bundle.run}: no non-GET/HEAD request in the capture")
     mark = _pick_mark(bundle, mark_index)
+    # Explored writes: the request the blocker stopped that carries the made-up text is the send itself
+    # (its timing says little: it starts inside the click, and bot sensors post around it)
+    values = [v for v in bundle.values.values() if v]
+    carrying = [e for e in writes if e.blocked and values and any(entry_mentions(bundle, e, v) for v in values)]
+    if carrying:  # drafts saved while typing come before the send, retries of it after
+        at_mark = [e for e in carrying if mark is None or e.started <= mark + WRITE_GRACE]
+        chosen = at_mark[-1] if at_mark else carrying[0]
+        reason = "the blocked request that carries the typed input (the send the explorer stopped)"
+        return Goal(chosen, reason, carrying, False, None, mark)
     if mark is None:
         return Goal(writes[0], "first non-GET/HEAD request (no goal mark)", writes, len(writes) > 1)
     anchor = _anchor(bundle, None, mark)

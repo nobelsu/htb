@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from urllib.parse import quote, quote_plus, urljoin
+from urllib.parse import urlsplit, quote, quote_plus, urljoin
 
 from mapper.capture.driver import AFTER_MARK_MS, TYPING_PAUSE_MS, settle
 from mapper.domains import hostname, same_site
@@ -53,6 +53,11 @@ class AgentFailed(Exception):
     def __init__(self, message: str, run: AgentRun | None = None) -> None:
         super().__init__(message)
         self.run = run
+
+
+class SignedOut(Exception):
+    """The site sent us to a sign-in page: the session has expired or the site signed it out (often its
+    anti-bot reaction). Every task stops: going on would only look more like a bot."""
 
 
 class EmptyResult(AgentFailed):
@@ -193,6 +198,20 @@ def _describe(act: dict) -> str:
     return f"{act['action']} {target}{extra}".strip() + flag
 
 
+SIGN_IN_PATH = re.compile(r"/(log-?in|sign-?in|auth(wall)?|uas/login|session)(/|$|\?)", re.I)
+
+
+def signed_out(start_url: str, landed_url: str, page) -> bool:
+    """``page`` is a sign-in page (or a "confirm your password" one) instead of the signed-in page asked for."""
+    if urlsplit(landed_url).path == urlsplit(start_url).path and not SIGN_IN_PATH.search(urlsplit(landed_url).path):
+        return False
+    try:
+        has_password = page.locator("input[type=password]").count() > 0
+    except Exception:
+        has_password = False
+    return bool(SIGN_IN_PATH.search(urlsplit(landed_url).path)) or has_password
+
+
 def drive(
     page, tracker, mark, *, planner: Planner, spec: TaskSpec, start_url: str, feedback: list[str]
 ) -> AgentRun:
@@ -201,6 +220,8 @@ def drive(
     history: list[str] = []
     failed: dict[tuple, int] = {}  # identical failing actions, counted
     for _ in range(MAX_STEPS):
+        if signed_out(start_url, page.url, page):
+            raise SignedOut(f"{page.url} is a sign-in page: the session was signed out")
         act = planner.next_action(spec, page.url, accessibility_tree(page), history, feedback)
         if act["action"] == "give_up":
             raise AgentFailed(f"Claude gave up: {act.get('reason', '')}", run)

@@ -34,9 +34,10 @@ from urllib.parse import urljoin, urlsplit
 
 from mapper.bundle import iso_now
 from mapper.capture import driver
+from mapper.capture.record import BLOCKED_FILE
 from mapper.capture.replay import new_marker
 from mapper.domains import hostname, registrable_domain, same_site
-from mapper.explore.agent import AgentFailed, AgentRun, EmptyResult, drive
+from mapper.explore.agent import AgentFailed, AgentRun, EmptyResult, SignedOut, drive, signed_out
 from mapper.explore.planner import Attempt, PlanError, Planner, TaskPlan, TaskSpec
 from mapper.explore.snapshot import as_text, page_snapshot
 from mapper.explore.tasklist import load_task_list, task_list_for
@@ -105,20 +106,6 @@ class ExploreResult:
 def _goto(page, tracker, url: str) -> None:
     page.goto(url, wait_until="load")
     driver.settle(page)
-
-
-SIGN_IN_PATH = re.compile(r"/(log-?in|sign-?in|auth(wall)?|uas/login|session)(/|$|\?)", re.I)
-
-
-def signed_out(start_url: str, landed_url: str, page) -> bool:
-    """The start page (a signed-in page, given with --state) sent us to a sign-in page instead."""
-    if urlsplit(landed_url).path == urlsplit(start_url).path:
-        return False
-    try:
-        has_password = page.locator("input[type=password]").count() > 0
-    except Exception:
-        has_password = False
-    return bool(SIGN_IN_PATH.search(urlsplit(landed_url).path)) or has_password
 
 
 def survey(page, tracker, start_url: str, extra_pages: int = 4) -> tuple[str, list[str]]:
@@ -257,6 +244,8 @@ def run_task(
             continue
         except AgentFailed as e:
             actions, error = (e.run.actions if e.run else []), str(e)
+        except SignedOut:
+            raise  # not this task's fault: every task stops
         except Exception as e:  # the browser, the LLM call or the recording itself failed
             actions, error = [], _first_line(e)
         else:
@@ -275,12 +264,22 @@ def run_task(
                 plan.attempts.append(Attempt(run.actions, None))
                 plan.next_selector = run.next_selector
                 return plan, runs
+        _keep_blocked(task_dir, n)
         failures += 1
         plan.attempts.append(Attempt(actions, error))
         feedback.append(f"try {n}: {error}")
         _say(f"{spec.name}: try {n} failed ({failures} of {max_attempts} allowed): {error}")
     shutil.rmtree(task_dir, ignore_errors=True)  # nothing usable to map
     return plan, []
+
+
+def _keep_blocked(task_dir: Path, n: int) -> None:
+    """A failed try's recordings are deleted, but what its writes had blocked is kept (``blocked.json``
+    per run, under ``<task>/failed-try-<n>/``): proof that nothing reached the site."""
+    for f in task_dir.glob("*/" + BLOCKED_FILE):
+        dest = task_dir.parent / f"{task_dir.name}.failed" / f"try-{n}-{f.parent.name}.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(f, dest)
 
 
 # --- phase 3: the replays ----------------------------------------------------------------------------
@@ -392,6 +391,30 @@ def check_task(task_dir: Path, kind: str) -> str | None:
     return None
 
 
+def _check_signed_in(start_url: str, state: Path | None, headless: bool, timeout_ms: int) -> None:
+    """One page load: the start page must not send us to sign in (an expired or signed-out session)."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=headless)
+        try:
+            context = browser.new_context(storage_state=str(state) if state else None)
+            page = context.new_page()
+            page.set_default_timeout(timeout_ms)
+            page.goto(start_url, wait_until="load")
+            if signed_out(start_url, page.url, page):
+                raise PlanError(
+                    f"not signed in: {start_url} went to {page.url}, a sign-in page. The saved session "
+                    "(--state) has expired or was signed out; record a fresh one and run again."
+                )
+        finally:
+            browser.close()
+
+
+def _recorded(task_dir: Path) -> bool:
+    return (task_dir / "m1" / "meta.json").exists()
+
+
 def _cached_survey(domain_dir: Path, start_url: str) -> tuple[str, list[str]] | None:
     path = domain_dir / SURVEY_FILE
     try:
@@ -419,6 +442,9 @@ def explore(
     parallel: int = 4,
     max_browsers: int = 8,
     resurvey: bool = False,
+    batch: int | None = None,
+    redo: bool = False,
+    pause_s: float = 0,
 ) -> ExploreResult:
     from playwright.sync_api import sync_playwright
 
@@ -434,6 +460,7 @@ def explore(
     if cached:
         site, pages = cached
         _say(f"reusing the look-around of {len(pages)} page(s) from {domain_dir / SURVEY_FILE} (--resurvey redoes it)")
+        _check_signed_in(start_url, state, headless, step_timeout_ms)
     else:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=headless)
@@ -473,11 +500,32 @@ def explore(
         specs = planner.discover(site, max_tasks, wanted)
         _say(f"the AI picked {len(specs)} task(s): {', '.join(s.name for s in specs)}")
 
+    if not redo:  # recorded in an earlier go: kept, not explored again
+        done_before = [s.name for s in specs if _recorded(domain_dir / s.name)]
+        specs = [s for s in specs if s.name not in done_before]
+        if done_before:
+            _say(f"already recorded, skipped (--redo explores them again): {', '.join(done_before)}")
+    if batch:
+        later = specs[batch:]
+        specs = specs[:batch]
+        if later:
+            _say(f"this go: {len(specs)} task(s); {len(later)} left for later goes: {', '.join(s.name for s in later)}")
+    stop = threading.Event()  # signed out: every task stops
+
     def one(spec: TaskSpec) -> TaskOutcome:
+        if stop.is_set():
+            return TaskOutcome(TaskPlan(spec), "skipped", "not started: the site signed the session out")
         try:
             plan, runs = run_task(planner, spec, cap, domain_dir / spec.name, max_attempts)
+        except SignedOut as e:
+            stop.set()
+            _say(f"STOPPING: {spec.name}: {e}. Record a fresh session; wait before the next go.")
+            return TaskOutcome(TaskPlan(spec), "failed", f"signed out: {e}")
         except Exception as e:  # one task's crash must not stop the others
             return TaskOutcome(TaskPlan(spec), "failed", f"explorer error: {_first_line(e)}")
+        finally:
+            if pause_s and not stop.is_set():
+                time.sleep(pause_s)  # slower, more like a person: sites flag bursts of automated visits
         if not runs:
             return TaskOutcome(plan, "failed", plan.attempts[-1].error or "not done")
         problem = check_task(domain_dir / spec.name, spec.kind)
@@ -525,6 +573,9 @@ def main(args: argparse.Namespace) -> int:
             parallel=args.parallel,
             max_browsers=args.max_browsers,
             resurvey=getattr(args, "resurvey", False),
+            batch=getattr(args, "batch", None),
+            redo=getattr(args, "redo", False),
+            pause_s=getattr(args, "pause", 0),
         )
     except PlanError as e:
         print(f"mapper explore: {e}", file=sys.stderr)

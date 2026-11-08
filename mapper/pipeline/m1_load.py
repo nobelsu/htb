@@ -293,6 +293,8 @@ def drop_reason(entry: Entry, domain: str) -> str | None:
         return "no response"
     if entry.resource_type in STATIC_RESOURCE_TYPES:
         return f"static asset ({entry.resource_type})"
+    if entry.blocked:
+        return None  # a write the explorer stopped: no answer by design, so no content type to judge
     kind = entry.response_kind
     if kind == "static" or (kind in ("empty", "other") and STATIC_EXT.search(entry.path)):
         return "static asset"

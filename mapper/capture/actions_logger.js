@@ -25,7 +25,10 @@
   };
   // Ids a framework makes up per render (React useId, Ember) can change between page loads or
   // deploys, so a selector built on one breaks when the script is replayed. Skip them.
-  const GENERATED_ID = /^(:r[0-9a-z]*:|\u00abr[0-9a-z]*\u00bb|_r_[0-9a-z]*_|ember\d+)$|\d{5,}/i;
+  // Ids a framework numbers per page load (React :r1:, Ember ember64, also inside a longer id like
+  // conversation-card-ember64 or ember376-suggestions-menu): they differ on the next load, so a replay
+  // could never find them again.
+  const GENERATED_ID = /^(:r[0-9a-z]*:|\u00abr[0-9a-z]*\u00bb|_r_[0-9a-z]*_)$|(^|[^a-z])ember\d+|\d{5,}/i;
   const stableId = (id) => Boolean(id) && !GENERATED_ID.test(id);
 
   function selectorFor(el) {
