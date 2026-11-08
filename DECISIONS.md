@@ -399,6 +399,19 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
     copy turns its icon into a tick. Extras: a big inverting cursor (mouse only), field underlines thicken on focus
     and the placeholder slides out as you type, bar arrows nudge, the spine word drifts on scroll. All of it is off
     under prefers-reduced-motion.
+- **L13 Page design: Margin in Linen, named spider (asked, after wireframes: https://claude.ai/artifact/L1o9JnahEtjbWSh57nLBEm).**
+  Replaces Spine (L12), which Nobel found too loud. Every page (`runtime/ui.py`): a left art panel where a spider
+  spins orb webs (radials in a scrambled order, frame, spiral; it rests, wanders off and spins the next; old webs
+  stay and fade back, the oldest go; never quite regular), a hairline, and a calm column of small IBM Plex Sans on
+  the right, centred vertically. Linen palette: paper #F5EDE2, ink #2A2421, umber #6B5A35 for actions, brick
+  #9C3F33 for errors; the finished website sign-in turns to the night version. Fields have labels above them;
+  errors show under the field they are about (the browser's bubbles are off); server errors show as a brick line
+  at the top. The product is named "spider" (PRODUCT_NAME). With reduced motion: one finished web, no movement.
+  - **Home page (asked: "animated show what it does").** The three steps under "Your agent, signed in." are gone
+    (Nobel: pointless). Now one headline and an agent's call typed out (`linkedin_search_companies(query=...)`),
+    then its results arriving, cycling through a few sites. The examples are illustrative, not live data.
+  - **No alerts (asked).** The account page's alerts tile and its browser notifications are removed; the waiting
+    sign-ins already show live on the page.
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
 - **Not handled yet:** per-user quotas (L9); the mapper's own browser doesn't use the residential proxy (L10).

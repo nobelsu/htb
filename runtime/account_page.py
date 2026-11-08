@@ -3,7 +3,7 @@ drawn in the Spine design (runtime/ui.py).
 
 GET/POST /oauth/login?request=...   sign in for an app (OAuth): password, API key, or a new account
 GET/POST /account/login             sign in to the account page (same three ways)
-GET      /account                   waiting sign-ins (live), sites, connected apps, connector, key, password, alerts
+GET      /account                   waiting sign-ins (live), sites, connected apps, connector, key, password
 GET      /account/status            the live part, as JSON
 POST     /account/disconnect        sign out of a site
 POST     /account/key               a new API key (the old one stops working)
@@ -104,7 +104,7 @@ def sign_in_page(
         bar = bar_button("Sign in and connect" if for_app else "Sign in")
     elif mode == "signup":
         fields = (
-            field("code", "invite code", "password")
+            field("code", "invite code", code=True)
             + field("name", "username", autocomplete="username")
             + field("email", "email", "email", autocomplete="email")
             + field("password", "password", "password", autocomplete="new-password")
@@ -153,13 +153,7 @@ function render(pending) {
   }));
   const empty = document.getElementById("empty");
   if (empty) empty.hidden = pending.length > 0 || empty.dataset.hasRows === "1";
-  for (const p of pending) {
-    if (!seen.has(p.url) && "Notification" in window && Notification.permission === "granted") {
-      const n = new Notification("Sign in to " + p.domain, {body: "Your agent is waiting."});
-      n.onclick = () => window.open(p.url, "_blank");
-    }
-    seen.add(p.url);
-  }
+  for (const p of pending) seen.add(p.url);
 }
 async function poll() {
   try {
@@ -169,18 +163,6 @@ async function poll() {
   } catch (e) {}
   setTimeout(poll, 2000);
 }
-const alerts = document.getElementById("alerts");
-function showAlerts() {
-  if (!alerts) return;
-  const p = "Notification" in window ? Notification.permission : "denied";
-  alerts.classList.toggle("on", p === "granted");
-  alerts.querySelector("span").textContent = p === "granted" ? "Alerts on" : p === "denied" ? "Alerts blocked" : "Alerts off";
-}
-if (alerts) alerts.addEventListener("click", async () => {
-  if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission();
-  showAlerts();
-});
-showAlerts();
 // Disconnect: strike the name through, fold the row away, then send it.
 for (const f of document.querySelectorAll("form.disconnect")) {
   f.addEventListener("submit", (e) => {
@@ -387,23 +369,20 @@ def routes(
                 f'<button class="tile" type="submit">{icon("key", 28, 1.8)}<span>New key</span></button></form>'
             )
             tiles.append(f'<a class="tile" href="/account/password">{icon("lock", 28, 1.8)}<span>Password</span></a>')
-        tiles.append(f'<button class="tile" type="button" id="alerts">{icon("bell", 28, 1.8)}<span>Alerts</span></button>')
         new_key_rows = (
-            notice("Your new key is below. Your old key no longer works.")
+            notice("Your new key is below. Your old key no longer works.", error=False)
             + copy_row("Claude Code", "claude mcp add", mcp_add_command(base, new_key), "Copy the Claude Code command, which holds your new key")
             if new_key else ""
         )
         body = (
-            notice(message) + new_key_rows
+            f'<h1 class="title">{esc(user)}</h1>' + notice(message, error=False) + new_key_rows
             + f'<div id="waiting" data-seen="{esc(json.dumps([p["url"] for p in pending]))}">{waiting_rows}</div>'
             + map_rows + site_rows + app_rows + empty
             + f'<div class="tiles">{"".join(tiles)}</div>'
         )
         sign_out = (
             '<form method="post" action="/account/logout" style="margin:0">'
-            '<button type="submit" aria-label="Sign out" style="width:44px;height:44px;border:2px solid currentColor;'
-            f'background:transparent;color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center">'
-            f'{icon("signout", 22)}</button></form>'
+            '<button type="submit">Sign out</button></form>'
         )
         return page(
             title=f"Account, {user}", spine="Account", body=body, spine_end=sign_out,

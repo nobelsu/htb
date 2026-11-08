@@ -34,38 +34,25 @@ HOP_BY_HOP = {
 
 CONNECT_SCRIPT = """<script>
 const $ = (id) => document.getElementById(id);
-const wrap = document.querySelector(".wrap"), word = document.querySelector(".word");
+const wrap = document.querySelector(".wrap");
 function setStatus(text) {
   const s = $("status"); s.textContent = text || ""; s.hidden = !text; s.className = text ? "notice bad" : "notice";
 }
 function show(state) {
   for (const id of ["start", "viewer", "done-panel", "expired-panel"]) $(id).hidden = id !== state;
+  wrap.classList.toggle("wide", state === "viewer");  // the live browser gets the room; the spider steps aside
 }
 let finished = false;
 function signedIn() {
   if (finished) return;
   finished = true;
-  const apply = () => {
-    $("frame").src = "about:blank"; show("done-panel"); setStatus("");
-    wrap.classList.add("inv"); word.textContent = "Done"; word.style.fontSize = "min(200px, calc((100vh - 150px) / 2.4))";
-    document.title = "Signed in to __DOMAIN__";
-  };
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { apply(); return; }
-  // Done wipe: black sweeps across, then the inverted page shows through and its lines rise in.
-  const w = document.createElement("div"); w.className = "wipe"; document.body.append(w);
-  w.animate([{transform: "scaleX(0)"}, {transform: "scaleX(1)"}],
-    {duration: 520, easing: "cubic-bezier(.7,0,.2,1)", fill: "forwards"}).onfinish = () => {
-    apply();
-    let i = 0;
-    for (const el of document.querySelectorAll("#done-panel .center > *")) {
-      el.style.setProperty("--i", i++); el.classList.add("reveal");
-    }
-    w.animate([{opacity: 1}, {opacity: 0}], {duration: 300, fill: "forwards"}).onfinish = () => w.remove();
-  };
+  // Done: the page turns to night, and the done panel rises in.
+  $("frame").src = "about:blank"; show("done-panel"); setStatus("");
+  wrap.classList.add("inv");
+  document.title = "Signed in to __DOMAIN__";
 }
 function expired() {
   $("frame").src = "about:blank"; show("expired-panel"); setStatus("");
-  word.textContent = "Expired"; word.style.fontSize = "min(180px, calc((100vh - 150px) / 4.2))";
 }
 $("browser").addEventListener("click", async () => {
   $("browser").disabled = true; setStatus("");
@@ -103,18 +90,18 @@ poll();
 
 
 def render_page(conn: Connection, width: int = 1280, height: int = 800) -> Response:
-    """The website sign-in page, in the Spine design: start, live browser, done (inverted), expired."""
+    """The website sign-in page, in the Margin design: start, live browser (wide), done (night), expired."""
     domain = esc(conn.domain)
     body = (
         '<p id="status" class="notice" role="alert" hidden></p>'
         '<section id="start" class="state">'
-        f'<h1 class="headline" style="padding-top:88px">Sign in to {domain}</h1>'
+        f'<h1 class="title">Sign in to {domain}</h1>'
         f'<div class="center">{icon("lock", 120, 1.2, label="Private and encrypted")}</div>'
         f'<button id="browser" class="bar" type="button">Open private browser{icon("arrow", 44)}</button>'
         "</section>"
         '<section id="viewer" class="state" hidden>'
         f'<iframe id="frame" title="Private browser for signing in to {domain}" '
-        f'style="width:100%;aspect-ratio:{width}/{height};border:0;border-bottom:3px solid #000;background:#000;display:block" '
+        f'style="width:100%;aspect-ratio:{width}/{height};border:1px solid var(--line);background:#000;display:block" '
         'allow="autoplay; fullscreen; clipboard-read; clipboard-write"></iframe>'
         f'<button id="done" class="bar" type="button">I have signed in{icon("arrow", 44)}</button>'
         "</section>"
