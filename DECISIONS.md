@@ -529,3 +529,9 @@ markers and infers the card deterministically, and the LLM only names things. We
     a request redirects to the same place (LinkedIn's 307); (4) the sign-in check doesn't reject checks
     that end on the start page when no separate login page is known. The selector LinkedIn gets uses its
     generated class names, which change with its deploys: heal re-maps it when that happens.
+  - Decision 1 widened (asked, 2026-11-08: "it should be able to remap it if its not complete mapping"): a
+    site with a card can gain actions. request_map with an action it lacks maps that action; with no action
+    it explores again for what the card doesn't have. What's there is never re-mapped (an action it has
+    answers "exists", a broken one starts the heal). The mapper gets the card (`MapRequest.existing`) and
+    adds to it, keeping its sign-in setup; the runtime checks only the new actions' examples and saves a new
+    version, refusing if the card changed while the job ran. LinkedIn gained search_people this way.
