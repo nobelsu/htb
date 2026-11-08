@@ -78,6 +78,11 @@ page, input values); each is recorded, captured and mapped into one card, and ke
 round proposes follow-ups that take a value from what the kept actions returned (an item's page by an id from
 the search), with the values copied from those results. At most six actions; reads only.
 
+It's a crawl: the kept actions' results that link to a new kind of page (a search's results link to profiles,
+a profile to its posts) have one such page opened, and Claude proposes what can be read there, up to three
+links deep and twelve new actions. Results that carry ids rather than links get a follow-up round that takes
+values copied from them.
+
 Checked in code, whatever Claude says: names are snake_case and new, start pages are on the site, inputs are at
 most four short strings, and a task worded as a change (follow, buy, add to cart...) is dropped before it runs.
 An action that sends exactly the requests of one already kept is dropped as a duplicate. A task that wants a

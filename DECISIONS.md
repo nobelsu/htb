@@ -535,3 +535,10 @@ markers and infers the card deterministically, and the LLM only names things. We
     answers "exists", a broken one starts the heal). The mapper gets the card (`MapRequest.existing`) and
     adds to it, keeping its sign-in setup; the runtime checks only the new actions' examples and saves a new
     version, refusing if the card changed while the job ran. LinkedIn gained search_people this way.
+  - Explore is a crawl (asked, 2026-11-08: "deeper and deeper"): from the start page, every kept action's
+    results that link to a new kind of page (by path shape: /in/alice/ and /in/bob/ are one kind) have one
+    such page opened, and Claude proposes what can be read there (details, tabs: posts, comments,
+    reactions...). Up to 3 links deep and 12 new actions per explore. Results that carry ids instead of links
+    (JSON APIs) get the earlier follow-up round from their values. Open: a deep crawl of a site behind a
+    sign-in is a lot of traffic on the requester's account, and actions on people's pages put a real
+    person's id in the shared card's examples (decision 2 says examples hold no personal data; not enforced).

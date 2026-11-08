@@ -83,3 +83,29 @@ def test_an_action_that_sends_the_same_requests_is_a_duplicate() -> None:
     }
     assert _same_requests(card, "list_by_author") == "search_books"
     assert _same_requests(card, "get_book") is None
+
+
+def test_pages_of_one_kind_are_explored_once() -> None:
+    from flowmap.explore import page_kind
+
+    assert page_kind("https://www.linkedin.com/in/alice/") == page_kind("https://www.linkedin.com/in/bob-1/")
+    assert page_kind("https://www.linkedin.com/in/alice/recent-activity/all/") != page_kind(
+        "https://www.linkedin.com/in/alice/"
+    )
+    assert page_kind("https://www.linkedin.com/company/x/") != page_kind("https://www.linkedin.com/in/x/")
+
+
+def test_results_lead_to_one_page_of_each_kind_on_the_site() -> None:
+    from flowmap.explore import links
+
+    data = [
+        {"name": "Alice", "profile_url": "https://www.linkedin.com/in/alice/"},
+        {"name": "Bob", "profile_url": "/in/bob/"},  # same kind: not again
+        {"name": "Co", "href": "/company/co/#about"},
+        {"name": "Elsewhere", "href": "https://evil.example/in/x/"},
+        {"name": "No link", "href": None},
+    ]
+    assert links(data, "https://www.linkedin.com", "linkedin.com") == [
+        "https://www.linkedin.com/in/alice/",
+        "https://www.linkedin.com/company/co/",
+    ]

@@ -254,7 +254,7 @@ async def test_explore_maps_what_passes_and_follows_up(bookshop: str, tmp_path: 
         assert state_site.carts == {}  # the write was held back every time: the site never got it
         assert explored["search_books"]["kept"] and explored["get_book"]["kept"]
         assert not explored["get_bestsellers"]["kept"] and "gave up" in explored["get_bestsellers"]["reason"]
-        assert explored["get_book"]["round"] == 2 and not client.script
+        assert explored["get_book"]["depth"] == 1 and not client.script
 
         stored = registry.get("bookshop.test")
         assert stored is not None
@@ -267,6 +267,75 @@ async def test_explore_maps_what_passes_and_follows_up(bookshop: str, tmp_path: 
         assert env.status == ResultCode.SUCCESS and env.data, env
         env = await executor.run(stored, "search_books", {"query": "garden"}, user="bob")
         assert env.status == ResultCode.SUCCESS and env.data
+    finally:
+        registry.close()
+        state.close()
+
+
+@pytest.mark.browser
+async def test_explore_crawls_to_the_pages_results_link_to(bookshop: str, tmp_path: Path) -> None:
+    """The author search's results link to book pages: the crawl opens one, Claude proposes what can be read
+    there, and that's mapped one level down."""
+    pytest.importorskip("playwright.async_api")
+    import re
+
+    from tests.flowmap.test_agent import last_page
+
+    def start(messages: list[dict[str, Any]]) -> dict[str, Any]:
+        assert 'textbox "Search by author"' in last_page(messages)
+        task = {
+            "action": "search_by_author",
+            "kind": "read",
+            "task": 'Search the books by the author "Author D"',
+            "start_url": bookshop + "/authors",
+            "inputs": [{"name": "author", "value": "Author D"}],
+        }
+        return {"name": "propose_tasks", "input": {"tasks": [task]}}
+
+    def book_page(messages: list[dict[str, Any]]) -> dict[str, Any]:
+        text = last_page(messages)
+        assert "results of search_by_author link to" in text
+        url = re.search(r"This page: (\S+/book/(b\d+))", text)
+        assert url is not None, text[:300]
+        task = {
+            "action": "get_book",
+            "kind": "read",
+            "task": f"Read the book {url.group(2)}",
+            "start_url": url.group(1),
+            "inputs": [{"name": "book_id", "value": url.group(2)}],
+        }
+        return {"name": "propose_tasks", "input": {"tasks": [task]}}
+
+    client = FakeClient(
+        [
+            start,
+            {"name": "fill", "input": {"element": role("textbox", "Search by author"), "text": "Author D"}},
+            {"name": "press", "input": {"key": "Enter"}},
+            done_with_headings(3),
+            book_page,  # depth 1: the page search_by_author's results link to
+            done_with_headings(1),
+            {"name": "propose_tasks", "input": {"tasks": []}},  # get_book's results: nothing follows
+        ]
+    )
+    executor = Executor(InMemorySessionStore(), Confirmer("s"))
+    registry, state = Registry(tmp_path / "rt.db"), StateStore(tmp_path / "rt.db")
+    mapper = BookshopMapper(
+        executor, tmp_path / "flows", channel="chromium", pause_s=0, client=client, use_llm=False
+    )
+    maps = MapManager(registry, state, executor, mapper, config=MapConfig(allow_local=True))
+    try:
+        job = await maps.request("alice", bookshop + "/authors")
+        await maps.drain()
+        out = await maps.status(job["job_id"], "alice")
+        assert out is not None and out["status"] == "succeeded", out
+        explored = {e["action"]: e for e in out["result"]["report"]["explored"]}
+        assert explored["search_by_author"]["depth"] == 0 and explored["get_book"]["depth"] == 1
+        assert all(e["kept"] for e in explored.values()) and not client.script
+        stored = registry.get("bookshop.test")
+        assert stored is not None and {a.name for a in stored.card.actions} == {
+            "search_by_author",
+            "get_book",
+        }
     finally:
         registry.close()
         state.close()

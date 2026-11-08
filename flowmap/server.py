@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import tempfile
 import time
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,7 @@ from flowmap.agent import AgentError, record_with_agent, settle, snapshot
 from flowmap.assemble import AssembleError, map_action
 from flowmap.browser import BrowserSetup, SignInMissing, new_page
 from flowmap.capture import capture_flow
-from flowmap.explore import MAX_ACTIONS, Task, propose_tasks, samples
+from flowmap.explore import MAX_ACTIONS, MAX_DEPTH, Task, links, page_kind, propose_tasks, samples
 from flowmap.flows import save_flow
 from flowmap.infer import InferError, registrable
 from flowmap.minimise import executor_replayer
@@ -237,23 +238,41 @@ class FlowMapper:
     async def _explore(
         self, request: MapRequest, setup: BrowserSetup, step: Callable[[str], None], lines: list[str]
     ) -> MapOutcome:
-        """Claude proposes read tasks; each is mapped into one card and kept only if it passes. A second round
-        proposes follow-ups that take values from what the first actions returned. A task that wants a
-        sign-in stops the whole job (it explores again once the requester has signed in)."""
+        """A crawl over kinds of page. Claude looks at the start page and proposes read tasks; each is mapped
+        into one card and kept only if it passes. The kept actions' results link to new kinds of pages (a
+        search links to profiles; a profile to posts; a post to its comments): one page of each new kind is
+        looked at and its reads proposed and mapped the same way, up to ``MAX_DEPTH`` links from the start
+        and ``MAX_ACTIONS`` new actions. A task that wants a sign-in stops the whole job (it explores again
+        once the requester has signed in). Adding to a card: what it has is never re-mapped."""
         t0 = time.monotonic()
-        step(f"looking at {request.url}")
-        page = await self._look(request.url, setup)
-        card: dict[str, Any] | None = request.existing  # adding to a card: what it has is never re-mapped
+        card: dict[str, Any] | None = request.existing
         had = {a["name"] for a in card["actions"]} if card is not None else set()
-        tasks = await self._propose(request, page=page, lines=lines, mapped=None, taken=had or None)
         tried: list[dict[str, Any]] = []
-        for round_no in (1, 2):
+        frontier: deque[tuple[str, int, str | None]] = deque([(request.url, 0, None)])
+        kinds: set[str] = set()
+        added = 0
+        no_links: list[str] = []  # kept actions whose results carry ids, not links (a JSON API's)
+        while frontier and added < MAX_ACTIONS:
+            url, depth, via = frontier.popleft()
+            kind = page_kind(url)
+            if kind in kinds:
+                continue
+            kinds.add(kind)
+            step(f"looking at {url}" + (f" (from {via})" if via else ""))
+            try:
+                page = await self._look(url, setup)
+            except Exception as e:
+                if via is None:
+                    raise MapError(f"couldn't open {url}: {type(e).__name__}", lines) from e
+                continue
+            taken = had | {a["name"] for a in (card or {}).get("actions", [])} | {t["action"] for t in tried}
+            tasks = await self._propose(request, page=page, lines=lines, start=url, via=via, taken=taken)
             if tasks:
-                step(f"round {round_no}: " + ", ".join(t.action for t in tasks))
+                step(f"depth {depth}: " + ", ".join(t.action for t in tasks))
             for task in tasks:
-                if card is not None and len(card["actions"]) >= MAX_ACTIONS:
+                if added >= MAX_ACTIONS:
                     break
-                entry: dict[str, Any] = {"action": task.action, "task": task.task, "round": round_no}
+                entry: dict[str, Any] = {"action": task.action, "task": task.task, "depth": depth}
                 before = card
                 try:
                     card, mapped_report = await self._map_task(task, request, setup, card, step, lines)
@@ -269,30 +288,86 @@ class FlowMapper:
                     card = before
                     entry.update(kept=False, reason=f"it sends the same requests as {same}")
                     step(f"dropped {task.action}: the same requests as {same}")
+                    tried.append(entry)
+                    continue
+                added += 1
+                entry.update(kept=True, confidence=mapped_report["confidence"], tier=mapped_report["tier"])
+                tried.append(entry)
+                if depth < MAX_DEPTH and not task.write:
+                    found = await self._links(card, task.action, request)
+                    if not found:
+                        no_links.append(task.action)
+                    for link in found:
+                        if page_kind(link) not in kinds:
+                            frontier.append((link, depth + 1, task.action))
+        if card is not None and no_links and added < MAX_ACTIONS:
+            # Results without links: follow-ups that take a value copied from what they returned instead.
+            mapped = await self._samples(card, request.user, set(no_links))
+            taken = had | {a["name"] for a in card["actions"]} | {t["action"] for t in tried}
+            tasks = await self._propose(
+                request, page="", lines=lines, start=request.url, mapped=mapped, taken=taken
+            )
+            for task in tasks if mapped else []:
+                if added >= MAX_ACTIONS:
+                    break
+                entry = {"action": task.action, "task": task.task, "depth": 1}
+                before = card
+                try:
+                    card, mapped_report = await self._map_task(task, request, setup, card, step, lines)
+                except MapError as e:
+                    entry.update(kept=False, reason=str(e))
+                    tried.append(entry)
+                    continue
+                same = _same_requests(card, task.action)
+                if same:
+                    card = before
+                    entry.update(kept=False, reason=f"it sends the same requests as {same}")
                 else:
+                    added += 1
                     entry.update(
                         kept=True, confidence=mapped_report["confidence"], tier=mapped_report["tier"]
                     )
                 tried.append(entry)
-            if round_no == 2 or card is None or len(card["actions"]) >= MAX_ACTIONS:
-                break
-            mapped = await self._samples(card, request.user)
-            if not mapped:
-                break
-            taken = {a["name"] for a in card["actions"]} | {t["action"] for t in tried}
-            tasks = await self._propose(request, page="", lines=lines, mapped=mapped, taken=taken)
         if card is None or {a["name"] for a in card["actions"]} == had:
             reasons = "; ".join(f"{t['action']}: {t.get('reason')}" for t in tried) or "nothing new proposed"
             raise MapError(f"none of the explored actions could be mapped ({reasons})", lines)
         report: dict[str, Any] = {
             "explored": tried,
+            "pages": sorted(kinds),
             "actions": [a["name"] for a in card["actions"]],
             "ms": int((time.monotonic() - t0) * 1000),
         }
         if request.sign_in and not _has_sign_in(request.existing):
             report["sign_in"] = await self._add_sign_in(card, request, step, lines)
-        step(f"explored {request.domain}: kept {', '.join(report['actions'])}")
+        step(f"explored {request.domain}: kept {', '.join(a for a in report['actions'] if a not in had)}")
         return MapOutcome(card=card, report=report, log=lines)
+
+    async def _samples(self, card: dict[str, Any], user: str, only: set[str]) -> list[dict[str, Any]]:
+        """Some of what the ``only`` actions return (their first example run through the executor), for
+        follow-ups that take a value from it."""
+        report = validate_card(card)
+        if not report.ok or report.card is None:
+            return []
+        out = []
+        for action in card["actions"]:
+            if action["name"] not in only or action["kind"] != "read" or not action.get("examples"):
+                continue
+            params = dict(action["examples"][0]["params"])
+            env = await self.executor.run_internal(report.card, 0, action["name"], params, user)
+            if env.data:
+                out.append(samples(action, list(env.data)))
+        return out
+
+    async def _links(self, card: dict[str, Any], name: str, request: MapRequest) -> list[str]:
+        """The pages on this site that ``name``'s results link to, one per kind (its first example's run)."""
+        report = validate_card(card)
+        action = next((a for a in card["actions"] if a["name"] == name), None)
+        if not report.ok or report.card is None or action is None or not action.get("examples"):
+            return []
+        params = dict(action["examples"][0]["params"])
+        env = await self.executor.run_internal(report.card, 0, name, params, request.user)
+        site = registrable(urlsplit(card["base_url"]).hostname or "")
+        return links(list(env.data or []), card["base_url"], site)
 
     async def _look(self, url: str, setup: BrowserSetup) -> str:
         """The start page as an accessibility tree, for the first round of proposals."""
@@ -314,38 +389,26 @@ class FlowMapper:
         *,
         page: str,
         lines: list[str],
-        mapped: list[dict[str, Any]] | None = None,
+        start: str,
+        via: str | None = None,
         taken: set[str] | None = None,
+        mapped: list[dict[str, Any]] | None = None,
     ) -> list[Task]:
         try:
             return await propose_tasks(
                 self.client,
                 site=request.domain,
-                start_url=request.url,
+                start_url=start,
                 page=page,
                 goal=request.task,
-                mapped=mapped,
                 taken=taken,
+                via=via,
+                mapped=mapped,
             )
         except AgentError as e:
-            if mapped:
-                return []  # no follow-ups: keep what the first round mapped
+            if via or mapped:
+                return []  # nothing for this page or these results: the explore goes on
             raise MapError(str(e), lines) from e
-
-    async def _samples(self, card: dict[str, Any], user: str) -> list[dict[str, Any]]:
-        """Each read action's first example run through the executor, for the follow-up round."""
-        report = validate_card(card)
-        if not report.ok or report.card is None:
-            return []
-        out = []
-        for action in card["actions"]:
-            if action["kind"] != "read" or not action.get("examples"):
-                continue
-            params = dict(action["examples"][0]["params"])
-            env = await self.executor.run_internal(report.card, 0, action["name"], params, user)
-            if env.data:
-                out.append(samples(action, list(env.data)))
-        return out
 
 
 def _same_requests(card: dict[str, Any], name: str) -> str | None:

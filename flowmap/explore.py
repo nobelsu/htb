@@ -23,7 +23,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from flowmap.agent import WRITES, AgentError, _get, _has_credentials, _tool
 from flowmap.infer import registrable
@@ -31,8 +31,10 @@ from flowmap.label import DEFAULT_MODEL, FALLBACK_BETA, FALLBACK_MODELS
 
 log = logging.getLogger("flowmap.explore")
 
-MAX_PER_ROUND = 4
-MAX_ACTIONS = 6
+MAX_PER_ROUND = 4  # per page looked at
+MAX_ACTIONS = 12  # new actions per explore
+MAX_DEPTH = 3  # pages reached by following results' links, from the start page (0)
+LINKS_PER_KIND = 1  # one example page of each kind is looked at
 MAX_INPUTS = 4
 MAX_WRITES = 2  # per round
 NEVER = re.compile(
@@ -122,8 +124,10 @@ async def propose_tasks(
     goal: str = "",
     mapped: list[dict[str, Any]] | None = None,
     taken: set[str] | None = None,
+    via: str | None = None,
 ) -> list[Task]:
-    """Ask Claude for tasks. ``mapped``: the actions kept so far with sample results (the follow-up round)."""
+    """Ask Claude for tasks. ``mapped``: the actions kept so far with sample results (the follow-up round).
+    ``via``: the page is one a mapped action's results link to (the crawl): propose what can be read on it."""
     if client is None:
         if not _has_credentials():
             raise ExploreError("exploring needs ANTHROPIC_API_KEY")
@@ -131,7 +135,15 @@ async def propose_tasks(
 
         client = anthropic.AsyncAnthropic()
     model = os.environ.get("ANTHROPIC_MODEL") or DEFAULT_MODEL
-    if mapped:
+    if via:
+        ask = (
+            f"This page is one that the results of {via} link to. The page now:\n{page}\n\n"
+            "Propose the reads worth mapping on this kind of page: its details, and what it leads to (tabs "
+            "and lists such as posts, comments, activity, reactions, members, reviews), each starting on "
+            "this page. A value from this page's address (an id, a name) is an input; copy it exactly. "
+            "Propose none (an empty list) if there's nothing new here."
+        )
+    elif mapped:
         ask = (
             "These actions are mapped, with some of the items each returned:\n"
             f"{json.dumps(mapped, indent=1)}\n\n"
@@ -146,7 +158,7 @@ async def propose_tasks(
             "round, by the ids the first actions return."
         )
     want = f"\nWhat the person wants to do here: {goal}" if goal else ""
-    content = f"Site: {site}\nStart page: {start_url}{want}\n\n{ask}"
+    content = f"Site: {site}\n{'This page' if via else 'Start page'}: {start_url}{want}\n\n{ask}"
     kwargs: dict[str, Any] = {
         "model": model,
         "max_tokens": 16_000,
@@ -226,3 +238,26 @@ def samples(action: dict[str, Any], data: list[Any]) -> dict[str, Any]:
         "inputs": sorted(action.get("params", {})),
         "returned": text,
     }
+
+
+def page_kind(url: str) -> str:
+    """Which kind of page an address is, so each kind is explored once: the first path segment and how deep
+    the path goes (/in/alice/ and /in/bob/ are one kind; /in/alice/recent-activity/all/ another)."""
+    segments = [s for s in urlsplit(url).path.split("/") if s]
+    return f"{segments[0] if segments else ''}/{len(segments)}"
+
+
+def links(data: list[Any], base_url: str, site: str) -> list[str]:
+    """The addresses on this site that results link to (``href``/``*url`` fields), absolute, one per kind."""
+    found: dict[str, str] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        for key, value in item.items():
+            if not isinstance(value, str) or not (key == "href" or key.endswith(("url", "link"))):
+                continue
+            url = urljoin(base_url + "/", value)
+            parts = urlsplit(url)
+            if parts.scheme in ("http", "https") and registrable(parts.hostname or "") == site:
+                found.setdefault(page_kind(url), url.split("#")[0])
+    return list(found.values())
