@@ -35,10 +35,10 @@ from urllib.parse import urlsplit
 from flowmap.agent import AgentError, record_with_agent, settle, snapshot
 from flowmap.assemble import AssembleError, map_action
 from flowmap.browser import BrowserSetup, SignInMissing, new_page
-from flowmap.capture import capture_flow
+from flowmap.capture import capture_flow, visible_without
 from flowmap.explore import MAX_ACTIONS, MAX_DEPTH, Task, links, page_kind, propose_tasks, samples
 from flowmap.flows import flow_path, load_flow, save_flow
-from flowmap.infer import InferError, registrable
+from flowmap.infer import InferError, candidates, registrable, request_sig
 from flowmap.minimise import executor_replayer
 from flowmap.privacy import PrivacyReport, public_examples
 from flowmap.signin import SignInCheckError, infer_sign_in, placeholder_provider
@@ -145,6 +145,7 @@ class FlowMapper:
             failed = [r.error for r in runs if r.error]
             if failed and len(failed) == len(runs):
                 raise MapError(f"every replay of the recording failed: {failed[0]}", lines)
+            prefer = await self._confirm_source(flow, runs, setup, step) if not task.write else None
             step(f"working out {task.action} from the requests")
             try:
                 mapped = await map_action(
@@ -156,6 +157,7 @@ class FlowMapper:
                     use_llm=self.use_llm,
                     pause_s=self.pause_s,
                     providers=_providers(request) if existing is None else None,
+                    prefer=prefer,
                 )
             except (InferError, AssembleError) as e:
                 raise MapError(f"{e} ({'; '.join(e.reasons[:3])})" if e.reasons else str(e), lines) from e
@@ -167,6 +169,41 @@ class FlowMapper:
         report["turns"] = recording.turns
         step(f"mapped {task.action} (confidence {report['confidence']})")
         return mapped.final.card, report
+
+    async def _confirm_source(
+        self, flow: Any, runs: list[Any], setup: BrowserSetup, step: Callable[[str], None]
+    ) -> tuple[str, str, str] | None:
+        """The blocking test: replay the task with each likely request blocked; the one whose absence makes
+        the results disappear is where they come from (a tracking ping or a live update isn't). Only when
+        there's a choice to make, and only for reads that showed results. A document (the page itself) is
+        tested last: blocking it empties any page."""
+        if flow.results_selector is None or not any(r.kind == "real" and r.visible for r in runs):
+            return None
+        tops = candidates(flow, runs)
+        if len(tops) < 2:
+            return None
+        values = [v for v in flow.example_values(0).values() if v]
+        documents = {
+            request_sig(ex.method, ex.url, values)
+            for r in runs
+            for ex in r.exchanges
+            if ex.resource_type == "document"
+        }
+        ordered = [t for t in tops if t not in documents] + [t for t in tops if t in documents]
+        for sig in ordered:
+            if sig in documents:
+                step(f"none of the others carries the results: it's the page itself ({sig[2]})")
+                return sig
+            step(f"blocking {sig[0]} {sig[2]} to see whether the results still appear")
+            try:
+                shown = await visible_without(flow, _matching(sig, values), setup=setup)
+            except Exception as e:
+                log.info("blocking test failed: %s", type(e).__name__)
+                return None
+            if not shown:
+                step(f"confirmed: the results come from {sig[0]} {sig[2]}")
+                return sig
+        return None
 
     async def _record(
         self,
@@ -443,6 +480,15 @@ class FlowMapper:
             if via or mapped:
                 return []  # nothing for this page or these results: the explore goes on
             raise MapError(str(e), lines) from e
+
+
+def _matching(sig: tuple[str, str, str], values: list[str]) -> Callable[[str, str], bool]:
+    """Does a live request (method, url) belong to the candidate ``sig``?"""
+
+    def match(method: str, url: str) -> bool:
+        return request_sig(method, url, values) == sig
+
+    return match
 
 
 def _same_requests(card: dict[str, Any], name: str) -> str | None:

@@ -311,3 +311,33 @@ async def test_results_with_badges_after_their_titles_still_get_a_selector() -> 
         finally:
             await browser.close()
     assert links == ["/in/ann", "/in/bo", "/in/cy"], selector  # the result links, not "Home"
+
+
+@pytest.mark.browser
+async def test_results_can_be_pointed_at_instead_of_copied() -> None:
+    """The model points at each result as the tree shows it (role and name, badges and all): the selector
+    comes from those elements, so their text never has to be retyped."""
+    pytest.importorskip("playwright.async_api")
+    from playwright.async_api import async_playwright
+
+    from flowmap.agent import elements_selector
+
+    html = """<ul class="results">
+      <li class=row><a class=card href="/in/ann"><span>Ann Lee</span> <span>Premium 3rd+</span></a></li>
+      <li class=row><a class=card href="/in/bo"><span>Bo Chan</span> <span>Verified 2nd</span></a></li>
+      <li class=row><a class=card href="/in/cy"><strong>Cy Diaz</strong> <span>3rd+</span></a></li>
+    </ul><a href="/feed">Home</a>"""
+    async with async_playwright() as p:
+        browser, page = await _page(p)
+        try:
+            await page.set_content(html)
+            pointed = [
+                role("link", "Ann Lee Premium 3rd+"),
+                role("link", "Bo Chan Verified 2nd"),
+                role("link", "Cy Diaz 3rd+"),
+            ]
+            selector = await elements_selector(page, pointed)
+            links = await page.eval_on_selector_all(selector, "els => els.map(e => e.getAttribute('href'))")
+        finally:
+            await browser.close()
+    assert links == ["/in/ann", "/in/bo", "/in/cy"], selector

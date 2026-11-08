@@ -273,7 +273,7 @@ class _Ctx:
         self.penalty += weight
 
 
-def infer(flow: Flow, runs: list[Run]) -> Inferred:
+def infer(flow: Flow, runs: list[Run], prefer: tuple[str, str, str] | None = None) -> Inferred:
     runs = [r for r in runs if r.error is None] or runs
     failed = [r.run_id for r in runs if r.error]
     if failed:
@@ -289,7 +289,7 @@ def infer(flow: Flow, runs: list[Run]) -> Inferred:
     ctx = _Ctx(flow, runs, hosts | {flow.domain})
 
     groups = _groups(ctx)
-    main_sig, main = _pick(ctx, groups)
+    main_sig, main = _pick(ctx, groups, prefer)
     method = main_sig[0]
     kind = (
         "write" if (method not in ("GET", "HEAD") and flow.kind != "read") or flow.kind == "write" else "read"
@@ -414,8 +414,58 @@ def _submit_step(flow: Flow) -> int:
 
 
 def _pick(
-    ctx: _Ctx, groups: dict[tuple[str, str, str], dict[str, Exchange]]
+    ctx: _Ctx,
+    groups: dict[tuple[str, str, str], dict[str, Exchange]],
+    prefer: tuple[str, str, str] | None = None,
 ) -> tuple[Any, dict[str, Exchange]]:
+    scored = _ranked(ctx, groups)
+    if prefer is not None:  # confirmed by blocking it (flowmap/server.py): the others are noise
+        chosen = [t for t in scored if t[1] == prefer]
+        if chosen:
+            ctx.reasons.append("confirmed by blocking it: without it the results don't appear")
+            scored = chosen + [t for t in scored if t[1] != prefer and t[0] != chosen[0][0]]
+    best = scored[0]
+    if len(scored) > 1 and scored[1][0] == best[0]:
+        raise InferError(
+            "two requests fit equally well",
+            [f"{s[1][0]} {s[1][1]}{s[1][2]}" for s in scored[:2]],
+        )
+    if best[0][3] == 0:
+        ctx.doubt("the chosen request was sent before the inputs were entered", 0.2)
+    missing = [r.run_id for r in ctx.runs if r.run_id not in best[2]]
+    if any(r.kind == "real" for r in ctx.runs if r.run_id in missing):
+        raise InferError("the action request is missing from some real runs", missing)
+    if missing:
+        ctx.doubt(f"the action request wasn't sent in marker runs {', '.join(missing)}", 0.1)
+    return best[1], best[2]
+
+
+def candidates(flow: Flow, runs: list[Run], limit: int = 3) -> list[tuple[str, str, str]]:
+    """The likeliest requests behind the action, best first (method, host, path shape), to block-test."""
+    runs = [r for r in runs if r.error is None] or runs
+    hosts = {
+        urlsplit(render(s.url, flow.example_values(), url=True)).hostname or ""
+        for s in flow.steps
+        if isinstance(s, Goto)
+    }
+    ctx = _Ctx(flow, runs, hosts | {flow.domain})
+    try:
+        return [t[1] for t in _ranked(ctx, _groups(ctx))[:limit]]
+    except InferError:
+        return []
+
+
+def request_sig(method: str, url: str, values: Iterable[str]) -> tuple[str, str, str]:
+    """A live request's (method, host, path shape), as candidates() names them."""
+    parts = urlsplit(url)
+    vals = [v for v in values if v]
+    segs = ["*" if any(v in unquote(s) for v in vals) else s for s in parts.path.split("/")]
+    return method, parts.hostname or "", "/".join(segs)
+
+
+def _ranked(
+    ctx: _Ctx, groups: dict[tuple[str, str, str], dict[str, Exchange]]
+) -> list[tuple[Any, tuple[str, str, str], dict[str, Exchange]]]:
     flow = ctx.flow
     submit = _submit_step(flow)
     submit_is_goto = isinstance(flow.steps[submit], Goto)
@@ -477,20 +527,7 @@ def _pick(
             ["is the action's request sent from another site, or does the page render it on the server?"],
         )
     scored.sort(key=lambda t: t[0], reverse=True)
-    best = scored[0]
-    if len(scored) > 1 and scored[1][0] == best[0]:
-        raise InferError(
-            "two requests fit equally well",
-            [f"{s[1][0]} {s[1][1]}{s[1][2]}" for s in scored[:2]],
-        )
-    if best[0][3] == 0:
-        ctx.doubt("the chosen request was sent before the inputs were entered", 0.2)
-    missing = [r.run_id for r in ctx.runs if r.run_id not in best[2]]
-    if any(r.kind == "real" for r in ctx.runs if r.run_id in missing):
-        raise InferError("the action request is missing from some real runs", missing)
-    if missing:
-        ctx.doubt(f"the action request wasn't sent in marker runs {', '.join(missing)}", 0.1)
-    return best[1], best[2]
+    return scored
 
 
 # ---------- output ----------

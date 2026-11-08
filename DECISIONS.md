@@ -555,3 +555,10 @@ markers and infers the card deterministically, and the LLM only names things. We
     one that belongs to the signed-in person becomes a required input with a public example (kept only if it
     works), and personal values quoted in descriptions are replaced too. Not built: a per-site "who am I"
     action, so "my profile" needs the agent to know the user's id.
+  - Inference by evidence, not just resemblance (asked, 2026-11-08: "yeah let's do these"): (1) the recorder
+    points at the results (result_elements: each result's link by role and name, as the tree shows it) and
+    the selector comes from those elements, so badges and formatting never have to be retyped; copying text
+    stays as a fallback. (2) The blocking test: when inference has two or more candidates, the task is
+    replayed with each of the top three blocked in turn; the one whose absence empties the results is the
+    source (flowmap/server.py `_confirm_source`, capture `visible_without`). The page itself is tested last,
+    since blocking it empties any page. Writes still use the held-back request.

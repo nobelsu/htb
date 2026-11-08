@@ -212,9 +212,10 @@ async def map_action(
     pause_s: float = 1.0,
     note: str | None = None,
     providers: list[dict[str, Any]] | None = None,
+    prefer: tuple[str, str, str] | None = None,
 ) -> Mapped:
     """Infer → label → merge → minimise → validate, replay and save one action."""
-    inferred = infer(flow, runs)
+    inferred = infer(flow, runs, prefer)
     visible = next((r.visible for r in runs if r.kind == "real" and r.visible), [])
     labels = await label(inferred, flow, visible=visible, client=llm_client, use_llm=use_llm)
     action = build_action(inferred, labels, flow)

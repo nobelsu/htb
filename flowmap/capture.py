@@ -24,7 +24,7 @@ import json
 import re
 import secrets
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -283,12 +283,22 @@ async def capture_run(
     session: str,
     timeout_ms: int = 10_000,
     hold_back: bool = False,
+    block: Callable[[str, str], bool] | None = None,
 ) -> Run:
     """Play ``flow`` once in a new page of ``context`` (a Playwright BrowserContext) and record it.
     ``hold_back``: writes never reach the site (flowmap/holdback.py), armed from the flow's last click."""
     hold = HoldBack() if hold_back else None
     if hold is not None:
         await hold.install(context)
+    if block is not None:  # the blocking test: does the page still show its results without this request?
+
+        async def blocked(route: Any, request: Any) -> None:
+            if block(request.method, request.url):
+                await route.abort()
+            else:
+                await route.fallback()
+
+        await context.route("**/*", blocked)
     commit = max((i for i, s in enumerate(flow.steps) if isinstance(s, Click)), default=len(flow.steps))
     page = await new_page(context)
     t0 = time.monotonic()
@@ -435,6 +445,39 @@ async def capture_flow(
         finally:
             await browser.close()
     return runs
+
+
+async def visible_without(
+    flow: Flow,
+    block: Callable[[str, str], bool],
+    *,
+    setup: BrowserSetup | None = None,
+    timeout_ms: int = 10_000,
+) -> list[str]:
+    """The results the page shows for the first real example with the requests ``block`` matches blocked:
+    none means one of them is where the results come from."""
+    from playwright.async_api import async_playwright
+
+    setup = setup or BrowserSetup(channel="chromium", headless=True)
+    async with async_playwright() as p:
+        browser = await setup.launch(p)
+        try:
+            context = await browser.new_context()
+            run = await capture_run(
+                context,
+                flow,
+                kind="real",
+                index=0,
+                values=flow.example_values(0),
+                markers={},
+                session="blocking",
+                timeout_ms=timeout_ms,
+                hold_back=flow.kind == "write",
+                block=block,
+            )
+        finally:
+            await browser.close()
+    return run.visible
 
 
 # ---------- files ----------

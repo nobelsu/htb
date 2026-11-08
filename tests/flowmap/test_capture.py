@@ -190,3 +190,16 @@ def test_a_cookie_holding_a_host_name_is_not_a_secret() -> None:
 
     found = secret_values(["www.linkedin.com", ".linkedin.com", "AQEDAS-a-real-session-token"], [])
     assert found == {"AQEDAS-a-real-session-token"}
+
+
+@pytest.mark.browser
+async def test_blocking_the_search_request_empties_the_page(bookshop: str) -> None:
+    """The blocking test's replay: without /api/search the bookshop shows no results; without the typeahead
+    it still does."""
+    pytest.importorskip("playwright.async_api")
+    from flowmap.capture import visible_without
+    from tests.flowmap.conftest import search_flow
+
+    flow = search_flow(bookshop)
+    assert await visible_without(flow, lambda m, u: "/api/search" in u, timeout_ms=3_000) == []
+    assert await visible_without(flow, lambda m, u: "/api/suggest" in u, timeout_ms=3_000)

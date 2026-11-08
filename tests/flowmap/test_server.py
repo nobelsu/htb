@@ -18,6 +18,7 @@ from runtime.registry import Registry
 from runtime.sessions import InMemorySessionStore
 from runtime.state import StateStore
 from schema import ResultCode
+from tests.flowmap.conftest import search_flow
 from tests.flowmap.test_agent import FakeClient, done_with_headings, role
 
 
@@ -339,3 +340,56 @@ async def test_explore_crawls_to_the_pages_results_link_to(bookshop: str, tmp_pa
     finally:
         registry.close()
         state.close()
+
+
+async def test_the_blocking_test_keeps_the_request_whose_absence_empties_the_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tracking ping ranked first still leaves the results there when blocked; the search, blocked, empties
+    them: the search is the source. The page itself (a document) is the source only if nothing else is."""
+    from flowmap import server
+    from flowmap.capture import Exchange, Run
+
+    ping, search, page = (
+        ("POST", "shop.test", "/track"),
+        ("GET", "shop.test", "/api/search"),
+        (
+            "GET",
+            "shop.test",
+            "/results",
+        ),
+    )
+    doc = Exchange(
+        id=0, step=0, phase="flow", resource_type="document", method="GET", url="https://shop.test/results"
+    )
+    run = Run(
+        run_id="r",
+        session="s",
+        domain="shop.test",
+        action="a",
+        kind="real",
+        index=0,
+        values={"q": "lamp"},
+        markers={},
+        started_at="",
+        visible=["Desk lamp"],
+        exchanges=[doc],
+    )
+    flow = search_flow("https://shop.test")
+    blocked: list[tuple[str, str, str]] = []
+
+    async def without(flow: Any, block: Any, **kw: Any) -> list[str]:
+        sig = next(s for s in (ping, search, page) if block(s[0], "https://" + s[1] + s[2]))
+        blocked.append(sig)
+        return [] if sig == search else ["Desk lamp"]
+
+    monkeypatch.setattr(server, "visible_without", without)
+    mapper = FlowMapper(Executor(InMemorySessionStore(), Confirmer("s")), tmp_path)
+
+    monkeypatch.setattr(server, "candidates", lambda f, r: [page, ping, search])
+    assert await mapper._confirm_source(flow, [run], None, lambda line: None) == search  # type: ignore[arg-type]
+    assert blocked == [ping, search]  # the page itself last, and never needed
+
+    monkeypatch.setattr(server, "candidates", lambda f, r: [page, ping])
+    blocked.clear()
+    assert await mapper._confirm_source(flow, [run], None, lambda line: None) == page  # type: ignore[arg-type]
