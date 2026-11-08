@@ -4250,7 +4250,7 @@
     },
     {
       "name": "search_people",
-      "description": "Search all of LinkedIn for people by free-text keywords, returning full search-results pages of 10 with name, headline, location, public profile URL, profile_urn and network degree (DISTANCE_1/2/3, OUT_OF_NETWORK, SELF). Use the profile_urn with list_followers for follower monitoring, or search_people_at_company to search within one company. Read-only and safe to retry.",
+      "description": "Search for people on the professional networking platform by keywords, returning matching profiles with name, headline, location, current or past position, connection degree, profile URL and image links, and mutual connections. This is a read-only operation that changes no data and is safe to retry.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -4259,16 +4259,16 @@
         "keywords": {
           "type": "string",
           "required": true,
-          "description": "Free-text search terms for the people you want to find, such as a name, job title or skill (e.g. \"Satya Nadella\").",
-          "example": "Satya Nadella"
+          "description": "Free-text search query, such as a person's name plus an employer, school, or other identifying terms (e.g. \"yuzhong luo oxford\").",
+          "example": "yuzhong luo oxford"
         }
       },
       "steps": [
         {
-          "id": "people",
+          "id": "feed",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/search/results/people/",
+            "url": "{{base_url}}/feed/",
             "query": {},
             "headers": {},
             "body": null
@@ -4310,26 +4310,6 @@
               "from": "body",
               "type": "regex",
               "expr": "L24\\\\\",\\\\\"layoutId\\\\\":\\\\\"([^\\\\]+)\\\\"
-            },
-            "screen_hash_2": {
-              "from": "body",
-              "type": "regex",
-              "expr": "L23\\\\\",\\\\\"layoutId\\\\\":\\\\\"([^\\\\]+)\\\\"
-            },
-            "filter_key": {
-              "from": "body",
-              "type": "regex",
-              "expr": "companyHQBingGeo\\\\\":\\\\\"\\\\\",\\\\\"([^\\\\]+)\\\\"
-            },
-            "filter_key_2": {
-              "from": "body",
-              "type": "regex",
-              "expr": "isVerified\\\\\":\\\\\"\\\\\",\\\\\"([^\\\\]+)\\\\"
-            },
-            "filter_key_3": {
-              "from": "body",
-              "type": "regex",
-              "expr": "companySizeV2\\\\\":\\\\\"\\\\\",\\\\\"([^\\\\]+)\\\\"
             }
           }
         },
@@ -4340,22 +4320,22 @@
             "url": "{{base_url}}/flagship-web/rsc-action/actions/server-request",
             "query": {
               "sduiid": "com.linkedin.sdui.search.requests.SearchGlobalTypeaheadRequestAction",
-              "parentSpanId": "6Kk4RqwXk6w="
+              "parentSpanId": "NICAmDAauG8="
             },
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
               "origin": "{{base_url}}",
-              "x-li-anchor-page-key": "{{steps.people.x_li_anchor_page_key}}",
-              "x-li-application-instance": "{{steps.people.x_li_application_instance}}",
+              "x-li-anchor-page-key": "{{steps.feed.x_li_anchor_page_key}}",
+              "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_search_srp_people;hUEB/k5fSwy4stostv95yg==",
-              "x-li-page-instance-tracking-id": "{{steps.people.x_li_page_instance_tracking_id}}",
-              "x-li-pageforestid": "{{steps.people.x_li_initialpageforestid}}",
+              "x-li-page-instance": "urn:li:page:d_flagship3_feed;smblWngaSpekf5TMjYU2SQ==",
+              "x-li-page-instance-tracking-id": "{{steps.feed.x_li_page_instance_tracking_id}}",
+              "x-li-pageforestid": "{{steps.feed.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbaf3cb11e400e13a0cef16ca2e-5e0a2c488ed45e6e-00",
-              "x-li-tracestate": "LinkedIn=5e0a2c488ed45e6e",
+              "x-li-traceparent": "00-00065fc1729dc181000058de3ca19b14-f1236937b3480200-00",
+              "x-li-tracestate": "LinkedIn=f1236937b3480200",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -4415,7 +4395,7 @@
                     }
                   ],
                   "payload": {
-                    "origin": "{{steps.people.origin}}",
+                    "origin": "{{steps.feed.origin}}",
                     "keywordsField": {
                       "key": "SearchResultsGlobalTyahKeywordsBinding",
                       "namespace": "MemoryNamespace"
@@ -4478,25 +4458,11 @@
                   "key": "SearchResultsGlobalTyahKeywordsBinding",
                   "namespace": "MemoryNamespace",
                   "value": "{{params.keywords}}",
-                  "originalProtoCase": "stringValue",
                   "protoKey": {
                     "$type": "proto.sdui.Key",
                     "value": {
                       "$case": "id",
                       "id": "SearchResultsGlobalTyahKeywordsBinding"
-                    }
-                  }
-                },
-                {
-                  "key": "SearchResultsSearchVerticalBindingKey",
-                  "namespace": "MemoryNamespace",
-                  "value": "People",
-                  "originalProtoCase": "stringValue",
-                  "protoKey": {
-                    "$type": "proto.sdui.Key",
-                    "value": {
-                      "$case": "id",
-                      "id": "SearchResultsSearchVerticalBindingKey"
                     }
                   }
                 },
@@ -4567,7 +4533,7 @@
                   }
                 ],
                 "payload": {
-                  "origin": "{{steps.people.origin}}",
+                  "origin": "{{steps.feed.origin}}",
                   "keywordsField": {
                     "key": "SearchResultsGlobalTyahKeywordsBinding",
                     "namespace": "MemoryNamespace"
@@ -4602,25 +4568,11 @@
                     "key": "SearchResultsGlobalTyahKeywordsBinding",
                     "namespace": "MemoryNamespace",
                     "value": "{{params.keywords}}",
-                    "originalProtoCase": "stringValue",
                     "protoKey": {
                       "$type": "proto.sdui.Key",
                       "value": {
                         "$case": "id",
                         "id": "SearchResultsGlobalTyahKeywordsBinding"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SearchResultsSearchVerticalBindingKey",
-                    "namespace": "MemoryNamespace",
-                    "value": "People",
-                    "originalProtoCase": "stringValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SearchResultsSearchVerticalBindingKey"
                       }
                     }
                   },
@@ -4651,33 +4603,335 @@
             "paths": []
           },
           "extract": {
-            "key": {
+            "value": {
               "from": "body",
               "type": "regex",
-              "expr": "companyHQBingGeo\"\\}\\}\\},\\{\"key\":\\{\"value\":\\{\"\\$case\":\"id\",\"id\":\"([^\"]+)\"\\}\\}\\},\\{\"key\":\\{\"value\":\\{\"\\$case\":\"id\",\"id\":\"SEARCH"
+              "expr": "value\":\\{\"\\$case\":\"stringValue\",\"stringValue\":\"([^\"]+)\"\\}\\}\\}\\},\\{\"\\$type\":\"proto\\.sdui\\.actions\\.core\\.SetState"
             },
-            "key_2": {
-              "from": "body",
-              "type": "regex",
-              "expr": "companySizeV2\"\\}\\}\\},\\{\"key\":\\{\"value\":\\{\"\\$case\":\"id\",\"id\":\"([^\"]+)\"\\}\\}\\},\\{\"key\":\\{\"value\":\\{\"\\$case\":\"id\",\"id\":\"SEARCH"
-            },
-            "key_3": {
-              "from": "body",
-              "type": "regex",
-              "expr": "functionV2\"\\}\\}\\},\\{\"key\":\\{\"value\":\\{\"\\$case\":\"id\",\"id\":\"([^\"]+)\"\\}\\}\\},\\{\"key\":\\{\"value\":\\{\"\\$case\":\"id\",\"id\":\"SEARCH"
-            },
-            "tyah_search_id": {
+            "value_2": {
               "from": "body",
               "type": "regex",
               "expr": "value\":\\{\"\\$case\":\"stringValue\",\"stringValue\":\"([^\"]+)\"\\}\\}\\}\\},\\{\"\\$type\":\"proto\\.sdui\\.actions\\.core\\.ReplaceComponent"
+            },
+            "screen_hash": {
+              "from": "body",
+              "type": "regex",
+              "expr": "\"childHierarchy\":\\{\"\\$type\":\"proto\\.sdui\\.navigation\\.ScreenHierarchy\",\"screenHash\":\"([^\"]+)\",\"screenId\":\"com\\.linkedin\\.sdui\\.flagshipnav\\.search\\.SearchResults\",\"pageKey\":\"\",\""
             }
           }
         },
         {
-          "id": "people_2",
+          "id": "server_request_2",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/flagship-web/search/results/people/",
+            "url": "{{base_url}}/flagship-web/rsc-action/actions/server-request",
+            "query": {
+              "sduiid": "com.linkedin.sdui.search.requests.globalTypeaheadSubmitAction",
+              "parentSpanId": "TZ8mPXfko14="
+            },
+            "headers": {
+              "accept": "*/*",
+              "content-type": "application/json",
+              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "origin": "{{base_url}}",
+              "x-li-anchor-page-key": "{{steps.feed.x_li_anchor_page_key}}",
+              "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
+              "x-li-application-version": "0.2.8421",
+              "x-li-page-instance": "urn:li:page:d_flagship3_feed;smblWngaSpekf5TMjYU2SQ==",
+              "x-li-page-instance-tracking-id": "{{steps.feed.x_li_page_instance_tracking_id}}",
+              "x-li-pageforestid": "{{steps.feed.x_li_initialpageforestid}}",
+              "x-li-rsc-stream": "true",
+              "x-li-traceparent": "00-00065fc1729dc181000058de3ca19b14-0dcc3d4fa3e0c6fc-00",
+              "x-li-tracestate": "LinkedIn=0dcc3d4fa3e0c6fc",
+              "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
+            },
+            "body": {
+              "requestId": "com.linkedin.sdui.search.requests.globalTypeaheadSubmitAction",
+              "serverRequest": {
+                "requestId": "com.linkedin.sdui.search.requests.globalTypeaheadSubmitAction",
+                "requestedArguments": {
+                  "$type": "proto.sdui.actions.requests.RequestedArguments",
+                  "requestedStateKeys": [
+                    {
+                      "key": {
+                        "value": {
+                          "$case": "id",
+                          "id": "SearchResultsGlobalTyahKeywordsBinding"
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "value": {
+                          "$case": "id",
+                          "id": "SearchResultsSearchVerticalBindingKey"
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "value": {
+                          "$case": "id",
+                          "id": "global_typeahead_and_search_homeTypeaheadSessionId"
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "value": {
+                          "$case": "id",
+                          "id": "global_typeahead_and_search_homeTypeaheadSessionShouldRefresh"
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "value": {
+                          "$case": "id",
+                          "id": "global_typeahead_and_search_homeTyahSearchId"
+                        }
+                      }
+                    }
+                  ],
+                  "payload": {
+                    "origin": "{{steps.feed.origin}}",
+                    "keywordsField": {
+                      "key": "SearchResultsGlobalTyahKeywordsBinding",
+                      "namespace": "MemoryNamespace"
+                    },
+                    "resultsComponentRef": "GlobalTypeaheadResultsRef",
+                    "currentVerticalField": {
+                      "key": "SearchResultsSearchVerticalBindingKey",
+                      "namespace": "MemoryNamespace"
+                    },
+                    "sessionIdField": {
+                      "key": "global_typeahead_and_search_homeTypeaheadSessionId",
+                      "namespace": "MemoryNamespace"
+                    },
+                    "sessionShouldRefreshField": {
+                      "key": "global_typeahead_and_search_homeTypeaheadSessionShouldRefresh",
+                      "namespace": "MemoryNamespace"
+                    },
+                    "tyahSearchIdField": {
+                      "key": "global_typeahead_and_search_homeTyahSearchId",
+                      "namespace": "MemoryNamespace"
+                    }
+                  },
+                  "requestMetadata": {
+                    "$type": "proto.sdui.common.RequestMetadata"
+                  }
+                },
+                "isApfcEnabled": true,
+                "isStreaming": false,
+                "rumPageKey": ""
+              },
+              "states": [
+                {
+                  "key": "SearchResultsGlobalTyahKeywordsBinding",
+                  "namespace": "MemoryNamespace",
+                  "value": "{{params.keywords}}",
+                  "protoKey": {
+                    "$type": "proto.sdui.Key",
+                    "value": {
+                      "$case": "id",
+                      "id": "SearchResultsGlobalTyahKeywordsBinding"
+                    }
+                  }
+                },
+                {
+                  "key": "global_typeahead_and_search_homeTypeaheadSessionId",
+                  "namespace": "MemoryNamespace",
+                  "value": "{{steps.server_request.value}}",
+                  "originalProtoCase": "stringValue",
+                  "protoKey": {
+                    "$type": "proto.sdui.Key",
+                    "value": {
+                      "$case": "id",
+                      "id": "global_typeahead_and_search_homeTypeaheadSessionId"
+                    }
+                  }
+                },
+                {
+                  "key": "global_typeahead_and_search_homeTypeaheadSessionShouldRefresh",
+                  "namespace": "MemoryNamespace",
+                  "value": false,
+                  "originalProtoCase": "booleanValue",
+                  "protoKey": {
+                    "$type": "proto.sdui.Key",
+                    "value": {
+                      "$case": "id",
+                      "id": "global_typeahead_and_search_homeTypeaheadSessionShouldRefresh"
+                    }
+                  }
+                },
+                {
+                  "key": "global_typeahead_and_search_homeTyahSearchId",
+                  "namespace": "MemoryNamespace",
+                  "value": "{{steps.server_request.value_2}}",
+                  "originalProtoCase": "stringValue",
+                  "protoKey": {
+                    "$type": "proto.sdui.Key",
+                    "value": {
+                      "$case": "id",
+                      "id": "global_typeahead_and_search_homeTyahSearchId"
+                    }
+                  }
+                }
+              ],
+              "requestedArguments": {
+                "$type": "proto.sdui.actions.requests.RequestedArguments",
+                "requestedStateKeys": [
+                  {
+                    "key": {
+                      "value": {
+                        "$case": "id",
+                        "id": "SearchResultsGlobalTyahKeywordsBinding"
+                      }
+                    }
+                  },
+                  {
+                    "key": {
+                      "value": {
+                        "$case": "id",
+                        "id": "SearchResultsSearchVerticalBindingKey"
+                      }
+                    }
+                  },
+                  {
+                    "key": {
+                      "value": {
+                        "$case": "id",
+                        "id": "global_typeahead_and_search_homeTypeaheadSessionId"
+                      }
+                    }
+                  },
+                  {
+                    "key": {
+                      "value": {
+                        "$case": "id",
+                        "id": "global_typeahead_and_search_homeTypeaheadSessionShouldRefresh"
+                      }
+                    }
+                  },
+                  {
+                    "key": {
+                      "value": {
+                        "$case": "id",
+                        "id": "global_typeahead_and_search_homeTyahSearchId"
+                      }
+                    }
+                  }
+                ],
+                "payload": {
+                  "origin": "{{steps.feed.origin}}",
+                  "keywordsField": {
+                    "key": "SearchResultsGlobalTyahKeywordsBinding",
+                    "namespace": "MemoryNamespace"
+                  },
+                  "resultsComponentRef": "GlobalTypeaheadResultsRef",
+                  "currentVerticalField": {
+                    "key": "SearchResultsSearchVerticalBindingKey",
+                    "namespace": "MemoryNamespace"
+                  },
+                  "sessionIdField": {
+                    "key": "global_typeahead_and_search_homeTypeaheadSessionId",
+                    "namespace": "MemoryNamespace"
+                  },
+                  "sessionShouldRefreshField": {
+                    "key": "global_typeahead_and_search_homeTypeaheadSessionShouldRefresh",
+                    "namespace": "MemoryNamespace"
+                  },
+                  "tyahSearchIdField": {
+                    "key": "global_typeahead_and_search_homeTyahSearchId",
+                    "namespace": "MemoryNamespace"
+                  }
+                },
+                "requestMetadata": {
+                  "$type": "proto.sdui.common.RequestMetadata"
+                },
+                "states": [
+                  {
+                    "key": "SearchResultsGlobalTyahKeywordsBinding",
+                    "namespace": "MemoryNamespace",
+                    "value": "{{params.keywords}}",
+                    "protoKey": {
+                      "$type": "proto.sdui.Key",
+                      "value": {
+                        "$case": "id",
+                        "id": "SearchResultsGlobalTyahKeywordsBinding"
+                      }
+                    }
+                  },
+                  {
+                    "key": "global_typeahead_and_search_homeTypeaheadSessionId",
+                    "namespace": "MemoryNamespace",
+                    "value": "{{steps.server_request.value}}",
+                    "originalProtoCase": "stringValue",
+                    "protoKey": {
+                      "$type": "proto.sdui.Key",
+                      "value": {
+                        "$case": "id",
+                        "id": "global_typeahead_and_search_homeTypeaheadSessionId"
+                      }
+                    }
+                  },
+                  {
+                    "key": "global_typeahead_and_search_homeTypeaheadSessionShouldRefresh",
+                    "namespace": "MemoryNamespace",
+                    "value": false,
+                    "originalProtoCase": "booleanValue",
+                    "protoKey": {
+                      "$type": "proto.sdui.Key",
+                      "value": {
+                        "$case": "id",
+                        "id": "global_typeahead_and_search_homeTypeaheadSessionShouldRefresh"
+                      }
+                    }
+                  },
+                  {
+                    "key": "global_typeahead_and_search_homeTyahSearchId",
+                    "namespace": "MemoryNamespace",
+                    "value": "{{steps.server_request.value_2}}",
+                    "originalProtoCase": "stringValue",
+                    "protoKey": {
+                      "$type": "proto.sdui.Key",
+                      "value": {
+                        "$case": "id",
+                        "id": "global_typeahead_and_search_homeTyahSearchId"
+                      }
+                    }
+                  }
+                ],
+                "screenId": "com.linkedin.sdui.flagshipnav.home.Home",
+                "knownTemplateIds": []
+              }
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {
+            "screen_hash": {
+              "from": "body",
+              "type": "regex",
+              "expr": "\"childHierarchy\":\\{\"\\$type\":\"proto\\.sdui\\.navigation\\.ScreenHierarchy\",\"screenHash\":\"([^\"]+)\",\"screenId\":\"com\\.linkedin\\.sdui\\.flagshipnav\\.search\\.SearchResultsAll\",\"pageKey\":\""
+            },
+            "tyah_search_id": {
+              "from": "body",
+              "type": "regex",
+              "expr": "HEADER\",\"tyahSearchId\":\"([^\"]+)\""
+            }
+          }
+        },
+        {
+          "id": "all",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/flagship-web/search/results/all/",
             "query": {
               "keywords": "{{params.keywords}}",
               "origin": "GLOBAL_SEARCH_HEADER"
@@ -4687,17 +4941,137 @@
               "content-type": "application/json",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
               "origin": "{{base_url}}",
-              "x-li-anchor-page-key": "{{steps.people.x_li_anchor_page_key}}",
-              "x-li-application-instance": "{{steps.people.x_li_application_instance}}",
+              "x-li-anchor-page-key": "{{steps.feed.x_li_anchor_page_key}}",
+              "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-initial-url": "/search/results/people/",
-              "x-li-layout-tree": "[\"com.linkedin.sdui.flagshipnav.search.SearchResults#0\",\"com.linkedin.sdui.flagshipnav.home.Home#0\",\"a15eca777c146d37da0475b8f19e5d56\"]",
-              "x-li-page-instance": "urn:li:page:d_flagship3_search_srp_people;hUEB/k5fSwy4stostv95yg==",
-              "x-li-page-instance-tracking-id": "{{steps.people.x_li_page_instance_tracking_id}}",
-              "x-li-pageforestid": "00065fbaf40e525800f7e553ea24acab",
+              "x-li-initial-url": "/feed/foryou/",
+              "x-li-layout-tree": "[\"com.linkedin.sdui.flagshipnav.feed.MainFeed#0\",\"com.linkedin.sdui.flagshipnav.home.Home#0\",\"a15eca777c146d37da0475b8f19e5d56\"]",
+              "x-li-page-instance": "urn:li:page:d_flagship3_feed;smblWngaSpekf5TMjYU2SQ==",
+              "x-li-page-instance-tracking-id": "{{steps.feed.x_li_page_instance_tracking_id}}",
+              "x-li-pageforestid": "00065fc1738d98bc005291c31d76203a",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbaf40e525800f7e553ea24acab-8a189225126537a4-00",
-              "x-li-tracestate": "LinkedIn=8a189225126537a4",
+              "x-li-traceparent": "00-00065fc1738d98bc005291c31d76203a-475f0d53cb368c38-00",
+              "x-li-tracestate": "LinkedIn=475f0d53cb368c38",
+              "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
+            },
+            "body": {
+              "$type": "proto.sdui.actions.core.NavigateToScreen",
+              "screenId": "com.linkedin.sdui.flagshipnav.search.SearchResultsAll",
+              "pageKey": "search_srp_all",
+              "presentationStyle": "PresentationStyle_FULL_PAGE",
+              "presentation": {
+                "$case": "fullPage",
+                "fullPage": {
+                  "$type": "proto.sdui.actions.core.presentation.FullPagePresentation"
+                }
+              },
+              "title": "Search",
+              "url": "/search/results/all/?keywords={{params.keywords}}&origin=GLOBAL_SEARCH_HEADER",
+              "inheritActor": false,
+              "colorScheme": "ColorScheme_UNKNOWN",
+              "disableScreenGutters": false,
+              "shouldHideMobileTopNavBar": true,
+              "shouldHideLoadingSpinner": false,
+              "replaceCurrentScreen": false,
+              "shouldHideMobileTopNavBarDivider": false,
+              "clearBackStack": false,
+              "preserveCurrentChildren": false,
+              "sharedElementTransitions": [],
+              "newHierarchy": {
+                "$type": "proto.sdui.navigation.ScreenHierarchy",
+                "screenHash": "{{steps.feed.screen_hash}}",
+                "screenId": "com.linkedin.sdui.flagshipnav.home.Home",
+                "pageKey": "",
+                "isAnchorPage": true,
+                "url": "",
+                "childHierarchy": {
+                  "$type": "proto.sdui.navigation.ScreenHierarchy",
+                  "screenHash": "{{steps.server_request.screen_hash}}",
+                  "screenId": "com.linkedin.sdui.flagshipnav.search.SearchResults",
+                  "pageKey": "",
+                  "isAnchorPage": true,
+                  "url": "",
+                  "childHierarchy": {
+                    "$type": "proto.sdui.navigation.ScreenHierarchy",
+                    "screenHash": "{{steps.server_request_2.screen_hash}}",
+                    "screenId": "com.linkedin.sdui.flagshipnav.search.SearchResultsAll",
+                    "pageKey": "",
+                    "isAnchorPage": true,
+                    "url": ""
+                  }
+                }
+              },
+              "screenTitle": [
+                "Search"
+              ],
+              "sduiTrackingProvenance": {
+                "version": "0.2.4195"
+              },
+              "requestedArguments": {
+                "payload": {
+                  "keywords": "{{params.keywords}}",
+                  "origin": "GLOBAL_SEARCH_HEADER",
+                  "tyahSearchId": "{{steps.server_request_2.tyah_search_id}}"
+                },
+                "states": [],
+                "requestMetadata": {
+                  "$type": "proto.sdui.common.RequestMetadata"
+                },
+                "screenId": "",
+                "knownTemplateIds": []
+              }
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {
+            "x_li_anchor_page_key": {
+              "from": "headers",
+              "type": "jsonpath",
+              "expr": "$['x-li-anchor-page-key']"
+            },
+            "x_li_page_instance_tracking_id": {
+              "from": "headers",
+              "type": "jsonpath",
+              "expr": "$['x-li-page-instance-tracking-id']"
+            },
+            "screen_hash": {
+              "from": "body",
+              "type": "regex",
+              "expr": "all\"\\}\\]\\]\\}\\],\"layoutId\":\"([^\"]+)\""
+            }
+          }
+        },
+        {
+          "id": "people",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/flagship-web/search/results/people/",
+            "query": {
+              "keywords": "{{params.keywords}}",
+              "origin": "SWITCH_SEARCH_VERTICAL"
+            },
+            "headers": {
+              "accept": "*/*",
+              "content-type": "application/json",
+              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "origin": "{{base_url}}",
+              "x-li-anchor-page-key": "{{steps.all.x_li_anchor_page_key}}",
+              "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
+              "x-li-application-version": "0.2.8421",
+              "x-li-initial-url": "/search/results/all/?keywords={{params.keywords}}&origin=GLOBAL_SEARCH_HEADER",
+              "x-li-layout-tree": "[\"com.linkedin.sdui.flagshipnav.search.SearchResults#0\",\"com.linkedin.sdui.flagshipnav.home.Home#0\",\"a15eca777c146d37da0475b8f19e5d56\"]",
+              "x-li-page-instance": "urn:li:page:d_flagship3_search_srp_all;5xopRsXwQ3GEe1nVKK/i+Q==",
+              "x-li-page-instance-tracking-id": "{{steps.all.x_li_page_instance_tracking_id}}",
+              "x-li-pageforestid": "00065fc173c3a76800927ea014eb29f7",
+              "x-li-rsc-stream": "true",
+              "x-li-traceparent": "00-00065fc173c3a76800927ea014eb29f7-9c3e6323a63b8124-00",
+              "x-li-tracestate": "LinkedIn=9c3e6323a63b8124",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -4712,7 +5086,7 @@
                 }
               },
               "title": "Search",
-              "url": "/search/results/people/?keywords={{params.keywords}}&origin=GLOBAL_SEARCH_HEADER",
+              "url": "/search/results/people/?keywords={{params.keywords}}&origin=SWITCH_SEARCH_VERTICAL",
               "inheritActor": false,
               "colorScheme": "ColorScheme_UNKNOWN",
               "disableScreenGutters": false,
@@ -4725,21 +5099,21 @@
               "sharedElementTransitions": [],
               "newHierarchy": {
                 "$type": "proto.sdui.navigation.ScreenHierarchy",
-                "screenHash": "{{steps.people.screen_hash}}",
+                "screenHash": "{{steps.feed.screen_hash}}",
                 "screenId": "com.linkedin.sdui.flagshipnav.home.Home",
                 "pageKey": "",
                 "isAnchorPage": true,
                 "url": "",
                 "childHierarchy": {
                   "$type": "proto.sdui.navigation.ScreenHierarchy",
-                  "screenHash": "{{steps.people.screen_hash_2}}",
+                  "screenHash": "{{steps.all.screen_hash}}",
                   "screenId": "com.linkedin.sdui.flagshipnav.search.SearchResults",
                   "pageKey": "",
                   "isAnchorPage": true,
                   "url": "",
                   "childHierarchy": {
                     "$type": "proto.sdui.navigation.ScreenHierarchy",
-                    "screenHash": "com.linkedin.sdui.flagshipnav.search.SearchResultsPeople#3f436b85",
+                    "screenHash": "com.linkedin.sdui.flagshipnav.search.SearchResultsPeople#4a3859aa",
                     "screenId": "com.linkedin.sdui.flagshipnav.search.SearchResultsPeople",
                     "pageKey": "",
                     "isAnchorPage": true,
@@ -4755,8 +5129,8 @@
                     "_moduleLoading": null,
                     "_chunks": {},
                     "_stringDecoder": {},
-                    "_closed": false,
-                    "_closedReason": null,
+                    "_closed": true,
+                    "_closedReason": {},
                     "_allowPartialStream": false
                   }
                 }
@@ -4767,528 +5141,9 @@
               "requestedArguments": {
                 "payload": {
                   "keywords": "{{params.keywords}}",
-                  "origin": "GLOBAL_SEARCH_HEADER",
-                  "network": [
-                    {
-                      "filterKey": "network",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_network",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "geoUrn": [
-                    {
-                      "filterKey": "geoUrn",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_geoUrn",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "activelyHiringForJobTitles": [
-                    {
-                      "filterKey": "activelyHiringForJobTitles",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_activelyHiringForJobTitles",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "companyHQBingGeo": [
-                    {
-                      "filterKey": "companyHQBingGeo",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_companyHQBingGeo",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "companySizeV2": [
-                    {
-                      "filterKey": "{{steps.people.filter_key}}",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "{{steps.server_request.key}}",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "functionV2": [
-                    {
-                      "filterKey": "{{steps.people.filter_key_2}}",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "{{steps.server_request.key_2}}",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "seniorityV2": [
-                    {
-                      "filterKey": "{{steps.people.filter_key_3}}",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "{{steps.server_request.key_3}}",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "openToVolunteer": [
-                    {
-                      "filterKey": "openToVolunteer",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_openToVolunteer",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "isVerified": [
-                    {
-                      "filterKey": "isVerified",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_isVerified",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "firstName": [
-                    {
-                      "filterKey": "firstName",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemSingle",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_firstName",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "lastName": [
-                    {
-                      "filterKey": "lastName",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemSingle",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_lastName",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "title": [
-                    {
-                      "filterKey": "title",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemSingle",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_title",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "company": [
-                    {
-                      "filterKey": "company",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemSingle",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_company",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "schoolFreetext": [
-                    {
-                      "filterKey": "schoolFreetext",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemSingle",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_schoolFreetext",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "currentCompany": [
-                    {
-                      "filterKey": "currentCompany",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_currentCompany",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "schoolFilter": [
-                    {
-                      "filterKey": "schoolFilter",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_schoolFilter",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "connectionOf": [
-                    {
-                      "filterKey": "connectionOf",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_connectionOf",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "pastCompany": [
-                    {
-                      "filterKey": "pastCompany",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_pastCompany",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "followerOf": [
-                    {
-                      "filterKey": "followerOf",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_followerOf",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "serviceCategory": [
-                    {
-                      "filterKey": "serviceCategory",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_serviceCategory",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "profileLanguage": [
-                    {
-                      "filterKey": "profileLanguage",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_profileLanguage",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "eventAttending": [
-                    {
-                      "filterKey": "eventAttending",
-                      "field": {
-                        "type": "com.linkedin.sdui.flagshipnav.search.FilterItemList",
-                        "value": {
-                          "field": {
-                            "type": "com.linkedin.sdui.components.core.BindingImpl",
-                            "value": {
-                              "key": "SEARCH_FILTER_eventAttending",
-                              "namespace": "MemoryNamespace"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "tyahSearchId": "{{steps.server_request.tyah_search_id}}"
+                  "origin": "SWITCH_SEARCH_VERTICAL"
                 },
-                "states": [
-                  {
-                    "key": "SEARCH_FILTER_network",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_network"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SEARCH_FILTER_geoUrn",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_geoUrn"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SEARCH_FILTER_openToVolunteer",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_openToVolunteer"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SEARCH_FILTER_isVerified",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_isVerified"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SEARCH_FILTER_currentCompany",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_currentCompany"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SEARCH_FILTER_schoolFilter",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_schoolFilter"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SEARCH_FILTER_connectionOf",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_connectionOf"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SEARCH_FILTER_pastCompany",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_pastCompany"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SEARCH_FILTER_followerOf",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_followerOf"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SEARCH_FILTER_serviceCategory",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_serviceCategory"
-                      }
-                    }
-                  },
-                  {
-                    "key": "SEARCH_FILTER_profileLanguage",
-                    "namespace": "MemoryNamespace",
-                    "value": [],
-                    "originalProtoCase": "stringListValue",
-                    "protoKey": {
-                      "$type": "proto.sdui.Key",
-                      "value": {
-                        "$case": "id",
-                        "id": "SEARCH_FILTER_profileLanguage"
-                      }
-                    }
-                  }
-                ],
+                "states": [],
                 "requestMetadata": {
                   "$type": "proto.sdui.common.RequestMetadata"
                 },
@@ -5308,7 +5163,7 @@
             "items": {
               "from": "body",
               "type": "regex",
-              "expr": "(?m)^[0-9a-f]{1,8}:(\\[\"\\$\",\"\\$L1a\",null,\\{\"direction\":\"horizontal\",\"children\":\\[\"\\$Lc.*)$",
+              "expr": "(?m)^[0-9a-f]{1,8}:(\\[\"\\$\",\"\\$L41\",null,\\{\"trackingScope\":\\[\\{\"contentTrackingId\":\".*)$",
               "parse": "json",
               "resolve": "rows"
             }
@@ -5316,22 +5171,38 @@
         }
       ],
       "output": {
-        "from": "steps.people_2.items",
+        "from": "steps.people.items",
         "fields": {
-          "image_alt_text": "$[3].children[0][3].a11yText",
-          "profile_url": "$[3].children[1][3].children[0][3].children[3].textProps.children[0][3].action.actions[1].value.content.url.urlValue.url",
-          "name": "$[3].children[1][3].children[0][3].children[3].textProps.children[0][3].children[0]",
-          "headline": "$[3].children[1][3].children[1][3].textProps.children[0]",
-          "location": "$[3].children[1][3].children[2][3].textProps.children[0]"
+          "profile_id": "$[3].children[3].children[3].triggers[0].action.actions[0].value.requestedArguments.payload.profileId",
+          "name": "$..children[0][3].children[0][1]",
+          "profile_image_base_url": "$..rootUrl",
+          "profile_image_100": "$..suffixUrl",
+          "profile_image_200": "$..imageRenditions[1].suffixUrl",
+          "profile_image_400": "$..imageRenditions[2].suffixUrl",
+          "profile_image_800": "$..imageRenditions[3].suffixUrl",
+          "profile_image_asset_urn": "$..assetUrn",
+          "profile_path": "$..screen.url",
+          "connection_degree": "$[3].children[3].children[3].children[3].children[0][3].children[3].children[1][3].children[0][3].children[3].textProps.children[1][3].children[0][3].children[0]",
+          "headline": "$[3].children[3].children[3].children[3].children[0][3].children[3].children[1][3].children[1][3].textProps.children[0]",
+          "location": "$[3].children[3].children[3].children[3].children[0][3].children[3].children[1][3].children[2][3].textProps.children[0]",
+          "current_or_past_position": "$[3].children[3].children[3].children[3].children[1][3].textProps.children[0][3].children[0][1]",
+          "profile_url": "$..actions[0].value.content.url.urlValue.url",
+          "mutual_connection_name": "$[3].children[3].children[3].children[3].children[0][3].children[3].children[0][3].a11yText",
+          "mutual_connection_name_2": "$[3].children[3].children[3].children[3].children[2][3].children[3].children[3].children[1][3].children[3].textProps.children[0][3].children[1][3].children[0]",
+          "mutual_connection_name_3": "$[3].children[3].children[3].children[3].children[2][3].children[3].children[3].children[1][3].children[3].textProps.children[1][3].children[1][3].children[0]",
+          "mutual_connection_or_company_name": "$[3].children[3].children[3].triggers[0].action.actions[1].value.state.value.stringValue",
+          "mutual_connection_or_company_name_2": "$[3].children[3].children[3].children[3].children[2][3].children[3].children[3].children[1][3].children[3].textProps.children[0][3].children[1][3].children[0]",
+          "mutual_connection_or_company_name_3": "$[3].children[3].children[3].children[3].children[1][3].textProps.children[0][3].children[1][3].children[0][3].children[0]",
+          "mutual_connection_headline": "$[3].children[3].children[3].triggers[0].action.actions[2].value.state.value.stringValue"
         },
-        "limit": 2,
+        "limit": 10,
         "next_params": null
       },
       "verify": null,
       "examples": [
         {
           "params": {
-            "keywords": "Satya Nadella"
+            "keywords": "yuzhong luo oxford"
           },
           "min_items": 1
         }
@@ -6735,52 +6606,36 @@
     },
     {
       "name": "send_connection_request",
-      "description": "Sends a LinkedIn connection invitation (no note attached) to another member. This changes state on the user's account: the recipient is notified immediately and it counts against the weekly invite quota, so the user must approve it before you call it. Returns the new invitation urn; to respond to invitations received, use list_invitations with approve_invitation or reject_invitation instead.",
+      "description": "Sends a LinkedIn connection request to the member identified by their profile vanity name. This changes state on the user's account by creating a pending invitation, so the user must explicitly approve it before the tool is called.",
       "kind": "write",
       "spends": false,
       "idempotent": false,
       "requires_confirmation": true,
       "params": {
-        "profile_urn": {
-          "type": "string",
-          "required": true,
-          "description": "The recipient's LinkedIn profile urn, obtained from search_people_at_company. This identifies who receives the invitation."
-        },
-        "member_id": {
-          "type": "string",
-          "required": true,
-          "description": "Optional LinkedIn member ID of the recipient, if known from the same search result as the profile urn."
-        },
-        "first_name": {
-          "type": "string",
-          "required": true,
-          "description": "Optional first name of the recipient, as shown on their profile."
-        },
-        "last_name": {
-          "type": "string",
-          "required": true,
-          "description": "Optional last name of the recipient, as shown on their profile."
-        },
         "vanity_name": {
           "type": "string",
           "required": true,
-          "description": "Optional vanity name from the recipient's profile URL (the part after /in/)."
-        },
-        "profile_picture_payload": {
-          "type": "string",
-          "required": true,
-          "description": "Optional profile picture data for the recipient, as returned by the search result. Not needed to identify the person."
+          "description": "The target member's LinkedIn vanity name, which is the slug after /in/ in their profile URL (e.g. 'jane-doe-123')."
         }
       },
       "steps": [
         {
-          "id": "grow",
+          "id": "identity_dash_profiles",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/mynetwork/grow/",
-            "query": {},
+            "url": "{{base_url}}/voyager/api/graphql",
+            "query": {
+              "includeWebMetadata": "true",
+              "variables": "(memberIdentity:{{params.vanity_name | escape_restli}})",
+              "queryId": "voyagerIdentityDashProfiles.273a499c117721535e6da078bee17e9c"
+            },
             "headers": {
-              "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+              "accept": "application/vnd.linkedin.normalized+json+2.1",
+              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "x-li-lang": "en_US",
+              "x-li-page-instance": "urn:li:page:d_flagship3_profile_view_base;e991VKILQjWltKpoK7Xt7A==",
+              "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
+              "x-restli-protocol-version": "2.0.0"
             },
             "body": null
           },
@@ -6788,224 +6643,45 @@
             "status": [
               200
             ],
-            "content_type": "html",
-            "paths": []
+            "content_type": "any",
+            "paths": [
+              "$.data.data.identityDashProfilesByMemberIdentity['*elements']"
+            ]
           },
           "extract": {
-            "x_li_anchor_page_key": {
-              "from": "headers",
+            "elements": {
+              "from": "body",
               "type": "jsonpath",
-              "expr": "$['x-li-anchor-page-key']"
-            },
-            "x_li_application_instance": {
-              "from": "headers",
-              "type": "jsonpath",
-              "expr": "$['x-li-application-instance']"
-            },
-            "x_li_page_instance_tracking_id": {
-              "from": "headers",
-              "type": "jsonpath",
-              "expr": "$['x-li-page-instance-tracking-id']"
-            },
-            "x_li_initialpageforestid": {
-              "from": "headers",
-              "type": "jsonpath",
-              "expr": "$['x-li-initialpageforestid']"
+              "expr": "$.data.data.identityDashProfilesByMemberIdentity['*elements'][0]"
             }
           }
         },
         {
-          "id": "server_request",
+          "id": "step",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/flagship-web/rsc-action/actions/server-request",
+            "url": "{{base_url}}/voyager/api/voyagerRelationshipsDashMemberRelationships",
             "query": {
-              "sduiid": "com.linkedin.sdui.requests.mynetwork.addaAddConnection",
-              "parentSpanId": "tkEflS1yM6c="
+              "action": "verifyQuotaAndCreateV2",
+              "decorationId": "com.linkedin.voyager.dash.deco.relationships.InvitationCreationResultWithInvitee-3"
             },
             "headers": {
-              "accept": "*/*",
-              "content-type": "application/json",
-              "origin": "{{base_url}}",
+              "accept": "application/vnd.linkedin.normalized+json+2.1",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
-              "x-li-anchor-page-key": "{{steps.grow.x_li_anchor_page_key}}",
-              "x-li-application-instance": "{{steps.grow.x_li_application_instance}}",
-              "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_people;piqE1eVnR0mPwFff9xWhrA==",
-              "x-li-page-instance-tracking-id": "{{steps.grow.x_li_page_instance_tracking_id}}",
-              "x-li-pageforestid": "{{steps.grow.x_li_initialpageforestid}}",
-              "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbad5d9582200646a98c4a838b5-012780864ad298fc-00",
-              "x-li-tracestate": "LinkedIn=012780864ad298fc",
-              "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
+              "x-li-lang": "en_US",
+              "x-li-page-instance": "urn:li:page:d_flagship3_profile_view_base;e991VKILQjWltKpoK7Xt7A==",
+              "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
+              "x-restli-protocol-version": "2.0.0",
+              "content-type": "application/json; charset=UTF-8",
+              "origin": "{{base_url}}",
+              "x-li-deco-include-micro-schema": "true",
+              "x-li-pem-metadata": "Voyager - Profile Actions=topcard-primary-connect-action-click,Voyager - Invitations - Actions=invite-send"
             },
             "body": {
-              "requestId": "com.linkedin.sdui.requests.mynetwork.addaAddConnection",
-              "serverRequest": {
-                "requestId": "com.linkedin.sdui.requests.mynetwork.addaAddConnection",
-                "requestedArguments": {
-                  "$type": "proto.sdui.actions.requests.RequestedArguments",
-                  "requestedStateKeys": [
-                    {
-                      "key": {
-                        "value": {
-                          "$case": "id",
-                          "id": "guidedFlowNumSentInvites"
-                        }
-                      },
-                      "namespace": ""
-                    },
-                    {
-                      "key": {
-                        "value": {
-                          "$case": "id",
-                          "id": "guidedFlowUrlAndPictureList"
-                        }
-                      },
-                      "namespace": "guidedFlowUrlAndPictureListNameSpace"
-                    }
-                  ],
-                  "payload": {
-                    "inviteeUrn": {
-                      "memberId": "{{params.member_id}}"
-                    },
-                    "nonIterableProfileId": "{{params.profile_urn}}",
-                    "renderMode": "IconAndText",
-                    "firstName": "{{params.first_name}}",
-                    "lastName": "{{params.last_name}}",
-                    "isDisabled": {
-                      "key": "connect-button-disabled-{{params.vanity_name}}",
-                      "namespace": null
-                    },
-                    "connectionState": {
-                      "key": "state:invitation:urn:li:member:{{params.member_id}}",
-                      "namespace": null
-                    },
-                    "origin": "InvitationOrigin_PYMK_COHORT_SECTION",
-                    "clientContext": "MyNetworkPYMK",
-                    "profileCanonicalUrl": "https://www.linkedin.com/in/{{params.vanity_name}}",
-                    "profilePictureRenderPayload": "{{params.profile_picture_payload}}",
-                    "firstFiveInviteCount": {
-                      "key": "guidedFlowNumSentInvites",
-                      "namespace": ""
-                    },
-                    "guidedFlowUrlandProfileList": {
-                      "key": "guidedFlowUrlAndPictureList",
-                      "namespace": "guidedFlowUrlAndPictureListNameSpace"
-                    },
-                    "postActionSentConfigs": []
-                  },
-                  "requestMetadata": {
-                    "$type": "proto.sdui.common.RequestMetadata"
-                  }
-                },
-                "onClientRequestFailureAction": {
-                  "actions": [
-                    {
-                      "$type": "proto.sdui.actions.core.SetState",
-                      "value": {
-                        "state": {
-                          "key": {
-                            "key": {
-                              "value": {
-                                "$case": "id",
-                                "id": "state:invitation:urn:li:member:{{params.member_id}}"
-                              }
-                            },
-                            "namespace": ""
-                          },
-                          "value": {
-                            "$case": "stringValue",
-                            "stringValue": "Connect"
-                          }
-                        }
-                      }
-                    },
-                    {
-                      "$type": "proto.sdui.actions.core.SetState",
-                      "value": {
-                        "state": {
-                          "key": {
-                            "key": {
-                              "value": {
-                                "$case": "id",
-                                "id": "connect-button-disabled-{{params.vanity_name}}"
-                              }
-                            },
-                            "namespace": ""
-                          },
-                          "value": {
-                            "$case": "booleanValue",
-                            "booleanValue": false
-                          }
-                        }
-                      }
-                    }
-                  ]
-                },
-                "isApfcEnabled": false,
-                "isStreaming": false,
-                "rumPageKey": ""
-              },
-              "states": [],
-              "requestedArguments": {
-                "$type": "proto.sdui.actions.requests.RequestedArguments",
-                "requestedStateKeys": [
-                  {
-                    "key": {
-                      "value": {
-                        "$case": "id",
-                        "id": "guidedFlowNumSentInvites"
-                      }
-                    },
-                    "namespace": ""
-                  },
-                  {
-                    "key": {
-                      "value": {
-                        "$case": "id",
-                        "id": "guidedFlowUrlAndPictureList"
-                      }
-                    },
-                    "namespace": "guidedFlowUrlAndPictureListNameSpace"
-                  }
-                ],
-                "payload": {
-                  "inviteeUrn": {
-                    "memberId": "{{params.member_id}}"
-                  },
-                  "nonIterableProfileId": "{{params.profile_urn}}",
-                  "renderMode": "IconAndText",
-                  "firstName": "{{params.first_name}}",
-                  "lastName": "{{params.last_name}}",
-                  "isDisabled": {
-                    "key": "connect-button-disabled-{{params.vanity_name}}",
-                    "namespace": null
-                  },
-                  "connectionState": {
-                    "key": "state:invitation:urn:li:member:{{params.member_id}}",
-                    "namespace": null
-                  },
-                  "origin": "InvitationOrigin_PYMK_COHORT_SECTION",
-                  "clientContext": "MyNetworkPYMK",
-                  "profileCanonicalUrl": "https://www.linkedin.com/in/{{params.vanity_name}}",
-                  "profilePictureRenderPayload": "{{params.profile_picture_payload}}",
-                  "firstFiveInviteCount": {
-                    "key": "guidedFlowNumSentInvites",
-                    "namespace": ""
-                  },
-                  "guidedFlowUrlandProfileList": {
-                    "key": "guidedFlowUrlAndPictureList",
-                    "namespace": "guidedFlowUrlAndPictureListNameSpace"
-                  },
-                  "postActionSentConfigs": []
-                },
-                "requestMetadata": {
-                  "$type": "proto.sdui.common.RequestMetadata"
-                },
-                "states": [],
-                "screenId": "com.linkedin.sdui.flagshipnav.mynetwork.Grow",
-                "knownTemplateIds": []
+              "invitee": {
+                "inviteeUnion": {
+                  "memberProfile": "{{steps.identity_dash_profiles.elements}}"
+                }
               }
             }
           },

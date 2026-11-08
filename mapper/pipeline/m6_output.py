@@ -368,6 +368,20 @@ def find_result_rows(
     return None
 
 
+def split_joined(fields: dict[str, str]) -> dict[str, str]:
+    """A value kept at several spots (``A | B``) becomes ``name``, ``name_2``…: one JSONPath per field, as
+    the card wants; the agent reads whichever one a result has."""
+    out: dict[str, str] = {}
+    for name, expr in fields.items():
+        parts = expr.split(" | ") if " | " in expr else [expr]
+        for n, part in enumerate(parts, 1):
+            key = name if n == 1 else f"{name}_{n}"
+            while key in out or (n > 1 and key in fields):
+                key += "_alt"
+            out[key] = part
+    return out
+
+
 def _fallback_names(fields: list[tuple[str, list[Any]]]) -> dict[str, str]:
     """Without the LLM: each result's link and its text, in page order."""
     out: dict[str, str] = {}
@@ -437,7 +451,7 @@ def plan_stream_output(
     }
     candidates = found.fields[:MAX_CANDIDATES]
     named = llm.name_output_fields(task, [(p, vals[:3]) for p, vals in candidates], description)
-    fields = named or _fallback_names(candidates)
+    fields = split_joined(named or _fallback_names(candidates))
     output = {
         "from": f"steps.{goal.id}.items",
         "fields": fields,

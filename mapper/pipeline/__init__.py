@@ -253,6 +253,12 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     # person's recording falls back to the method, so a forgotten --kind write can't make a write a read.
     explorer = any(b.meta.get("driver") == "agent" for b in runs.values())
     is_read = kind == "read" if explorer else goal.entry.method in ("GET", "HEAD")
+    if not explorer and not is_read and kind == "read":  # a search sent as POST (LinkedIn's people
+        live_goal = real_goal.entry if real_goal else goal.entry  # search): a read when results come back
+        is_read = live_goal.response_kind == "stream" or (
+            isinstance(live_goal.response_json, (dict, list))
+            and find_result_list(goal.entry.response_json, live_goal.response_json) is not None
+        )
     pag = None
     if is_read and runs.get("page2") is not None:
         pag, pag_warnings = _pagination(runs["page2"], goal, m1, real_goal)
@@ -317,7 +323,7 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
         output_fields=list(output.output["fields"]),
         has_unknowns=bool(prov.unknowns),
         llm=llm,
-        trusted_kind=explorer,
+        trusted_kind=explorer or (is_read and kind == "read"),
     )
     warnings += ann.warnings
     fields = dict(ann.fields)
