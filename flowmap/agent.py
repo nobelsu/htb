@@ -52,6 +52,7 @@ from flowmap.flows import (
     Select,
     Target,
     _template_url,
+    placeholders,
     render,
     resolve,
 )
@@ -221,6 +222,15 @@ def template(text: str, values: dict[str, str]) -> str:
     return text
 
 
+def option_value(chosen: str, option: str, inputs: dict[str, str]) -> str:
+    """A chosen dropdown option as a step value: the input it stands for when its value or the name the model
+    used matches one (case aside), else the option's value as it is."""
+    for name, value in inputs.items():
+        if value.casefold() in (chosen.casefold(), option.casefold()):
+            return "{{" + name + "}}"
+    return chosen or option
+
+
 def check_click(el: dict[str, Any], *, write: bool) -> None:
     label = str(el.get("name") or "")
     if DANGER.search(label):
@@ -261,7 +271,10 @@ COMMON_SELECTOR = """(texts) => {
     let matches;
     try { matches = [...document.querySelectorAll(sel)]; } catch (e) { continue; }
     if (!found.every((el) => matches.includes(el))) continue;
-    if (!best || matches.length < best.count) best = {selector: sel, count: matches.length};
+    // Fewest matches; on a tie the more specific (longer) selector, which survives other links appearing.
+    const better = !best || matches.length < best.count
+      || (matches.length === best.count && sel.length > best.selector.length);
+    if (better) best = {selector: sel, count: matches.length};
   }
   return {selector: best && best.selector, count: best ? best.count : 0, missing};
 }"""
@@ -539,10 +552,19 @@ async def _act(
         loc, target = await locate(page, args.get("element") or {})
         option = str(args.get("option") or "")
         await loc.select_option(option, timeout=10_000)
+        chosen = await loc.input_value()  # the option's value, whether the model named its value or its label
         await settle(page)
-        steps.append(Select(target=target, value=template(option, inputs)))
-        return f"chose {json.dumps(option)} in {describe(args['element'])}"
+        steps.append(Select(target=target, value=option_value(chosen, option, inputs)))
+        return f"chose {json.dumps(option)} (value {json.dumps(chosen)}) in {describe(args['element'])}"
     if name == "done":
+        used = {n for step in steps for n in placeholders(step)}
+        unused = [n for n in inputs if n not in used]
+        if unused:
+            raise AgentError(
+                "these input values were never used: "
+                + ", ".join(f"{n} = {json.dumps(inputs[n])}" for n in unused)
+                + ". Do the task with them, typed or chosen exactly."
+            )
         texts = [str(t) for t in args.get("results") or []]
         selector = await results_selector(page, texts) if texts else None
         nxt = args.get("next_page") or {}

@@ -9,7 +9,14 @@ from typing import Any
 
 import pytest
 
-from flowmap.agent import AgentError, check_click, element_target, record_with_agent, template
+from flowmap.agent import (
+    AgentError,
+    check_click,
+    element_target,
+    option_value,
+    record_with_agent,
+    template,
+)
 from flowmap.flows import Fill, Goto, LocatorCall, Press, Select
 from tests.flowmap.site import state
 
@@ -73,6 +80,10 @@ def test_element_targets_and_templates() -> None:
         element_target(NONE)
     assert template("robotics companies", {"query": "robotics"}) == "{{query}} companies"
     assert template("price", {"query": "robotics", "sort": "price"}) == "{{sort}}"
+    # A dropdown option named by its label still stands for the input whose value it has.
+    assert option_value("price", "Price", {"sort": "price"}) == "{{sort}}"
+    assert option_value("asc", "Oldest first", {"sort": "Oldest first"}) == "{{sort}}"
+    assert option_value("asc", "Oldest", {"sort": "price"}) == "asc"
 
 
 def test_click_guards() -> None:
@@ -106,7 +117,8 @@ async def test_agent_records_search_and_it_maps(bookshop: str) -> None:
     client = FakeClient(
         [
             {"name": "fill", "input": {"element": role("textbox", "Search books"), "text": "the"}},
-            {"name": "select", "input": {"element": role("combobox", "Sort by"), "option": "price"}},
+            done_with_headings(3, role("button", "Next")),  # too early: sort isn't used yet
+            {"name": "select", "input": {"element": role("combobox", "Sort by"), "option": "Price"}},
             {"name": "press", "input": {"key": "Enter"}},
             done_with_headings(3, role("button", "Next")),
         ]
@@ -128,13 +140,14 @@ async def test_agent_records_search_and_it_maps(bookshop: str) -> None:
             await browser.close()
 
     flow = rec.flow
-    assert rec.turns == 4
+    assert rec.turns == 5
+    assert any("never used: sort" in line for line in rec.log)
     assert [type(s) for s in flow.steps] == [Goto, Fill, Select, Press]
     fill, select = flow.steps[1], flow.steps[2]
     assert isinstance(fill, Fill) and fill.value == "{{query}}"
     assert isinstance(select, Select) and select.value == "{{sort}}"
     assert flow.inputs["query"].marker and not flow.inputs["sort"].marker  # a dropdown can't take a marker
-    assert flow.results_selector and "a" in str(flow.results_selector)
+    assert flow.results_selector == "div.result a"  # not just "a": the more specific selector wins a tie
     assert flow.next_page == [
         LocatorCall(method="get_by_role", args=["button"], kwargs={"name": "Next", "exact": True})
     ]
