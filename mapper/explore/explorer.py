@@ -107,11 +107,30 @@ def _goto(page, tracker, url: str) -> None:
     driver.settle(page)
 
 
+SIGN_IN_PATH = re.compile(r"/(log-?in|sign-?in|auth(wall)?|uas/login|session)(/|$|\?)", re.I)
+
+
+def signed_out(start_url: str, landed_url: str, page) -> bool:
+    """The start page (a signed-in page, given with --state) sent us to a sign-in page instead."""
+    if urlsplit(landed_url).path == urlsplit(start_url).path:
+        return False
+    try:
+        has_password = page.locator("input[type=password]").count() > 0
+    except Exception:
+        has_password = False
+    return bool(SIGN_IN_PATH.search(urlsplit(landed_url).path)) or has_password
+
+
 def survey(page, tracker, start_url: str, extra_pages: int = 4) -> tuple[str, list[str]]:
     """Snapshots of the start page and a few same-site pages it links to (never log-out links)."""
     _say(f"looking around the site, starting at {start_url}")
     _goto(page, tracker, start_url)
     first = page_snapshot(page)
+    if signed_out(start_url, first["url"], page):
+        raise PlanError(
+            f"not signed in: {start_url} went to {first['url']}, a sign-in page. The saved session (--state) "
+            "has expired or was signed out; record a fresh one and run again."
+        )
     texts, visited = [f"== Page {urlsplit(first['url']).path} ==\n{as_text(first)}"], [first["url"]]
     host = hostname(start_url)
     candidates = []
