@@ -341,3 +341,16 @@ async def test_results_can_be_pointed_at_instead_of_copied() -> None:
         finally:
             await browser.close()
     assert links == ["/in/ann", "/in/bo", "/in/cy"], selector
+
+
+def test_a_long_page_loses_menus_before_its_results() -> None:
+    """Amazon: the menus filled the page view before the first product, so the agent never saw the results."""
+    from flowmap.agent import shorten
+
+    menu = "- navigation:\n" + "".join(f'  - link "Category {i}":\n    - /url: /c/{i}\n' for i in range(400))
+    tree = '- banner:\n  - textbox "Search"\n' + menu + '- main:\n  - heading "Laptop one" [level=2]\n'
+    tree += "- contentinfo:\n" + "".join(f'  - link "Help {i}"\n' for i in range(200))
+    out = shorten(tree, limit=2_000)
+    assert 'textbox "Search"' in out and 'heading "Laptop one"' in out
+    assert "- navigation (left out to fit)" in out and "Category 7" not in out and "Help 3" not in out
+    assert shorten("- main:\n  - heading x", limit=2_000) == "- main:\n  - heading x"  # short pages unchanged
