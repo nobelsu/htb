@@ -132,16 +132,25 @@ HEAL_STATUS_TOOL = types.Tool(
 REQUEST_MAP_TOOL = types.Tool(
     name="request_map",
     description="Ask for a website to be set up, when find_actions has nothing for a site the user needs. "
-    "Give the site, what the action should do (task), a snake_case name for it (action) and the values "
-    "you'd use for its inputs (e.g. {\"query\": \"robotics\"}). An agent does the task once on the site "
-    "and turns it into an action; that takes a few minutes, so tell the user and follow it with "
-    "map_status. Only for sites with no actions yet, and reads only for now (searching, looking things up).",
+    "Either name one action: what it should do (task), a snake_case name (action) and the values you'd use "
+    "for its inputs (e.g. {\"query\": \"robotics\"}); an agent does it once on the site and turns it into "
+    "an action (a few minutes). Or give only the site (and, optionally, what the user wants to do there as "
+    "task) to explore it: the server finds the site's main reads itself and maps the ones that work (up to "
+    "ten minutes). Tell the user, then follow it with map_status. Only for sites with no actions yet, and "
+    "reads only for now (searching, looking things up).",
     input_schema={
         "type": "object",
         "properties": {
             "site": {"type": "string", "description": "the site's address, e.g. https://www.example.com/search"},
-            "task": {"type": "string", "description": "what the action does, e.g. 'search books by keyword'"},
-            "action": {"type": "string", "description": "a snake_case name, e.g. search_books"},
+            "task": {
+                "type": "string",
+                "description": "what the action does, e.g. 'search books by keyword'; when exploring, what the "
+                "user wants to do on the site (optional)",
+            },
+            "action": {
+                "type": "string",
+                "description": "a snake_case name, e.g. search_books; leave out to explore",
+            },
             "inputs": {
                 "type": "object",
                 "description": "input name -> the value to use while setting it up, "
@@ -149,7 +158,7 @@ REQUEST_MAP_TOOL = types.Tool(
                 "additionalProperties": {"type": ["string", "number", "boolean"]},
             },
         },
-        "required": ["site", "task", "action"],
+        "required": ["site"],
         "additionalProperties": False,
     },
 )
@@ -364,10 +373,10 @@ class Gateway:
     async def _map_tool(self, name: str, args: dict[str, Any], user: str) -> types.CallToolResult:
         assert self.maps is not None
         if name == REQUEST_MAP_TOOL.name:
-            site, task, action = args.get("site"), args.get("task"), args.get("action")
+            site, task, action = args.get("site"), args.get("task", ""), args.get("action", "")
             inputs = args.get("inputs")
             if not all(isinstance(v, str) for v in (site, task, action)):
-                return _error_result("site, task and action (strings) are required")
+                return _error_result("site (a string) is required; task and action are strings")
             if inputs is not None and not isinstance(inputs, dict):
                 return _error_result("inputs must be an object")
             out = await self.maps.request(user, str(site), str(task), str(action), inputs)

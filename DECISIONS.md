@@ -479,3 +479,11 @@ markers and infers the card deterministically, and the LLM only names things. We
     action's request (then the start page) signed in and signed out; a check that can't tell them apart is
     kept as weak and reported. The runtime runs the check with the requester's sign-in before saving.
     The card is shared: other users sign in through the normal Connect flow once it exists.
+  - Step 3, reads built: explore is a map job with no action (`request_map(site)`, `task` optional as what
+    the user wants there). Claude proposes up to four read tasks from the start page, then follow-ups that
+    take values copied from what the kept actions returned; each is recorded and mapped into one card and kept
+    only if it passes (at most six). Proposals are checked in code (names, same site, inputs, change wording);
+    an action with exactly the requests of one already kept is dropped as a duplicate; a task that wants a
+    sign-in pauses the whole job. The runtime now keeps the actions whose examples pass and drops the rest
+    (`result.dropped`), for single-action jobs too (a lone failing action still fails the job). Writes
+    (hold-back, undo, never run for real) are the next piece.

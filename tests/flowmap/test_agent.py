@@ -107,6 +107,38 @@ async def _page(p: Any) -> tuple[Any, Any]:
 
 
 @pytest.mark.browser
+async def test_a_dropdown_input_gets_its_second_example_from_the_dropdown(bookshop: str) -> None:
+    """With only one value for an input chosen from a list (an explore gives just one), another option of
+    that dropdown becomes its second example, so it can still be mapped."""
+    pytest.importorskip("playwright.async_api")
+    from playwright.async_api import async_playwright
+
+    client = FakeClient(
+        [
+            {"name": "fill", "input": {"element": role("textbox", "Search books"), "text": "the"}},
+            {"name": "select", "input": {"element": role("combobox", "Sort by"), "option": "Relevance"}},
+            {"name": "press", "input": {"key": "Enter"}},
+            done_with_headings(3),
+        ]
+    )
+    async with async_playwright() as p:
+        browser, page = await _page(p)
+        try:
+            rec = await record_with_agent(
+                page,
+                url=bookshop + "/",
+                task="search the books, sorted by relevance",
+                action="search_books",
+                inputs={"query": "the", "sort": "Relevance"},
+                domain="bookshop.test",
+                client=client,
+            )
+        finally:
+            await browser.close()
+    assert rec.flow.inputs["sort"].examples == ["Relevance", "price"]
+    assert not rec.flow.inputs["sort"].marker and rec.flow.inputs["query"].examples == ["the"]
+
+
 async def test_agent_records_search_and_it_maps(bookshop: str) -> None:
     pytest.importorskip("playwright.async_api")
     from playwright.async_api import async_playwright

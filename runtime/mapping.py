@@ -128,9 +128,10 @@ class MapManager:
     # ---- requests ----------------------------------------------------------
 
     async def request(
-        self, user: str, site: str, task: str, action: str, inputs: dict[str, Any] | None = None
+        self, user: str, site: str, task: str = "", action: str = "", inputs: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Queue a map job, or say why not (``{"error": ...}``)."""
+        """Queue a map job, or say why not (``{"error": ...}``). With no ``action`` the job explores the site
+        (``task``, optional, says what the person wants to do there)."""
         url = site.strip()
         if "://" not in url:
             url = "https://" + url
@@ -141,10 +142,12 @@ class MapManager:
         if not self.config.allow_local and await _private(host):
             return {"error": f"{host} is on a private network; only public websites can be mapped"}
         task = " ".join(task.split())
-        if not task or len(task) > MAX_TASK:
+        if len(task) > MAX_TASK or (action and not task):
             return {"error": f"task must say what the action does, in at most {MAX_TASK} characters"}
-        if not ACTION_NAME.match(action):
+        if action and not ACTION_NAME.match(action):
             return {"error": "action must be a short snake_case name, e.g. search_companies"}
+        if not action and inputs:
+            return {"error": "inputs go with an action; to explore the site, give neither"}
         values: dict[str, str] = {}
         for name, value in (inputs or {}).items():
             if not ACTION_NAME.match(name) or isinstance(value, (dict, list)) or value is None:
@@ -217,7 +220,9 @@ class MapManager:
         error = (job.result or {}).get("error")
         if job.open:
             ahead = "" if job.status == "running" else " It's in the queue."
-            out["user_message"] = f"Setting up {job.domain}; this takes a few minutes.{ahead}"
+            doing = "Exploring" if not job.action else "Setting up"
+            minutes = "up to ten minutes" if not job.action else "a few minutes"
+            out["user_message"] = f"{doing} {job.domain}; this takes {minutes}.{ahead}"
             out["retry_after_s"] = self.config.retry_after_s
             out["hint"] = "call map_status(job_id, wait_seconds=45) until the status is succeeded"
         elif job.status == "succeeded":
@@ -331,13 +336,24 @@ class MapManager:
             self.state.finish_map_job(job.id, "failed", {"error": f"the mapped card is for {card.domain}"})
             return
         problems = await self._check_examples(card, job.user)
-        if problems:
+        if problems and len(problems) == len([a for a in card.actions if a.kind == "read"]):
             self.state.finish_map_job(
                 job.id,
                 "failed",
                 {"error": "the mapped actions don't work yet", "examples": problems, "ms": ms},
             )
             return
+        if problems:  # keep what passes (an explore maps several actions)
+            kept = dict(
+                outcome.card, actions=[a for a in outcome.card["actions"] if a["name"] not in problems]
+            )
+            again = validate_card(kept)
+            if not again.ok or again.card is None:
+                self.state.finish_map_job(
+                    job.id, "failed", {"error": "the mapped card isn't valid", "ms": ms}
+                )
+                return
+            card = again.card
         for p in card.connect_providers:
             code = await self.executor.check_session(card, p.id, job.user)
             if code is not None:
@@ -353,6 +369,8 @@ class MapManager:
         version = self.registry.save(card, note=f"map {job.id}: {', '.join(a.name for a in card.actions)}")
         names = [a.name for a in card.actions]
         result: dict[str, Any] = {"actions": names, "ms": ms, "report": outcome.report}
+        if problems:
+            result["dropped"] = problems
         self.state.finish_map_job(job.id, "succeeded", result, new_version=version)
         log.info("map %s succeeded: %s version %d in %d ms", job.id, job.domain, version, ms)
 

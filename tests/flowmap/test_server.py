@@ -151,3 +151,103 @@ async def test_a_map_job_behind_a_sign_in(bookshop: str, tmp_path: Path) -> None
     finally:
         registry.close()
         state.close()
+
+
+@pytest.mark.browser
+async def test_explore_maps_what_passes_and_follows_up(bookshop: str, tmp_path: Path) -> None:
+    """An explore: round 1 proposes a search, a change (dropped before it runs) and a task the recorder
+    gives up on (dropped); round 2 follows up with a book page, using an id the search returned."""
+    pytest.importorskip("playwright.async_api")
+    import re
+
+    from tests.flowmap.test_agent import last_page
+
+    seen: dict[str, str] = {}
+
+    def first_round(messages: list[dict[str, Any]]) -> dict[str, Any]:
+        assert 'textbox "Search books"' in last_page(messages)  # it saw the start page
+        return {
+            "name": "propose_tasks",
+            "input": {
+                "tasks": [
+                    {
+                        "action": "search_books",
+                        "task": 'Search the books for "harbour"',
+                        "start_url": bookshop + "/",
+                        "inputs": [{"name": "query", "value": "harbour"}],
+                    },
+                    {
+                        "action": "add_to_cart",
+                        "task": "Add a book to the cart",
+                        "start_url": bookshop + "/",
+                        "inputs": [],
+                    },
+                    {
+                        "action": "get_bestsellers",
+                        "task": "Show this week's bestsellers",
+                        "start_url": "https://elsewhere.example/",  # not this site: starts at the start page
+                        "inputs": [],
+                    },
+                ]
+            },
+        }
+
+    def follow_up(messages: list[dict[str, Any]]) -> dict[str, Any]:
+        text = last_page(messages)
+        assert "search_books" in text and "returned" in text
+        seen["id"] = re.findall(r"b0\d\d", text)[0]  # copied from what the search returned
+        return {
+            "name": "propose_tasks",
+            "input": {
+                "tasks": [
+                    {
+                        "action": "get_book",
+                        "task": f"Open the page of the book {seen['id']}",
+                        "start_url": f"{bookshop}/book/{seen['id']}",
+                        "inputs": [{"name": "book_id", "value": seen["id"]}],
+                    }
+                ]
+            },
+        }
+
+    client = FakeClient(
+        [
+            first_round,
+            # search_books
+            {"name": "fill", "input": {"element": role("textbox", "Search books"), "text": "harbour"}},
+            {"name": "press", "input": {"key": "Enter"}},
+            done_with_headings(3),  # 4 results: no next page
+            # get_bestsellers
+            {"name": "give_up", "input": {"reason": "there is no bestseller list"}},
+            follow_up,
+            # get_book
+            done_with_headings(1),
+        ]
+    )
+    executor = Executor(InMemorySessionStore(), Confirmer("s"))
+    registry, state = Registry(tmp_path / "rt.db"), StateStore(tmp_path / "rt.db")
+    mapper = BookshopMapper(
+        executor, tmp_path / "flows", channel="chromium", pause_s=0, client=client, use_llm=False
+    )
+    maps = MapManager(registry, state, executor, mapper, config=MapConfig(allow_local=True))
+    try:
+        job = await maps.request("alice", bookshop + "/", "find books")
+        assert job["status"] == "queued" and "Exploring" in job["user_message"]
+        await maps.drain()
+        out = await maps.status(job["job_id"], "alice")
+        assert out is not None and out["status"] == "succeeded", out
+        explored = {e["action"]: e for e in out["result"]["report"]["explored"]}
+        assert set(explored) == {"search_books", "get_bestsellers", "get_book"}  # add_to_cart never ran
+        assert explored["search_books"]["kept"] and explored["get_book"]["kept"]
+        assert not explored["get_bestsellers"]["kept"] and "gave up" in explored["get_bestsellers"]["reason"]
+        assert explored["get_book"]["round"] == 2 and not client.script
+
+        stored = registry.get("bookshop.test")
+        assert stored is not None and {a.name for a in stored.card.actions} == {"search_books", "get_book"}
+        env = await executor.run(stored, "get_book", {"book_id": "b005"}, user="bob")
+        assert env.status == ResultCode.SUCCESS and env.data, env
+        env = await executor.run(stored, "search_books", {"query": "garden"}, user="bob")
+        assert env.status == ResultCode.SUCCESS and env.data
+    finally:
+        registry.close()
+        state.close()

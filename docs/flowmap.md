@@ -57,6 +57,24 @@ Reads only for now. Raw captures go to a temporary folder deleted when the job e
 MAPPER=flowmap MAP_ALLOW_LOCAL=1 uv run python -m runtime.gateway   # then request_map http://127.0.0.1:8910/
 ```
 
+### Explore
+
+`request_map` with only a site (and, optionally, what the user wants to do there as `task`) explores it
+(`flowmap/explore.py`). Claude looks at the start page and proposes up to four read tasks (name, task, start
+page, input values); each is recorded, captured and mapped into one card, and kept only if it passes. A second
+round proposes follow-ups that take a value from what the kept actions returned (an item's page by an id from
+the search), with the values copied from those results. At most six actions; reads only.
+
+Checked in code, whatever Claude says: names are snake_case and new, start pages are on the site, inputs are at
+most four short strings, and a task worded as a change (follow, buy, add to cart...) is dropped before it runs.
+An action that sends exactly the requests of one already kept is dropped as a duplicate. A task that wants a
+sign-in pauses the whole job for it; it explores again once the requester has signed in. The runtime then
+runs every example and saves the actions that pass (`result.dropped` names the others). The job's report lists
+every task tried, kept or not and why.
+
+A dropdown input needs two real values; when only one is given (as in an explore), the recorder takes another
+option of that dropdown as the second.
+
 ### Sites behind a sign-in
 
 When the agent finds a sign-in page, the job stops with `needs_sign_in`, and `map_status` gives the requester
@@ -96,4 +114,5 @@ uv run python -m flowmap heal bookshop.test search_books --pause 0
 | `flowmap/assemble.py` | Card, validation, replay of a fresh example, `registry.save()` |
 | `flowmap/heal.py` | The runtime's `Remapper`: re-captures and re-infers only the broken action |
 | `flowmap/server.py` | The runtime's `Mapper`: a map job (agent recording, capture, map) inside the gateway |
+| `flowmap/explore.py` | Explore: Claude proposes read tasks (and follow-ups from returned ids), checked in code |
 | `flowmap/signin.py` | A new card's sign-in check and logged-out signals, from the action mapped while signed in |

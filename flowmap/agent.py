@@ -397,6 +397,7 @@ async def record_with_agent(
     )
     messages: list[dict[str, Any]] = [{"role": "user", "content": first}]
     results: list[dict[str, Any]] = []  # tool_result blocks with a snapshot, oldest first
+    alternatives: dict[str, list[str]] = {}  # input -> another option of the dropdown it was chosen from
     dropped: set[int] = set()
     nudges = 0
 
@@ -434,7 +435,17 @@ async def record_with_agent(
                 replies.append(_reply(call_id, "Not done: one action per turn.", error=True))
                 continue
             try:
-                outcome = await _act(page, name, args, steps, inputs, site=site, write=write, sign_in=sign_in)
+                outcome = await _act(
+                    page,
+                    name,
+                    args,
+                    steps,
+                    inputs,
+                    site=site,
+                    write=write,
+                    sign_in=sign_in,
+                    alternatives=alternatives,
+                )
             except AgentError as e:
                 note(f"refused {name}: {e}")
                 reply = _reply(call_id, f"Not done: {e}\n\n{await snapshot(page)}", error=True)
@@ -459,7 +470,7 @@ async def record_with_agent(
                 flow = _build_flow(
                     steps,
                     inputs=inputs,
-                    examples=examples,
+                    examples=_with(examples, alternatives),
                     no_marker=no_marker,
                     domain=domain or site,
                     action=action,
@@ -511,6 +522,7 @@ async def _act(
     site: str,
     write: bool,
     sign_in: SignIn | None,
+    alternatives: dict[str, list[str]],
 ) -> str | _Finished:
     literal_to_name = {v: k for k, v in inputs.items()}
     if name == "goto":
@@ -554,7 +566,11 @@ async def _act(
         await loc.select_option(option, timeout=10_000)
         chosen = await loc.input_value()  # the option's value, whether the model named its value or its label
         await settle(page)
-        steps.append(Select(target=target, value=option_value(chosen, option, inputs)))
+        value = option_value(chosen, option, inputs)
+        steps.append(Select(target=target, value=value))
+        if value.startswith("{{"):  # an input chosen from a list: another option is its second example
+            others = await loc.locator("option").evaluate_all("os => os.map(o => o.value)")
+            alternatives[value[2:-2]] = [o for o in others if o and o != chosen][:1]
         return f"chose {json.dumps(option)} (value {json.dumps(chosen)}) in {describe(args['element'])}"
     if name == "done":
         used = {n for step in steps for n in placeholders(step)}
@@ -586,6 +602,15 @@ async def _act(
     if name == "give_up":
         return _Finished(str(args.get("reason") or ""), give_up=True)
     raise AgentError(f"unknown tool {name}")
+
+
+def _with(examples: dict[str, list[str]] | None, more: dict[str, list[str]]) -> dict[str, list[str]]:
+    """``examples`` plus ``more`` for the inputs that have none given."""
+    out = {k: list(v) for k, v in (examples or {}).items()}
+    for name, values in more.items():
+        if len(out.get(name, [])) < 2:
+            out[name] = [*out.get(name, []), *values]
+    return out
 
 
 def _build_flow(

@@ -193,6 +193,15 @@ async def test_mapping_failures(
     assert registry.get(DOMAIN) is None
 
 
+def on_domain(card: dict[str, Any], domain: str) -> StandIn:
+    """A stand-in whose card is for another domain (the fixture site's is taken by an earlier map)."""
+    card = copy.deepcopy(card)
+    card["domain"] = domain
+    mapper = StandIn(card)
+    mapper.domain_for = lambda host: domain  # type: ignore[method-assign]
+    return mapper
+
+
 class SignInFirst(StandIn):
     """A site that wants a sign-in: asks for one until the job has one, then maps with it."""
 
@@ -282,23 +291,36 @@ async def test_a_sign_in_check_that_fails_is_not_saved(
     assert registry.get(DOMAIN) is None
 
 
-async def test_a_card_whose_examples_fail_is_not_saved(
+async def test_only_actions_whose_examples_pass_are_saved(
     registry: Registry, state: StateStore, executor: Executor, fixture_card: dict[str, Any]
 ) -> None:
     card = public_reads(fixture_card)
+    failing = card["actions"][0]["name"]
     card["actions"][0]["examples"][0]["min_items"] = 999
     m = maps(registry, state, executor, StandIn(card))
-    job = await m.request("alice", "shop.test", "search", "search_products")
+    job = await m.request("alice", "shop.test")  # an explore: several actions, keep what passes
     await m.drain()
     out = await m.status(job["job_id"], "alice")
-    assert out is not None and out["status"] == "failed"
-    assert card["actions"][0]["name"] in out["result"]["examples"]
-    assert registry.get(DOMAIN) is None
+    assert out is not None and out["status"] == "succeeded", out
+    assert failing in out["result"]["dropped"] and failing not in out["result"]["actions"]
+    stored = registry.get(DOMAIN)
+    assert stored is not None and stored.card.action(failing) is None and len(stored.card.actions) == 2
+
+    # When none passes, nothing is saved.
+    for action in card["actions"]:
+        for example in action["examples"]:
+            example["min_items"] = 999
+    m.mapper = on_domain(card, "none.test")
+    job = await m.request("alice", "none.test", "search", "search_products")
+    await m.drain()
+    out = await m.status(job["job_id"], "alice")
+    assert out is not None and out["status"] == "failed" and failing in out["result"]["examples"]
+    assert registry.get("none.test") is None
 
     broken = public_reads(fixture_card)
     broken["actions"][0]["params"]["_reserved"] = {"type": "string", "required": False}
-    m.mapper = StandIn(broken)
-    job = await m.request("alice", "shop.test", "search", "search_products")
+    m.mapper = on_domain(broken, "broken.test")
+    job = await m.request("alice", "broken.test", "search", "search_products")
     await m.drain()
     out = await m.status(job["job_id"], "alice")
     assert out is not None and out["status"] == "failed" and "isn't valid" in out["result"]["error"]
@@ -343,8 +365,8 @@ async def test_gateway_map_tools(
         assert isinstance(result, types.CallToolResult)
         return result
 
-    bad = await call("request_map", site="shop.test", task="search")
-    assert bad.is_error
+    assert (await call("request_map", task="search")).is_error  # no site
+    assert (await call("request_map", site="shop.test", inputs={"query": "x"})).is_error  # inputs, no action
     queued = await call(
         "request_map",
         site="shop.test",
