@@ -69,8 +69,9 @@ agent (Claude) ──MCP──▶ spider gateway ──▶ executor ──▶ th
 ## What's live (numbers to use)
 
 - Gateway running behind a public URL, connected as a custom connector in regular Claude.
-- **linkedin.com:** 20 actions live (searches, profiles, company pages, jobs, posts, follow a company,
-  connect, start a conversation), most about 1 second each; signed-in pages use the browser tier.
+- **linkedin.com:** 12 actions live and checked (search companies, people, jobs and posts; profiles,
+  education, experience, company pages, your own profile; follow a company, connect, start a
+  conversation), most about 1 second each; signed-in pages use the browser tier.
 - **amazon.co.uk:** search_products (about 20 results in about a second) and get_product_details.
 - **fixture.test** (our own demo shop): 21 actions covering every runtime case (reads, writes needing
   confirmation, rate limits, bot challenges, pages that change, browser-only endpoints).
