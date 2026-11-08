@@ -37,9 +37,10 @@ from flowmap.assemble import AssembleError, map_action
 from flowmap.browser import BrowserSetup, SignInMissing, new_page
 from flowmap.capture import capture_flow
 from flowmap.explore import MAX_ACTIONS, MAX_DEPTH, Task, links, page_kind, propose_tasks, samples
-from flowmap.flows import save_flow
+from flowmap.flows import flow_path, load_flow, save_flow
 from flowmap.infer import InferError, registrable
 from flowmap.minimise import executor_replayer
+from flowmap.privacy import PrivacyReport, public_examples
 from flowmap.signin import SignInCheckError, infer_sign_in, placeholder_provider
 from runtime.executor import Executor
 from runtime.mapping import MapError, MapOutcome, MapRequest, SignInNeeded
@@ -111,6 +112,10 @@ class FlowMapper:
             return await self._explore(request, setup, step, lines)
         task = Task(request.action, request.task, request.url, dict(request.inputs))
         card, report = await self._map_task(task, request, setup, request.existing, step, lines)
+        card, private = await self._public_examples(card, {request.action}, request, step)
+        report["privacy"] = private.to_json()
+        if request.action in private.dropped:
+            raise MapError(f"{request.action} wasn't saved: {private.dropped[request.action]}", lines)
         if request.sign_in and not _has_sign_in(request.existing):
             report["sign_in"] = await self._add_sign_in(card, request, step, lines)
         return MapOutcome(card=card, report=report, log=lines)
@@ -328,12 +333,21 @@ class FlowMapper:
                         kept=True, confidence=mapped_report["confidence"], tier=mapped_report["tier"]
                     )
                 tried.append(entry)
+        privacy: dict[str, Any] = {}
+        if card is not None:
+            new = {a["name"] for a in card["actions"]} - had
+            card, private = await self._public_examples(card, new, request, step)
+            privacy = private.to_json()
+            for t in tried:
+                if t["action"] in private.dropped:
+                    t.update(kept=False, reason=private.dropped[t["action"]])
         if card is None or {a["name"] for a in card["actions"]} == had:
             reasons = "; ".join(f"{t['action']}: {t.get('reason')}" for t in tried) or "nothing new proposed"
             raise MapError(f"none of the explored actions could be mapped ({reasons})", lines)
         report: dict[str, Any] = {
             "explored": tried,
             "pages": sorted(kinds),
+            "privacy": privacy,
             "actions": [a["name"] for a in card["actions"]],
             "ms": int((time.monotonic() - t0) * 1000),
         }
@@ -341,6 +355,26 @@ class FlowMapper:
             report["sign_in"] = await self._add_sign_in(card, request, step, lines)
         step(f"explored {request.domain}: kept {', '.join(a for a in report['actions'] if a not in had)}")
         return MapOutcome(card=card, report=report, log=lines)
+
+    async def _public_examples(
+        self, card: dict[str, Any], names: set[str], request: MapRequest, step: Callable[[str], None]
+    ) -> tuple[dict[str, Any], PrivacyReport]:
+        """The new actions' examples made public before the card is shared (flowmap/privacy.py)."""
+        step("checking the examples hold no personal data")
+        card, report = await public_examples(
+            card, names, user=request.user, executor=self.executor, client=self.client, use_llm=self.use_llm
+        )
+        for name, values in report.replaced.items():  # heal replays the saved recording: same values there
+            path = flow_path(self.flows_dir, request.domain, name)
+            if path.exists():
+                flow = load_flow(path)
+                for param, value in values.items():
+                    if param in flow.inputs:
+                        flow.inputs[param].examples = [value]
+                save_flow(flow, self.flows_dir)
+        for name in report.dropped:
+            flow_path(self.flows_dir, request.domain, name).unlink(missing_ok=True)
+        return card, report
 
     async def _samples(self, card: dict[str, Any], user: str, only: set[str]) -> list[dict[str, Any]]:
         """Some of what the ``only`` actions return (their first example run through the executor), for

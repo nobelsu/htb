@@ -541,4 +541,11 @@ markers and infers the card deterministically, and the LLM only names things. We
     reactions...). Up to 3 links deep and 12 new actions per explore. Results that carry ids instead of links
     (JSON APIs) get the earlier follow-up round from their values. Open: a deep crawl of a site behind a
     sign-in is a lot of traffic on the requester's account, and actions on people's pages put a real
-    person's id in the shared card's examples (decision 2 says examples hold no personal data; not enforced).
+    person's id in the shared card's examples (decision 2 says examples hold no personal data).
+  - Decision 2 enforced (asked, 2026-11-08: "Yes, check examples"): before a card is saved, each new
+    action's example values are checked (flowmap/privacy.py): emails and phone numbers by rule; Claude (low
+    effort) judges the rest in context and suggests a public stand-in (a well-known company, a public
+    figure's page, a common term). A stand-in is used only if the action works with it; otherwise the action
+    isn't saved. The saved recording (heal replays it) gets the same values, or is deleted. Ran it on
+    LinkedIn's card: get_profile_experience's example went from a private person's profile to williamhgates
+    (version 4).
