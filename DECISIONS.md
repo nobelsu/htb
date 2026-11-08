@@ -440,8 +440,21 @@ markers and infers the card deterministically, and the LLM only names things. We
     request starts the heal).
   - A site behind a login is mapped with the requester's session; examples on the shared card hold no
     personal data, and raw captures are deleted after mapping.
-  - Explore tries writes too, but stops at the action it suspects would really commit the write (the final
-    click): that action is not allowed to reach the site.
+  - Explore tries writes too, but the action that would really commit the write never reaches the site: the
+    agent does the final click and the browser holds the request back, recording it in full. The commit is
+    spotted by any of: the agent saying so, the control's text (Send, Post, Place order, Pay, Book, Follow,
+    Connect, Add to cart...), a GraphQL mutation or a PUT/PATCH/DELETE, or a POST form submit. Before that
+    step only clear changes are blocked (many sites read with POST); after it, anything that could change data.
+  - Private, undoable writes (add to cart, save an item, a preference) may really happen on the requester's
+    account to reach a later step, and are undone afterwards (asked: "yes, then undo them"). Writes other
+    people see (follow, connect, like, message, post, apply) and costly or final ones (order, book, pay, an
+    official form) are always held back. Payment details are never entered: a page that wants a card ends the
+    task there.
+  - A write mapped from a held-back request has no response: the card marks it never run for real; the first
+    confirmed real call clears the mark and records what it returns. Values the page makes up fresh for every
+    request (idempotency ids, nonces) are marked "generate per call", not turned into params.
+  - Heal re-captures writes the same way (held back), so healing never sends a write. M2 is unchanged: a
+    healed write still goes live as a new version with `requires_confirmation`.
   - Whoever hits a broken action, the heal starts automatically, and the work it interrupted (a map job, an
     explore) carries on for the user once the heal is done.
   - Map jobs run in the gateway process, one at a time, separate from heal jobs; a worker of their own later.
