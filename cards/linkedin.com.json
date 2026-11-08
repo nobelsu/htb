@@ -135,12 +135,9 @@
               "x-li-anchor-page-key": "{{steps.invitation_manager.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.invitation_manager.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_people_invitations;X3RTSWWGRXulRAoxjhglcg==",
               "x-li-page-instance-tracking-id": "{{steps.invitation_manager.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.invitation_manager.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbad37b80a000e265f684d86f8c-88ec1372c8c6f848-00",
-              "x-li-tracestate": "LinkedIn=88ec1372c8c6f848",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {}
@@ -177,12 +174,9 @@
               "x-li-anchor-page-key": "{{steps.invitation_manager.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.app_config.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_people_invitations;X3RTSWWGRXulRAoxjhglcg==",
               "x-li-page-instance-tracking-id": "{{steps.invitation_manager.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.invitation_manager.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbad37b80a000e265f684d86f8c-2738ac470a358fdf-00",
-              "x-li-tracestate": "LinkedIn=2738ac470a358fdf",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -915,12 +909,8 @@
               "x-li-application-instance": "{{steps.foryou.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
               "x-li-layout-tree": "[\"com.linkedin.sdui.flagshipnav.feed.ForYouFeed#0\",\"com.linkedin.sdui.flagshipnav.feed.MainFeed#0\",\"com.linkedin.sdui.flagshipnav.home.Home#0\",\"a15eca777c146d37da0475b8f19e5d56\"]",
-              "x-li-page-instance": "urn:li:page:d_flagship3_feed;S0rMpk2LTcOGDFomYt3PwA==",
               "x-li-page-instance-tracking-id": "{{steps.foryou.x_li_page_instance_tracking_id}}",
-              "x-li-pageforestid": "00065fbad78c3d5c0069a263bea57930",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbad78c3d5c0069a263bea57930-528c2f0bfdd147f6-00",
-              "x-li-tracestate": "LinkedIn=528c2f0bfdd147f6",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -971,12 +961,7 @@
               "x-li-anchor-page-key": "{{steps.navigation.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.foryou.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_feed_share_v2;SRp2Dn4lRjemcBm4AbnR1Q==",
-              "x-li-page-instance-tracking-id": "SRp2Dn4lRjemcBm4AbnR1Q==",
-              "x-li-pageforestid": "00065fbad78c3d5c0069a263bea57930",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbad78c3d5c0069a263bea57930-d5826b3250abeec9-00",
-              "x-li-tracestate": "LinkedIn=d5826b3250abeec9",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -1145,7 +1130,6 @@
               "accept": "application/graphql",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
               "x-li-lang": "en_US",
-              "x-li-page-instance": "urn:li:page:d_flagship3_messaging_conversation_detail;biCIrvxuQwa9SjzkUsYLVA==",
               "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
               "x-restli-protocol-version": "2.0.0"
             },
@@ -1246,7 +1230,6 @@
               "accept": "application/graphql",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
               "x-li-lang": "en_US",
-              "x-li-page-instance": "urn:li:page:d_flagship3_messaging_conversation_detail;T75aNk57To+wHQZ0ed3+mw==",
               "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
               "x-restli-protocol-version": "2.0.0"
             },
@@ -1337,7 +1320,6 @@
               "accept": "application/vnd.linkedin.normalized+json+2.1",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
               "x-li-lang": "en_US",
-              "x-li-page-instance": "urn:li:page:d_flagship3_preload;FeCyIollSxmeJmXmDSmalw==",
               "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
               "x-restli-protocol-version": "2.0.0"
             },
@@ -1752,7 +1734,6 @@
               "accept": "application/vnd.linkedin.normalized+json+2.1",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
               "x-li-lang": "en_US",
-              "x-li-page-instance": "urn:li:page:d_flagship3_messaging_conversation_detail;3d257313-c372-4d32-a828-62135a0b7865",
               "x-li-pem-metadata": "Voyager - Messaging - Inboxes=affiliated-mailbox",
               "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
               "x-restli-protocol-version": "2.0.0"
@@ -1985,12 +1966,9 @@
               "x-li-anchor-page-key": "{{steps.invitation_manager.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.invitation_manager.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_people_invitations;eR99ZpmLRqitn7HOn5VYmg==",
               "x-li-page-instance-tracking-id": "{{steps.invitation_manager.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.invitation_manager.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbad4a52aa5000a8affdebcdba6-555b803fbed945ef-00",
-              "x-li-tracestate": "LinkedIn=555b803fbed945ef",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {}
@@ -2027,12 +2005,9 @@
               "x-li-anchor-page-key": "{{steps.invitation_manager.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.app_config.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_people_invitations;eR99ZpmLRqitn7HOn5VYmg==",
               "x-li-page-instance-tracking-id": "{{steps.invitation_manager.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.invitation_manager.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbad4a52aa5000a8affdebcdba6-9a4f2c020ac4324c-00",
-              "x-li-tracestate": "LinkedIn=9a4f2c020ac4324c",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -2789,12 +2764,9 @@
               "x-li-anchor-page-key": "{{steps.companies.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.companies.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_search_srp_companies;NrlI3dhuT0Szz8PgUKW+Kw==",
               "x-li-page-instance-tracking-id": "{{steps.companies.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.companies.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbade0d060a0035f673764148d3-ceb69e936df7330d-00",
-              "x-li-tracestate": "LinkedIn=ceb69e936df7330d",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -3119,12 +3091,9 @@
               "x-li-anchor-page-key": "{{steps.companies.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.companies.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_search_srp_companies;NrlI3dhuT0Szz8PgUKW+Kw==",
               "x-li-page-instance-tracking-id": "{{steps.companies.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.companies.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbade0d060a0035f673764148d3-0e8c5a79aaf5136b-00",
-              "x-li-tracestate": "LinkedIn=0e8c5a79aaf5136b",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -3454,14 +3423,9 @@
               "x-li-anchor-page-key": "{{steps.companies.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.companies.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-initial-url": "/search/results/companies/",
               "x-li-layout-tree": "[\"com.linkedin.sdui.flagshipnav.search.SearchResults#0\",\"com.linkedin.sdui.flagshipnav.home.Home#0\",\"a15eca777c146d37da0475b8f19e5d56\"]",
-              "x-li-page-instance": "urn:li:page:d_flagship3_search_srp_companies;NrlI3dhuT0Szz8PgUKW+Kw==",
               "x-li-page-instance-tracking-id": "{{steps.companies.x_li_page_instance_tracking_id}}",
-              "x-li-pageforestid": "00065fbade48a63000fb07ea322f0568",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbade48a63000fb07ea322f0568-07b4784347b8c85a-00",
-              "x-li-tracestate": "LinkedIn=07b4784347b8c85a",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -3796,12 +3760,9 @@
               "x-li-anchor-page-key": "{{steps.foryou.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.foryou.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_feed;cjSQlPAvQuq8AI+RSNnLzg==",
               "x-li-page-instance-tracking-id": "{{steps.foryou.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.foryou.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbadd225d650086fa3bd65c5926-d242e1d33ad17339-00",
-              "x-li-tracestate": "LinkedIn=d242e1d33ad17339",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -4008,12 +3969,8 @@
               "x-li-application-version": "0.2.8421",
               "x-li-initial-url": "/jobs/search-results/?keywords=jobs&geoId={{params.geo_id}}&f_C={{params.company_id}}",
               "x-li-layout-tree": "[\"com.linkedin.sdui.flagshipnav.jobs.SemanticJobSearch#48440dc3\",\"com.linkedin.sdui.flagshipnav.jobs.SemanticJobSearchRoot#0\",\"com.linkedin.sdui.flagshipnav.home.Home#0\",\"a15eca777c146d37da0475b8f19e5d56\"]",
-              "x-li-page-instance": "urn:li:page:d_flagship3_nlsearch_srp_jobs;GBmnr+56SKGKRap4SbO6HA==",
               "x-li-page-instance-tracking-id": "{{steps.search_results_2.x_li_page_instance_tracking_id}}",
-              "x-li-pageforestid": "00065fbed0d725a4006bb009d063dba9",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbed0d725a4006bb009d063dba9-4756e1443845cf35-00",
-              "x-li-tracestate": "LinkedIn=4756e1443845cf35",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -4330,12 +4287,9 @@
               "x-li-anchor-page-key": "{{steps.feed.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_feed;smblWngaSpekf5TMjYU2SQ==",
               "x-li-page-instance-tracking-id": "{{steps.feed.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.feed.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fc1729dc181000058de3ca19b14-f1236937b3480200-00",
-              "x-li-tracestate": "LinkedIn=f1236937b3480200",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -4637,12 +4591,9 @@
               "x-li-anchor-page-key": "{{steps.feed.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_feed;smblWngaSpekf5TMjYU2SQ==",
               "x-li-page-instance-tracking-id": "{{steps.feed.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.feed.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fc1729dc181000058de3ca19b14-0dcc3d4fa3e0c6fc-00",
-              "x-li-tracestate": "LinkedIn=0dcc3d4fa3e0c6fc",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -4944,14 +4895,9 @@
               "x-li-anchor-page-key": "{{steps.feed.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-initial-url": "/feed/foryou/",
               "x-li-layout-tree": "[\"com.linkedin.sdui.flagshipnav.feed.MainFeed#0\",\"com.linkedin.sdui.flagshipnav.home.Home#0\",\"a15eca777c146d37da0475b8f19e5d56\"]",
-              "x-li-page-instance": "urn:li:page:d_flagship3_feed;smblWngaSpekf5TMjYU2SQ==",
               "x-li-page-instance-tracking-id": "{{steps.feed.x_li_page_instance_tracking_id}}",
-              "x-li-pageforestid": "00065fc1738d98bc005291c31d76203a",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fc1738d98bc005291c31d76203a-475f0d53cb368c38-00",
-              "x-li-tracestate": "LinkedIn=475f0d53cb368c38",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -5066,12 +5012,8 @@
               "x-li-application-version": "0.2.8421",
               "x-li-initial-url": "/search/results/all/?keywords={{params.keywords}}&origin=GLOBAL_SEARCH_HEADER",
               "x-li-layout-tree": "[\"com.linkedin.sdui.flagshipnav.search.SearchResults#0\",\"com.linkedin.sdui.flagshipnav.home.Home#0\",\"a15eca777c146d37da0475b8f19e5d56\"]",
-              "x-li-page-instance": "urn:li:page:d_flagship3_search_srp_all;5xopRsXwQ3GEe1nVKK/i+Q==",
               "x-li-page-instance-tracking-id": "{{steps.all.x_li_page_instance_tracking_id}}",
-              "x-li-pageforestid": "00065fc173c3a76800927ea014eb29f7",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fc173c3a76800927ea014eb29f7-9c3e6323a63b8124-00",
-              "x-li-tracestate": "LinkedIn=9c3e6323a63b8124",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -5342,12 +5284,9 @@
               "x-li-anchor-page-key": "{{steps.people.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.people_2.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_search_srp_people;FwQmfj0ER4+muaKmiK1aGA==",
               "x-li-page-instance-tracking-id": "{{steps.people_2.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.people_2.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbae66fd09b00b4f940ee4e3f62-49b43b1b004d03be-00",
-              "x-li-tracestate": "LinkedIn=49b43b1b004d03be",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -5677,12 +5616,9 @@
               "x-li-anchor-page-key": "{{steps.people.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.people_2.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
-              "x-li-page-instance": "urn:li:page:d_flagship3_search_srp_people;FwQmfj0ER4+muaKmiK1aGA==",
               "x-li-page-instance-tracking-id": "{{steps.people_2.x_li_page_instance_tracking_id}}",
               "x-li-pageforestid": "{{steps.people_2.x_li_initialpageforestid}}",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbae66fd09b00b4f940ee4e3f62-ace5da9ad8e8ae9b-00",
-              "x-li-tracestate": "LinkedIn=ace5da9ad8e8ae9b",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -5957,12 +5893,8 @@
               "x-li-application-version": "0.2.8421",
               "x-li-initial-url": "/search/results/people/?currentCompany=%5B%22{{params.company_id}}%22%5D",
               "x-li-layout-tree": "[\"com.linkedin.sdui.flagshipnav.search.SearchResults#0\",\"com.linkedin.sdui.flagshipnav.home.Home#0\",\"a15eca777c146d37da0475b8f19e5d56\"]",
-              "x-li-page-instance": "urn:li:page:d_flagship3_search_srp_people;FwQmfj0ER4+muaKmiK1aGA==",
               "x-li-page-instance-tracking-id": "{{steps.people_2.x_li_page_instance_tracking_id}}",
-              "x-li-pageforestid": "00065fbae6a06cc8007fe18c10fb513d",
               "x-li-rsc-stream": "true",
-              "x-li-traceparent": "00-00065fbae6a06cc8007fe18c10fb513d-75bdc31ef3a2cb13-00",
-              "x-li-tracestate": "LinkedIn=75bdc31ef3a2cb13",
               "x-li-track": "{\"clientVersion\":\"0.2.8421\",\"mpVersion\":\"0.2.8421\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}"
             },
             "body": {
@@ -6633,7 +6565,6 @@
               "accept": "application/vnd.linkedin.normalized+json+2.1",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
               "x-li-lang": "en_US",
-              "x-li-page-instance": "urn:li:page:d_flagship3_profile_view_base;e991VKILQjWltKpoK7Xt7A==",
               "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
               "x-restli-protocol-version": "2.0.0"
             },
@@ -6669,7 +6600,6 @@
               "accept": "application/vnd.linkedin.normalized+json+2.1",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
               "x-li-lang": "en_US",
-              "x-li-page-instance": "urn:li:page:d_flagship3_profile_view_base;e991VKILQjWltKpoK7Xt7A==",
               "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
               "x-restli-protocol-version": "2.0.0",
               "content-type": "application/json; charset=UTF-8",
@@ -6765,7 +6695,6 @@
               "accept": "application/vnd.linkedin.normalized+json+2.1",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
               "x-li-lang": "en_US",
-              "x-li-page-instance": "urn:li:page:unknown;5bF6Z226TCy8HBqr1IRYaQ==",
               "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
               "x-restli-protocol-version": "2.0.0"
             },
@@ -6802,7 +6731,6 @@
               "accept": "application/json",
               "csrf-token": "{{session.cookies.JSESSIONID}}",
               "x-li-lang": "en_US",
-              "x-li-page-instance": "urn:li:page:d_flagship3_messaging_conversation_detail;5tYPQkYwRK6fDJTcDu7wng==",
               "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
               "x-restli-protocol-version": "2.0.0"
             },
