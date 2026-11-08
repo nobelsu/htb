@@ -96,6 +96,14 @@ class _Checker:
         except Exception as e:  # jsonpath_ng raises several exception types
             self.err(f"{where}: bad jsonpath {expr!r}: {e}")
 
+    def css(self, expr: str, where: str) -> None:
+        from selectolax.lexbor import LexborHTMLParser
+
+        try:
+            LexborHTMLParser("<p></p>").css(expr)
+        except Exception:
+            self.err(f"{where}: bad CSS selector {expr!r}")
+
     def regex(self, expr: str, where: str) -> None:
         try:
             re.compile(expr)
@@ -169,6 +177,10 @@ class _Checker:
                 ew = f"{where}.extract.{key}"
                 if ex.type == "jsonpath":
                     self.jsonpath(ex.expr, ew)
+                elif ex.type == "css":
+                    self.css(ex.expr, ew)
+                    if ex.from_ != "body" or ex.parse or ex.then:
+                        self.err(f"{ew}: a css extract reads the body, with no 'parse'/'then'")
                 else:
                     self.regex(ex.expr, ew)
                     if ex.then is not None:

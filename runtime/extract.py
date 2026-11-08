@@ -1,4 +1,4 @@
-"""JSONPath / regex extraction and output projection (CARD_SPEC.md "Extraction")."""
+"""JSONPath / regex / CSS extraction and output projection (CARD_SPEC.md "Extraction")."""
 
 from __future__ import annotations
 
@@ -47,8 +47,23 @@ class ResponseView:
         return self._json
 
 
+def css_items(html: str, selector: str) -> list[dict[str, Any]]:
+    """Each element ``selector`` matches in ``html``: its text (whitespace collapsed) and its link (its own
+    href, else the first link inside it, else null)."""
+    from selectolax.lexbor import LexborHTMLParser
+
+    out: list[dict[str, Any]] = []
+    for node in LexborHTMLParser(html).css(selector):
+        link = node if node.tag == "a" else node.css_first("a[href]")
+        href = link.attributes.get("href") if link is not None else None
+        out.append({"text": " ".join((node.text(separator=" ") or "").split()), "href": href})
+    return out
+
+
 def run_extract(ex: Extract, view: ResponseView) -> list[Any]:
     """Every extract produces a list of matches."""
+    if ex.type == "css":
+        return css_items(view.text, ex.expr)
     if ex.type == "jsonpath":
         if ex.from_ == "body":
             source: Any = view.json()

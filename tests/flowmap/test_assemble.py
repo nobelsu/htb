@@ -16,9 +16,10 @@ from flowmap.label import Labels
 from flowmap.minimise import Replayer, executor_replayer, minimise
 from runtime.confirm import Confirmer
 from runtime.executor import Executor
-from runtime.registry import Registry
+from runtime.registry import Registry, StoredCard
 from runtime.sessions import InMemorySessionStore
 from runtime.tiers import HttpTier, ImpersonateTier
+from schema import validate_card
 from schema.envelope import Envelope, Meta, ResultCode
 
 FLOW = Flow(
@@ -219,3 +220,41 @@ async def test_map_bookshop_actions_into_the_registry(bookshop: str, tmp_path: P
     assert first.next_params == {"query": "the", "sort": "price", "page": 2}
     second = await make_executor("http").run(stored, "search_books", first.next_params)
     assert len(second.data or []) == 8 and second.next_params is None  # 18 books have "the" in the title
+
+
+@pytest.mark.browser
+async def test_a_page_rendered_on_the_server_is_read_with_css(bookshop: str, tmp_path: Path) -> None:
+    """Level 2: no request carries the results as data, but the page's own HTML does: the action fetches the
+    page and reads the results with the recorder's selector."""
+    pytest.importorskip("playwright.async_api")
+    from flowmap.capture import capture_flow
+    from flowmap.flows import Fill, Flow, Goto, Input, LocatorCall, Press, WaitFor
+
+    box = [LocatorCall(method="get_by_placeholder", args=["Search by author"])]
+    flow = Flow(
+        domain="bookshop.test",
+        action="search_by_author",
+        inputs={"author": Input(examples=["Author B", "Author C"])},
+        steps=[
+            Goto(url=bookshop + "/authors"),
+            Fill(target=box, value="{{author}}"),
+            Press(target=box, key="Enter"),
+            WaitFor(target="#count"),
+        ],
+        results_selector=".hit h3",
+    )
+    runs = await capture_flow(flow, pause_s=0)
+    mapped = await map_action(flow, runs, replay=executor_replayer(make_executor), use_llm=False, pause_s=0)
+    action = next(a for a in mapped.final.card["actions"] if a["name"] == "search_by_author")
+    step = action["steps"][-1]
+    assert step["extract"]["items"] == {"from": "body", "type": "css", "expr": ".hit h3"}
+    assert step["expect"]["content_type"] == "html" and "q" in step["request"]["query"]
+    assert mapped.final.replay_status == "SUCCESS"
+
+    report = validate_card(mapped.final.card)
+    assert report.ok and report.card is not None, report.errors
+    stored = StoredCard("bookshop.test", 1, report.card, True, "2026-11-08T00:00:00Z", None)
+    env = await make_executor("http").run(stored, "search_by_author", {"author": "Author D"}, user="u")
+    assert env.status == ResultCode.SUCCESS and env.data
+    first = env.data[0]
+    assert any(v == "/book/b003" or str(v).endswith("/book/b003") for v in first.values()), first

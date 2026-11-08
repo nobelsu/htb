@@ -7,6 +7,8 @@ Pages fetch JSON the way real sites do, with the traps a mapper must get right:
 - an analytics beacon to another host (localhost instead of 127.0.0.1) that carries the query (a decoy);
 - a book page that fetches a one-time token first, then the book with it (a two-step action);
 - add to cart (POST /api/cart, a write) with the csrf header;
+- an author search rendered on the server (GET /authors?q=): a plain form, results in the HTML itself, no
+  script and no JSON (mapped by reading the page with CSS, CARD_SPEC "css" extracts);
 - a members area behind a sign-in: /orders (your orders, searchable) sends you to /login when signed out, and
   GET /api/orders answers 401 without the HttpOnly ``member`` cookie. Test sign-in: reader / reader-pass.
 
@@ -274,6 +276,27 @@ async def add_to_cart(request: Request) -> Response:
     items = state.carts.setdefault(sid or "", [])
     items.extend([body["book_id"]] * int(body.get("quantity", 1)))
     return JSONResponse({"items": items})
+
+
+# ---------- rendered on the server ----------
+
+
+@app.get("/authors")
+async def authors(q: str = "") -> HTMLResponse:
+    from html import escape
+
+    hits = [b for b in BOOKS if q and q.strip().lower() in b["author"].lower()]
+    rows = "".join(
+        f'<div class="hit"><h3><a href="/book/{b["id"]}">{escape(b["title"])}</a></h3>'
+        f'<span class="by">{escape(b["author"])}</span></div>'
+        for b in hits
+    )
+    return HTMLResponse(
+        "<!doctype html><html><head><meta charset=utf-8><title>Authors</title></head><body>"
+        '<form method="get" action="/authors"><input name="q" placeholder="Search by author" '
+        f'value="{escape(q)}"><button type="submit">Find</button></form>'
+        f'<p id="count">{len(hits)} books</p><div id="hits">{rows}</div></body></html>'
+    )
 
 
 # ---------- members area ----------

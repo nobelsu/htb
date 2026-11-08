@@ -9,7 +9,7 @@ from urllib.parse import quote, urlencode
 import pytest
 
 from flowmap.capture import CookieRecord, Exchange, Run, secret_hash
-from flowmap.flows import Fill, Flow, Goto, Input, Press, Select
+from flowmap.flows import Fill, Flow, Goto, Input, LocatorCall, Press, Select
 from flowmap.infer import InferError, infer, registrable, same_site, splice, visible_match
 from schema.validate import validate_card
 
@@ -265,7 +265,7 @@ def test_partial_visible_values_are_enough_above_60_percent() -> None:
         infer(flow(), runs_with(worse))
 
 
-def test_html_response_fails_loudly() -> None:
+def test_a_page_rendered_on_the_server_is_read_with_css() -> None:
     def make(b: Builder, v: str, i: int, kind: str) -> None:
         b.add(
             SITE + "/search?q=" + quote(v),
@@ -274,9 +274,12 @@ def test_html_response_fails_loudly() -> None:
             body="<ul>" + "".join(f"<li class=r>{n}</li>" for n in names(v, kind)) + "</ul>",
         )
 
-    with pytest.raises(InferError, match="text/html|html, not JSON") as e:
-        infer(flow(), runs_with(make))
-    assert "regex" in " ".join(e.value.reasons)
+    out = infer(flow(), runs_with(make))  # level 2: the page's own HTML holds the results
+    step = out.steps[-1]
+    assert step["extract"]["items"] == {"from": "body", "type": "css", "expr": ".r"}
+    assert step["expect"]["content_type"] == "html" and out.output["from"] == f"steps.{step['id']}.items"
+    with pytest.raises(InferError, match="no CSS results selector"):  # a locator, not CSS: can't read HTML
+        infer(flow(results_selector=[LocatorCall(method="get_by_role", args=["listitem"])]), runs_with(make))
 
 
 def test_nothing_carries_the_input() -> None:

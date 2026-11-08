@@ -97,6 +97,7 @@ Rules:
 |---|---|---|
 | `jsonpath` | `expr` = JSONPath | `jsonpath_ng.ext.parse` (supports filters like `[?(@.type=="company")]`) |
 | `regex` | `expr` = regex, optional `parse: "json"`, optional `then` = JSONPath | Every match's capture group 1 (like `re.findall`). With `parse: "json"`, each is parsed as JSON; `then` picks from each, and the results are flattened into one list |
+| `css` | `expr` = CSS selector | HTML pages only (`from: body`); each match is `{text, href}` (below) |
 
 - `extract.from` is `body`, `headers` or `cookies`.
 - **Every extract produces a list of matches.**
@@ -105,7 +106,10 @@ Rules:
 - **`expect.paths` should check structure, not content:** use `$.elements`, not `$.elements[0].id`. A missing item is `EMPTY`, a missing structure is `PAGE_CHANGED`.
 - `expect.paths` are always JSONPath, and each must have at least one match.
 - `output.fields` paths are evaluated relative to each item. **A field with no match is `null`**, not an error.
-- CSS selectors: later.
+- **`css`** (added 2026-11-08, for pages that render their results on the server): `expr` is a CSS selector,
+  `from` must be `body` (an HTML page), no `parse`/`then`. Each matching element becomes
+  `{"text": its text with whitespace collapsed, "href": its own href, else its first link's, else null}`, so
+  `output.fields` read them as `$.text` and `$.href`. A selector that matches nothing gives an empty list.
 
 Examples:
 ```json

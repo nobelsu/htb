@@ -57,6 +57,15 @@ Reads only for now. Raw captures go to a temporary folder deleted when the job e
 MAPPER=flowmap MAP_ALLOW_LOCAL=1 uv run python -m runtime.gateway   # then request_map http://127.0.0.1:8910/
 ```
 
+### Pages rendered on the server (level 2)
+
+Most actions are mapped to the site's data request (level 1). When no data request carries the results but the
+page itself does (a GET form whose results come back in the HTML, a page rendered on the server), the action
+fetches that page and reads the results with the recorder's CSS selector: a `css` extract (CARD_SPEC
+"Extraction"), each result `{text, href}`. Inference scores HTML responses by how many of the visible results
+the selector finds there, and needs at least 60% in every real run. Pages that fill their results in with
+scripts from data flowmap can't see still fail; replaying the flow in a browser (level 3) isn't built.
+
 ### Explore
 
 `request_map` with only a site (and, optionally, what the user wants to do there as `task`) explores it

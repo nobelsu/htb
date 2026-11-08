@@ -29,6 +29,7 @@ from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlsplit
 
 from flowmap.capture import SECRET, Exchange, Run
 from flowmap.flows import Flow, Goto, Select, placeholders, render
+from runtime.extract import css_items
 
 OUTPUT_MATCH = 0.6  # share of visible values the output must account for
 MIN_CONFIDENCE = 0.5
@@ -302,7 +303,14 @@ def infer(flow: Flow, runs: list[Run]) -> Inferred:
     main_id = _step_id(ctx, main_sig, main, fallback="main")
     extract: dict[str, Any] = {}
     expect_paths: list[str] = []
-    if kind == "read" or flow.results_selector is not None:
+    page = content_kind(main[real[0].run_id]) == "html" and kind == "read"
+    if page:  # the page itself holds the results (rendered on the server): read them with CSS (level 2)
+        selector, items = _html_output(ctx, main)
+        extract["items"] = {"from": "body", "type": "css", "expr": selector}
+        fields, field_samples = _fields(items, ("text",))
+        output = {"from": f"steps.{main_id}.items", "fields": fields}
+        ctx.reasons.append("the page renders its results on the server: they're read from its HTML")
+    elif kind == "read" or flow.results_selector is not None:
         found = _output(ctx, main)
         if found is not None:
             from_expr, container, fields, field_samples, page_size_items = found
@@ -312,7 +320,7 @@ def infer(flow: Flow, runs: list[Run]) -> Inferred:
         elif kind == "read":
             raise InferError("the response doesn't hold what the page showed", ctx.reasons)
 
-    page_info = _pagination(ctx, main) if kind == "read" else None
+    page_info = _pagination(ctx, main) if kind == "read" and not page else None
     request = _template_request(ctx, main_sig, main, base, page_info)
     if page_info is not None:
         page_param = page_info["param"]
@@ -371,15 +379,26 @@ def _all_values(run: Run) -> list[str]:
 
 
 def _groups(ctx: _Ctx) -> dict[tuple[str, str, str], dict[str, Exchange]]:
-    """Same-site requests grouped by (method, host, path shape); first exchange per run."""
+    """Same-site requests grouped by (method, host, path shape); the first exchange per run, or the first that
+    carries the run's input values."""
     groups: dict[tuple[str, str, str], dict[str, Exchange]] = {}
     for run in ctx.runs:
         for ex in run.exchanges:
             if ex.phase != "flow" or not same_site(ex.url, ctx.site_hosts) or ex.status is None:
                 continue
             sig = path_shape(ex, _all_values(run))
-            groups.setdefault(sig, {}).setdefault(run.run_id, ex)
+            group = groups.setdefault(sig, {})
+            held = group.get(run.run_id)
+            if held is None:
+                group[run.run_id] = ex
+            elif not _carries_any(held, run) and _carries_any(ex, run):
+                # The same page blank first, then with the input (a GET form): the second is the action.
+                group[run.run_id] = ex
     return groups
+
+
+def _carries_any(ex: Exchange, run: Run) -> bool:
+    return any(v and carries(ex, v) for v in _all_values(run))
 
 
 def _submit_step(flow: Flow) -> int:
@@ -419,7 +438,10 @@ def _pick(
         for r in real:
             ex = by_run.get(r.run_id)
             if ex is not None and r.visible:
-                out += _output_score(_json(ex.body), r.visible)
+                if content_kind(ex) == "html" and isinstance(flow.results_selector, str):
+                    out += _html_score(ex.body, flow.results_selector, r.visible)
+                else:
+                    out += _output_score(_json(ex.body), r.visible)
         exs = list(by_run.values())
         post = sum(1 for ex in exs if ex.step > submit or (submit_is_goto and ex.step == submit))
         writes = sig[0] not in ("GET", "HEAD")
@@ -459,6 +481,45 @@ def _pick(
 
 
 # ---------- output ----------
+
+
+def _html_score(body: str | None, selector: str, visible: list[str]) -> float:
+    """Share of the visible results that ``selector`` finds in an HTML response."""
+    if not body or not visible:
+        return 0.0
+    try:
+        texts = [i["text"] for i in css_items(body, selector)]
+    except Exception:
+        return 0.0
+    return sum(1 for vis in visible if any(visible_match(t, vis) for t in texts)) / len(visible)
+
+
+def _html_output(ctx: _Ctx, main: dict[str, Exchange]) -> tuple[str, list[dict[str, Any]]]:
+    """The results read from the page's HTML with the recorder's selector, checked against every real run."""
+    selector = ctx.flow.results_selector
+    if not isinstance(selector, str) or not selector:
+        raise InferError(
+            "the page renders its results on the server, and the recording has no CSS results selector",
+            ["record again and name the results, so their selector is known"],
+        )
+    first: list[dict[str, Any]] = []
+    for r in ctx.runs:
+        if r.kind != "real" or not r.visible:
+            continue
+        share = _html_score(main[r.run_id].body, selector, r.visible)
+        if share < OUTPUT_MATCH:
+            raise InferError(
+                "the page's HTML doesn't hold what the page showed",
+                [
+                    f"{r.run_id}: {selector!r} finds {round(share * 100)}% of the visible results "
+                    "(the page may fill them in with scripts)"
+                ],
+            )
+        if share < 1:
+            ctx.doubt(f"{r.run_id}: the HTML matches {round(share * 100)}% of the visible results", 0.05)
+        if not first:
+            first = css_items(main[r.run_id].body or "", selector)
+    return selector, first
 
 
 def _output_score(doc: Any, visible: list[str]) -> float:

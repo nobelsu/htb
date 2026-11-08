@@ -514,3 +514,9 @@ markers and infers the card deterministically, and the LLM only names things. We
     sign-out wording); the recorder gives up rather than type payment details. The runtime marks a mapped
     write `never_run` in `action_state`; `run_action` says so on its confirmation and the first real
     SUCCESS clears it. flowmap doesn't emit `gen` values yet.
+  - Levels of mapping (asked, 2026-11-08: "let's just do 2"): level 1 is the site's data request (as
+    before); level 2, built, reads a page rendered on the server with a `css` extract (spec addition: each
+    match is `{text, href}`; `from: body` only; selectolax parses). Inference picks the page when its HTML
+    holds the visible results, and prefers the request in a group that carries the input (the blank page of
+    a GET form loads first). Level 3 (replaying the flow in a browser) is not built. Not yet tried on
+    LinkedIn: its search may fill results in with scripts, which level 2 doesn't cover.

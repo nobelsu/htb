@@ -78,7 +78,7 @@ class Param(_Model):
 
 class Extract(_Model):
     from_: ExtractSource = Field(alias="from")
-    type: Literal["jsonpath", "regex"]
+    type: Literal["jsonpath", "regex", "css"]
     expr: str
     parse: Literal["json"] | None = None
     then: str | None = None
