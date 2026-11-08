@@ -23,7 +23,7 @@
         "query": {},
         "headers": {
           "accept": "application/vnd.linkedin.normalized+json+2.1",
-          "csrf-token": "{{session.cookies.JSESSIONID}}",
+          "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
           "x-li-lang": "en_US",
           "x-restli-protocol-version": "2.0.0"
         },
@@ -129,7 +129,7 @@
               "accept": "*/*",
               "content-type": "application/json",
               "origin": "{{base_url}}",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-anchor-page-key": "{{steps.invitation_manager.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.invitation_manager.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
@@ -167,7 +167,7 @@
               "accept": "*/*",
               "content-type": "application/json",
               "origin": "{{base_url}}",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-anchor-page-key": "{{steps.invitation_manager.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.app_config.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
@@ -900,7 +900,7 @@
               "accept": "*/*",
               "content-type": "application/json",
               "origin": "{{base_url}}",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-anchor-page-key": "{{steps.foryou.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.foryou.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
@@ -951,7 +951,7 @@
               "accept": "*/*",
               "content-type": "application/json",
               "origin": "{{base_url}}",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-actor": "Self",
               "x-li-anchor-page-key": "{{steps.navigation.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.foryou.x_li_application_instance}}",
@@ -1122,7 +1122,7 @@
             },
             "headers": {
               "accept": "application/graphql",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-lang": "en_US",
               "x-restli-protocol-version": "2.0.0"
             },
@@ -1221,7 +1221,7 @@
             },
             "headers": {
               "accept": "application/graphql",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-lang": "en_US",
               "x-restli-protocol-version": "2.0.0"
             },
@@ -1310,7 +1310,7 @@
             "query": {},
             "headers": {
               "accept": "application/vnd.linkedin.normalized+json+2.1",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-lang": "en_US",
               "x-restli-protocol-version": "2.0.0"
             },
@@ -1583,7 +1583,7 @@
             },
             "headers": {
               "accept": "application/graphql",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-lang": "en_US",
               "x-li-page-instance": "{{steps.messaging.x_li_page_instance}}",
               "x-restli-protocol-version": "2.0.0"
@@ -1722,7 +1722,7 @@
             },
             "headers": {
               "accept": "application/vnd.linkedin.normalized+json+2.1",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-lang": "en_US",
               "x-li-pem-metadata": "Voyager - Messaging - Inboxes=affiliated-mailbox",
               "x-restli-protocol-version": "2.0.0"
@@ -1951,7 +1951,7 @@
               "accept": "*/*",
               "content-type": "application/json",
               "origin": "{{base_url}}",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-anchor-page-key": "{{steps.invitation_manager.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.invitation_manager.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
@@ -1989,7 +1989,7 @@
               "accept": "*/*",
               "content-type": "application/json",
               "origin": "{{base_url}}",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-anchor-page-key": "{{steps.invitation_manager.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.app_config.x_li_application_instance}}",
               "x-li-application-version": "0.2.8421",
@@ -2746,7 +2746,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.companies.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.companies.x_li_application_instance}}",
@@ -3072,7 +3072,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.companies.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.companies.x_li_application_instance}}",
@@ -3403,7 +3403,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.companies.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.companies.x_li_application_instance}}",
@@ -3739,7 +3739,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.foryou.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.foryou.x_li_application_instance}}",
@@ -3945,7 +3945,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.search_results.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.search_results_2.x_li_application_instance}}",
@@ -4264,7 +4264,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.feed.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
@@ -4567,7 +4567,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.feed.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
@@ -4870,7 +4870,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.feed.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
@@ -4984,7 +4984,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.all.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.feed.x_li_application_instance}}",
@@ -5257,7 +5257,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.people.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.people_2.x_li_application_instance}}",
@@ -5588,7 +5588,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.people.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.people_2.x_li_application_instance}}",
@@ -5862,7 +5862,7 @@
             "headers": {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "origin": "{{base_url}}",
               "x-li-anchor-page-key": "{{steps.people.x_li_anchor_page_key}}",
               "x-li-application-instance": "{{steps.people_2.x_li_application_instance}}",
@@ -6538,7 +6538,7 @@
             },
             "headers": {
               "accept": "application/vnd.linkedin.normalized+json+2.1",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-lang": "en_US",
               "x-restli-protocol-version": "2.0.0"
             },
@@ -6572,7 +6572,7 @@
             },
             "headers": {
               "accept": "application/vnd.linkedin.normalized+json+2.1",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-lang": "en_US",
               "x-restli-protocol-version": "2.0.0",
               "content-type": "application/json; charset=UTF-8",
@@ -6666,7 +6666,7 @@
             },
             "headers": {
               "accept": "application/vnd.linkedin.normalized+json+2.1",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-lang": "en_US",
               "x-restli-protocol-version": "2.0.0"
             },
@@ -6701,7 +6701,7 @@
               "content-type": "text/plain;charset=UTF-8",
               "origin": "{{base_url}}",
               "accept": "application/json",
-              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
               "x-li-lang": "en_US",
               "x-restli-protocol-version": "2.0.0"
             },
