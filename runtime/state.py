@@ -169,6 +169,8 @@ class StateStore:
         columns = {r[1] for r in self._conn.execute("PRAGMA table_info(action_state)")}
         if "never_run" not in columns:  # a write mapped from a held-back request (DECISIONS M8)
             self._conn.execute("ALTER TABLE action_state ADD COLUMN never_run INTEGER NOT NULL DEFAULT 0")
+        if "cleared" not in {r[1] for r in self._conn.execute("PRAGMA table_info(map_jobs)")}:
+            self._conn.execute("ALTER TABLE map_jobs ADD COLUMN cleared INTEGER NOT NULL DEFAULT 0")
 
     def close(self) -> None:
         self._conn.close()
@@ -394,10 +396,19 @@ class StateStore:
 
     def map_jobs_for(self, user: str, limit: int = 10) -> list[MapJob]:
         rows = self._conn.execute(
-            "SELECT * FROM map_jobs WHERE user = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            "SELECT * FROM map_jobs WHERE user = ? AND cleared = 0 ORDER BY created_at DESC, rowid DESC LIMIT ?",
             (user, limit),
         ).fetchall()
         return [_row_to_map_job(r) for r in rows]
+
+    def clear_map_job(self, user: str, job_id: str) -> bool:
+        """Hide a finished map job from its requester's account page (the record stays)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE map_jobs SET cleared = 1 WHERE id = ? AND user = ? AND status NOT IN ('queued', 'running')",
+                (job_id, user),
+            )
+            return cur.rowcount > 0
 
     def next_map_job(self) -> MapJob | None:
         row = self._conn.execute(

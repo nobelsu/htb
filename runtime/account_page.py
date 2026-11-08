@@ -180,15 +180,37 @@ setTimeout(poll, 2000);
 </script>"""
 
 
+def _ago(ts: float) -> str:
+    mins = int((time.time() - ts) // 60)
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins} min ago"
+    return f"{mins // 60} h ago" if mins < 48 * 60 else f"{mins // 1440} days ago"
+
+
 def _app_detail(app: dict[str, Any]) -> str:
     """How to tell connected apps apart: where they run and when they were connected."""
-    mins = int((time.time() - float(app.get("signed_in") or time.time())) // 60)
-    when = (
-        "just now" if mins < 1 else f"{mins} min ago" if mins < 60
-        else f"{mins // 60} h ago" if mins < 48 * 60 else f"{mins // 1440} days ago"
-    )
+    when = _ago(float(app.get("signed_in") or time.time()))
     where = str(app.get("where") or "")
     return f"{where} · connected {when}" if where else f"connected {when}"
+
+
+def _job_detail(job: dict[str, Any]) -> str:
+    """What a setup tried and when: "search companies · 2 h ago", "explore · just now"."""
+    what = str(job.get("action") or "").replace("_", " ") or "explore"
+    stamp = job.get("finished_at") or job.get("created_at") or ""
+    try:
+        from datetime import datetime
+
+        when = _ago(datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        when = ""
+    return f"{what} · {when}" if when else what
+
+
+def _section(label: str, rows: str) -> str:
+    return f'<p class="lbl section">{esc(label)}</p>{rows}' if rows else ""
 
 
 MAP_LABELS = {  # a site being set up for this user (runtime/mapping.py)
@@ -348,7 +370,14 @@ def routes(
             for p in pending
         )
         site_rows = "".join(
-            f'<div class="row"><span class="big{" struck" if s["status"] != "connected" else ""}">{esc(s["domain"])}</span>'
+            f'<div class="row"><span class="big"><span class="stack"><span>{esc(s["domain"])}</span>'
+            f'<span class="mono">{"signed in" if s["status"] == "connected" else "expired"}</span></span></span>'
+            + (
+                ""
+                if s["status"] == "connected"
+                else '<form method="post" action="/account/signin" style="margin:0">'
+                f'{hidden("domain", s["domain"])}<button class="link" type="submit">Sign in again</button></form>'
+            )
             + square("/account/disconnect", "domain", s["domain"], f"Disconnect {s['domain']}")
             + "</div>"
             for s in sites
@@ -362,9 +391,15 @@ def routes(
             for a in apps
         )
         map_rows = "".join(
-            f'<div class="row"><span class="big">{esc(j["domain"])}</span>'
-            f'<span class="pill{" pulse" if j["status"] in ("queued", "running") else ""}">'
-            f'{MAP_LABELS.get(j["status"], j["status"])}</span></div>'
+            f'<div class="row"><span class="big"><span class="stack"><span>{esc(j["domain"])}</span>'
+            f'<span class="mono">{esc(_job_detail(j))}</span></span></span>'
+            + (
+                f'<span class="pill pulse">{MAP_LABELS.get(j["status"], j["status"])}</span>'
+                if j["status"] in ("queued", "running")
+                else f'<span class="lbl">{MAP_LABELS.get(j["status"], j["status"])}</span>'
+                + square("/account/setups/clear", "job_id", j["job_id"], f"Clear {j['domain']}")
+            )
+            + "</div>"
             for j in (maps.jobs_for(user)[:5] if maps is not None else [])
         )
         has_rows = bool(site_rows or app_rows or map_rows)
@@ -389,7 +424,8 @@ def routes(
         body = (
             f'<h1 class="title">{esc(user)}</h1>' + notice(message, error=False) + new_key_rows
             + f'<div id="waiting" data-seen="{esc(json.dumps([p["url"] for p in pending]))}">{waiting_rows}</div>'
-            + map_rows + site_rows + app_rows + empty
+            + _section("Setting up", map_rows) + _section("Signed in", site_rows) + _section("Apps", app_rows)
+            + empty
             + f'<div class="tiles">{"".join(tiles)}</div>'
         )
         sign_out = (
@@ -430,6 +466,21 @@ def routes(
         if connections is not None and domain:
             await connections.disconnect(user, domain)
         return RedirectResponse("/account", status_code=302)
+
+    async def clear_setup(request: Request) -> Response:
+        user, form, refused = await guarded(request)
+        if refused is not None or user is None:
+            return refused or Response(status_code=400)
+        if maps is not None and form.get("job_id"):
+            maps.state.clear_map_job(user, form.get("job_id", ""))
+        return RedirectResponse("/account", status_code=302)
+
+    async def sign_in_again(request: Request) -> Response:
+        user, form, refused = await guarded(request)
+        if refused is not None or user is None:
+            return refused or Response(status_code=400)
+        out = connections.start(user, form.get("domain", "")) if connections is not None else {}
+        return RedirectResponse(str(out.get("url") or "/account"), status_code=302)
 
     async def new_key(request: Request) -> Response:
         user, _, refused = await guarded(request)
@@ -502,6 +553,8 @@ def routes(
         Route("/account/status", status, methods=["GET"]),
         Route("/account/disconnect", disconnect, methods=["POST"]),
         Route("/account/key", new_key, methods=["POST"]),
+        Route("/account/setups/clear", clear_setup, methods=["POST"]),
+        Route("/account/signin", sign_in_again, methods=["POST"]),
         Route("/account/apps/revoke", revoke_app, methods=["POST"]),
         Route("/account/password", password, methods=["GET"]),
         Route("/account/password", password_post, methods=["POST"]),

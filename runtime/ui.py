@@ -66,6 +66,8 @@ a{color:inherit}
 form.stack{display:flex;flex-direction:column;gap:22px;margin:0}
 .fld{display:flex;flex-direction:column;gap:4px}
 .lbl{font-size:12px;color:var(--muted)}
+.lbl.section{margin:24px 0 2px;text-transform:uppercase;letter-spacing:.06em}
+button.link{border:0;background:none;color:var(--action);font:inherit;font-size:13px;cursor:pointer;padding:0 8px}
 .field{font:inherit;color:inherit;background:transparent;border:0;border-bottom:1px solid var(--ink);padding:6px 0 7px;
   outline:none;width:100%;border-radius:0}
 .field:focus{border-bottom:2px solid var(--action);padding-bottom:6px}

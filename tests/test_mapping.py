@@ -420,9 +420,15 @@ async def test_the_account_page_lists_your_map_jobs(
             login = {"action": "password", "login": "alice", "password": "alice-password1"}
             assert (await http.post(f"{base}/account/login", data=login)).status_code == 302
             page = (await http.get(f"{base}/account")).text
+            failed = next(j for j in m.jobs_for("alice") if j["domain"] == DOMAIN)
+            cleared = await http.post(f"{base}/account/setups/clear", data={"job_id": failed["job_id"]})
+            assert cleared.status_code == 302
+            after = (await http.get(f"{base}/account")).text
     assert "second.test" in page and ("Queued" in page or "Setting up" in page)
     assert DOMAIN in page and ("Didn&#x27;t work" in page or "Didn't work" in page)
+    assert "search first" in page  # what was tried, and when
     assert "third.test" not in page  # bob's
+    assert DOMAIN not in after and "second.test" in after  # cleared; a running one can't be
 
 
 async def test_a_write_never_run_for_real_says_so_until_it_works(

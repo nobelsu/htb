@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -45,6 +46,7 @@ from schema.params import CONFIRMATION_ARG, coerce_params, confirmation_summary,
 from schema.placeholders import parse_step_ref
 
 log = logging.getLogger("runtime.executor")
+REDIRECT_LOOP = re.compile(r"TooManyRedirects|too many redirects|redirects followed|redirect loop", re.I)
 
 ACTION_CAP_S = 30.0
 DEFAULT_TIMEOUT_MS = 10_000
@@ -240,7 +242,11 @@ class Executor:
                 return R.ERROR, {}
             try:
                 resp = await session.send(built, DEFAULT_TIMEOUT_MS / 1000)
-            except (TransportTimeout, TransportError):
+            except TransportError as e:
+                # A site that has ended a session often bounces every request in a loop (LinkedIn: /feed/ to
+                # /feed/, clearing its login cookie each time): on the sign-in check that means signed out.
+                return (R.AUTH_EXPIRED if REDIRECT_LOOP.search(str(e)) else R.ERROR), {}
+            except TransportTimeout:
                 return R.ERROR, {}
             return resp, session.site_cookies
         finally:

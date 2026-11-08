@@ -16,6 +16,7 @@ from runtime.registry import Registry, StoredCard
 from runtime.session_store import ChainedSessionStore, EncryptedSessionStore, new_session_key
 from runtime.sessions import DevEnvSessionStore, InMemorySessionStore
 from runtime.tiers import HttpSession, ImpersonateSession
+from schema import validate_card
 from schema.envelope import ResultCode as R
 from tests.fixture_site.app import CSRF, VALID_SID
 
@@ -157,3 +158,15 @@ async def test_site_cookies_leave_out_other_sites(session_cls: Any) -> None:
         assert session.site_cookies == {"sid": "a", "pref": "1"}
     finally:
         await session.aclose()
+
+
+async def test_a_redirect_loop_on_the_sign_in_check_means_signed_out(fixture_card: dict[str, Any]) -> None:
+    """LinkedIn bounces an ended session between /feed/ and /feed/: the check says expired, not a network
+    error (which never marks a sign-in expired), so the account page and the agent stop calling it signed in."""
+    card = copy.deepcopy(fixture_card)
+    card["connect_providers"][0]["session_check"]["url"] = "{{base_url}}/api/loop"
+    report = validate_card(card)
+    assert report.ok and report.card is not None
+    store = InMemorySessionStore()
+    store.put("u", report.card.domain, "shop", {"sid": "whatever"})
+    assert await Executor(store, Confirmer("s")).check_session(report.card, "shop", "u") == R.AUTH_EXPIRED

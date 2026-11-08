@@ -153,6 +153,12 @@ def me(sid: str | None = Cookie(default=None)) -> Response:
     return JSONResponse({"user": {"name": "Test User"}})
 
 
+@app.get("/api/loop")
+def loop() -> Response:
+    """A site that has ended a session: every request bounces back to itself (LinkedIn's /feed/ loop)."""
+    return RedirectResponse("/api/loop", status_code=302)
+
+
 @app.get("/api/account/orders")
 def orders(request: Request, sid: str | None = Cookie(default=None)) -> Response:
     if sid == EXPIRED_SID:
