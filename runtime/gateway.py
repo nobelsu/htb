@@ -148,7 +148,8 @@ REQUEST_MAP_TOOL = types.Tool(
     "an action (a few minutes). Or give only the site (and, optionally, what the user wants to do there as "
     "task) to explore it: the server finds the site's main reads itself and maps the ones that work (up to "
     "ten minutes; it also maps common writes, which never reach the site while mapping). Tell the user, then "
-    "follow it with map_status. Only for sites with no actions yet; a single named action is a read.",
+    "follow it with map_status. For a site with no actions, or to add what a site can't do yet (a named action it "
+    "lacks, or explore again for more); what it can do already is never re-mapped. A named action is a read.",
     input_schema={
         "type": "object",
         "properties": {

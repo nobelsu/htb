@@ -71,6 +71,9 @@ class MapRequest:
     # provider id, and give the card a connect provider of that id whose login page is ``login_url``.
     sign_in: str | None = None
     login_url: str | None = None
+    # The site's card when it has one: add to it (an action it lacks, or what an explore finds), never
+    # re-map what's there.
+    existing: dict[str, Any] | None = None
 
 
 def provider_for(domain: str) -> str:
@@ -159,7 +162,9 @@ class MapManager:
         domain = self.mapper.domain_for(host)
         stored = self.registry.get(domain)
         if stored is not None:
-            return self._existing(user, stored.card)
+            answer = self._existing(user, stored.card, action)
+            if answer is not None:
+                return answer  # it's there (or being healed); otherwise the job adds to the card
         open_job = self.state.open_map_job_for(domain)
         if open_job is not None:
             return self._status(open_job, user)
@@ -171,11 +176,19 @@ class MapManager:
         self._wake.set()
         return self._status(job, user)
 
-    def _existing(self, user: str, card: Card) -> dict[str, Any]:
-        """The site is mapped already. A broken action is healed instead (and the heal's status returned)."""
+    def _existing(self, user: str, card: Card, action: str) -> dict[str, Any] | None:
+        """The site has a card. A broken action is healed instead (and the heal's status returned); an action
+        that's there says so; anything else (an action it lacks, or exploring for more) is mapped and added
+        to the card (None: queue the job)."""
         domain = card.domain
-        broken = [a.name for a in card.actions if self.state.is_degraded(domain, a.name)]
-        healing = [a.name for a in card.actions if self.state.open_job_for(domain, a.name) is not None]
+        if action and card.action(action) is not None:
+            names = [action]
+        elif action:
+            return None
+        else:
+            names = [a.name for a in card.actions]
+        broken = [n for n in names if self.state.is_degraded(domain, n)]
+        healing = [n for n in names if self.state.open_job_for(domain, n) is not None]
         if self.healer is not None and (healing or broken):
             name = (healing or broken)[0]
             heal = self.healer.page_changed(domain, name, "a map was asked for while it is broken", user)
@@ -187,13 +200,14 @@ class MapManager:
                     "user_message": f"Part of {domain} stopped working and is being repaired.",
                     "hint": "check heal_status(heal.job_id); once it succeeds, use find_actions as usual",
                 }
+        if not action:
+            return None  # explore again: whatever the card doesn't have yet is added
         return {
             "status": "exists",
             "domain": domain,
             "actions": [a.name for a in card.actions],
-            "user_message": f"{domain} is already set up.",
-            "hint": f"use find_actions(site={domain!r}). Adding actions to a site that is already mapped "
-            "isn't supported yet.",
+            "user_message": f"{domain} can already do that.",
+            "hint": f"use find_actions(site={domain!r}), then run_action",
         }
 
     # ---- status ------------------------------------------------------------
@@ -286,11 +300,18 @@ class MapManager:
             pass
 
     async def run_job(self, job: MapJob) -> None:
-        if self.registry.get(job.domain) is not None:
-            self.state.finish_map_job(job.id, "failed", {"error": f"{job.domain} was mapped in the meantime"})
+        stored = self.registry.get(job.domain)
+        if stored is not None and job.action and stored.card.action(job.action) is not None:
+            self.state.finish_map_job(
+                job.id, "succeeded", {"actions": [], "note": "it was added in the meantime"}
+            )
             return
+        base_version = stored.version if stored is not None else None
+        existing = stored.card.to_json_dict() if stored is not None else None
+        before = {a.name for a in stored.card.actions} if stored is not None else set()
         started = time.monotonic()
-        provider = provider_for(job.domain)
+        providers = stored.card.connect_providers if stored is not None else []
+        provider = providers[0].id if providers else provider_for(job.domain)
         signed_in = self.executor.sessions.get(job.user, job.domain, provider) is not None
         request = MapRequest(
             job.id,
@@ -301,7 +322,10 @@ class MapManager:
             dict(job.inputs),
             job.user,
             sign_in=provider if signed_in else None,
-            login_url=(job.result or {}).get("login_url") or (job.url if signed_in else None),
+            login_url=(job.result or {}).get("login_url")
+            or (providers[0].login_url if providers else None)
+            or (job.url if signed_in else None),
+            existing=existing,
         )
         try:
             outcome = await self.mapper.map_site(request, lambda line: self.state.map_progress(job.id, line))
@@ -335,8 +359,12 @@ class MapManager:
         if card.domain != job.domain:
             self.state.finish_map_job(job.id, "failed", {"error": f"the mapped card is for {card.domain}"})
             return
-        problems = await self._check_examples(card, job.user)
-        if problems and len(problems) == len([a for a in card.actions if a.kind == "read"]):
+        new = [a for a in card.actions if a.name not in before]
+        if not new:
+            self.state.finish_map_job(job.id, "failed", {"error": "nothing new could be added", "ms": ms})
+            return
+        problems = await self._check_examples(card, job.user, {a.name for a in new})
+        if problems and len(problems) == len([a for a in new if a.kind == "read"]):
             self.state.finish_map_job(
                 job.id,
                 "failed",
@@ -354,7 +382,7 @@ class MapManager:
                 )
                 return
             card = again.card
-        for p in card.connect_providers:
+        for p in card.connect_providers if stored is None else []:  # a new card's sign-in check
             code = await self.executor.check_session(card, p.id, job.user)
             if code is not None:
                 self.state.finish_map_job(
@@ -363,16 +391,20 @@ class MapManager:
                     {"error": f"the mapped sign-in check fails with your sign-in ({code.value})", "ms": ms},
                 )
                 return
-        if self.registry.get(job.domain) is not None:
-            self.state.finish_map_job(job.id, "failed", {"error": f"{job.domain} was mapped in the meantime"})
+        now = self.registry.get(job.domain)
+        if (now.version if now is not None else None) != base_version:
+            self.state.finish_map_job(
+                job.id, "failed", {"error": f"{job.domain} changed while this ran; ask again to add to it"}
+            )
             return
-        version = self.registry.save(card, note=f"map {job.id}: {', '.join(a.name for a in card.actions)}")
+        added = [a.name for a in card.actions if a.name not in before]
+        version = self.registry.save(card, note=f"map {job.id}: {', '.join(added)}")
         names = [a.name for a in card.actions]
-        result: dict[str, Any] = {"actions": names, "ms": ms, "report": outcome.report}
+        result: dict[str, Any] = {"actions": names, "added": added, "ms": ms, "report": outcome.report}
         if problems:
             result["dropped"] = problems
         for action in card.actions:
-            if action.kind == "write":  # mapped from a held-back request: never sent for real
+            if action.kind == "write" and action.name in added:  # from a held-back request: never sent
                 self.state.set_never_run(job.domain, action.name, True)
         self.state.finish_map_job(job.id, "succeeded", result, new_version=version)
         log.info("map %s succeeded: %s version %d in %d ms", job.id, job.domain, version, ms)
@@ -406,11 +438,12 @@ class MapManager:
             log.info("%s signed in to %s: resuming %s", user, domain, ", ".join(resumed))
             self._wake.set()
 
-    async def _check_examples(self, card: Card, user: str) -> dict[str, str]:
-        """Every read action's examples, run through the executor as agents will call them."""
+    async def _check_examples(self, card: Card, user: str, only: set[str] | None = None) -> dict[str, str]:
+        """Every read action's examples (``only``: those actions'), run through the executor as agents will
+        call them."""
         problems: dict[str, str] = {}
         for action in card.actions:
-            if action.kind != "read":
+            if action.kind != "read" or (only is not None and action.name not in only):
                 continue
             for i, example in enumerate(action.examples):
                 env = await self.executor.run_internal(card, 0, action.name, dict(example.params), user)

@@ -451,3 +451,57 @@ async def test_a_write_never_run_for_real_says_so_until_it_works(
     assert done["status"] == "SUCCESS" and not state.is_never_run(DOMAIN, "add_to_cart")
     again = await run(params={"sku": "SKU-003"})
     assert "never_run_for_real" not in again
+
+
+class AddsTo(StandIn):
+    """A mapper that adds one action from ``source`` to the card it's given (what flowmap does)."""
+
+    def __init__(self, source: dict[str, Any], name: str) -> None:
+        super().__init__(source)
+        self.name = name
+
+    async def map_site(self, request: MapRequest, progress: Callable[[str], None]) -> MapOutcome:
+        self.requests.append(request)
+        await self.release.wait()
+        assert request.existing is not None  # it starts from the site's card
+        card = copy.deepcopy(request.existing)
+        assert self.card is not None
+        card["actions"].append(copy.deepcopy(next(a for a in self.card["actions"] if a["name"] == self.name)))
+        return MapOutcome(card=card, report={})
+
+
+async def test_a_site_that_is_set_up_can_gain_actions(
+    registry: Registry, state: StateStore, executor: Executor, fixture_card: dict[str, Any]
+) -> None:
+    full = public_reads(fixture_card)
+    first = copy.deepcopy(full)
+    first["actions"] = [a for a in first["actions"] if a["name"] == "search_products"]
+    registry.save(first)
+    m = maps(registry, state, executor, AddsTo(full, "get_item"))
+
+    # What it can do already is never re-mapped.
+    assert (await m.request("bob", "fixture.test", "search", "search_products"))["status"] == "exists"
+    job = await m.request("bob", "fixture.test", "look up an item", "get_item")
+    assert job["status"] == "queued"
+    await m.drain()
+    done = await m.status(job["job_id"], "bob")
+    assert done is not None and done["status"] == "succeeded", done
+    assert done["result"]["added"] == ["get_item"] and done["new_version"] == 2
+    stored = registry.get(DOMAIN)
+    assert stored is not None and [a.name for a in stored.card.actions] == ["search_products", "get_item"]
+
+    # A card that changed while the job ran isn't overwritten.
+    m.mapper = AddsTo(full, "get_product")
+    m.mapper.release.clear()
+    job = await m.request("bob", "fixture.test", "a product's page", "get_product")
+    worker = asyncio.create_task(m.run_pending())
+    await asyncio.sleep(0.05)
+    registry.save(stored.card.to_json_dict(), note="someone else's change")  # version 3
+    m.mapper.release.set()
+    await worker
+    out = await m.status(job["job_id"], "bob")
+    assert (
+        out is not None and out["status"] == "failed" and "changed while this ran" in out["result"]["error"]
+    )
+    latest = registry.get(DOMAIN)
+    assert latest is not None and latest.version == 3

@@ -109,8 +109,8 @@ class FlowMapper:
         if not request.action:
             return await self._explore(request, setup, step, lines)
         task = Task(request.action, request.task, request.url, dict(request.inputs))
-        card, report = await self._map_task(task, request, setup, None, step, lines)
-        if request.sign_in:
+        card, report = await self._map_task(task, request, setup, request.existing, step, lines)
+        if request.sign_in and not _has_sign_in(request.existing):
             report["sign_in"] = await self._add_sign_in(card, request, step, lines)
         return MapOutcome(card=card, report=report, log=lines)
 
@@ -243,8 +243,9 @@ class FlowMapper:
         t0 = time.monotonic()
         step(f"looking at {request.url}")
         page = await self._look(request.url, setup)
-        tasks = await self._propose(request, page=page, lines=lines)
-        card: dict[str, Any] | None = None
+        card: dict[str, Any] | None = request.existing  # adding to a card: what it has is never re-mapped
+        had = {a["name"] for a in card["actions"]} if card is not None else set()
+        tasks = await self._propose(request, page=page, lines=lines, mapped=None, taken=had or None)
         tried: list[dict[str, Any]] = []
         for round_no in (1, 2):
             if tasks:
@@ -280,15 +281,15 @@ class FlowMapper:
                 break
             taken = {a["name"] for a in card["actions"]} | {t["action"] for t in tried}
             tasks = await self._propose(request, page="", lines=lines, mapped=mapped, taken=taken)
-        if card is None:
-            reasons = "; ".join(f"{t['action']}: {t.get('reason')}" for t in tried) or "nothing was proposed"
+        if card is None or {a["name"] for a in card["actions"]} == had:
+            reasons = "; ".join(f"{t['action']}: {t.get('reason')}" for t in tried) or "nothing new proposed"
             raise MapError(f"none of the explored actions could be mapped ({reasons})", lines)
         report: dict[str, Any] = {
             "explored": tried,
             "actions": [a["name"] for a in card["actions"]],
             "ms": int((time.monotonic() - t0) * 1000),
         }
-        if request.sign_in:
+        if request.sign_in and not _has_sign_in(request.existing):
             report["sign_in"] = await self._add_sign_in(card, request, step, lines)
         step(f"explored {request.domain}: kept {', '.join(report['actions'])}")
         return MapOutcome(card=card, report=report, log=lines)
@@ -359,6 +360,11 @@ def _same_requests(card: dict[str, Any], name: str) -> str | None:
 
     new = next(a for a in card["actions"] if a["name"] == name)
     return next((a["name"] for a in card["actions"] if a["name"] != name and shape(a) == shape(new)), None)
+
+
+def _has_sign_in(card: dict[str, Any] | None) -> bool:
+    """The card already says how to check a sign-in (adding to it keeps that)."""
+    return bool(card and card.get("connect_providers"))
 
 
 def _providers(request: MapRequest) -> list[dict[str, Any]] | None:
