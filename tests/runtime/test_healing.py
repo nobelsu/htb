@@ -279,7 +279,6 @@ async def test_healed_write_goes_live(
     add = stored.card.action("add_to_cart")
     assert add is not None and add.steps[0].request.url.endswith("/api/v2/cart")
     assert not state.is_degraded(DOMAIN, "add_to_cart")
-    assert state.candidates(DOMAIN) == []
     # The healed write was not executed to validate it.
     assert "POST /api/cart" not in hits(site_url) and "POST /api/v2/cart" not in hits(site_url)
 

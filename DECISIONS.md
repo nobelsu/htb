@@ -157,7 +157,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **H4 Healed writes go live (asked; spec changed).** A healed write action goes into the new version like a read
   (WeiWei's mapper decision, approved by Nobel). Writes are never executed to validate them (that would really
   post/buy/follow, and writes usually have no examples), so the job result lists them under `unvalidated`. The
-  `heal_candidates` table is no longer written; it stays in the schema for history. `CARD_SPEC.md` "Healing" is
+  `heal_candidates` table is no longer written (*since removed* from the schema; old databases keep an
+  unused empty table). `CARD_SPEC.md` "Healing" is
   updated to match.
 - **H5 Heal adapter (asked).** `runtime/jobs/mapper_remapper.py` is the `Remapper` done by WeiWei's mapper; Nobel builds
   it (runtime side), calling the mapper's own `recapture` and `map_domain` without changing `mapper/`. Turned on

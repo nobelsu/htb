@@ -17,10 +17,6 @@ def redact_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return {k: (REDACTED if is_sensitive_header(k) else v) for k, v in headers.items()}
 
 
-def redact_cookies(cookies: Mapping[str, str]) -> dict[str, str]:
-    return {k: REDACTED for k in cookies}
-
-
 def scrub(text: str, secrets: list[str]) -> str:
     """Replace any secret value that leaked into free text (e.g. an error message)."""
     for s in secrets:

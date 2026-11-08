@@ -115,26 +115,13 @@ def test_rollback(reg: Registry) -> None:
         reg.rollback("linkedin.com", 7)
 
 
-def test_listeners_fire_on_change(reg: Registry) -> None:
-    seen: list[str] = []
-    reg.on_change(seen.append)
-    reg.save(variant("v1"))
-    reg.save(variant("v2"), activate=False)  # active card unchanged
-    reg.rollback("linkedin.com", 1)  # already active, no change
-    reg.rollback("linkedin.com", 2)
-    assert seen == ["linkedin.com", "linkedin.com"]
-
-
 def test_refresh_sees_writes_from_another_connection(reg: Registry, db_path: Path) -> None:
-    seen: list[str] = []
-    reg.on_change(seen.append)
     other = Registry(db_path)  # e.g. the mapper process
     other.save(variant("from mapper"))
     assert reg.get("linkedin.com") is None  # in-memory copy is stale until refresh
     assert reg.refresh() == {"linkedin.com"}
     stored = reg.get("linkedin.com")
     assert stored is not None and stored.card.actions[0].description == "from mapper"
-    assert seen == ["linkedin.com"]
     assert reg.refresh() == set()
     other.close()
 

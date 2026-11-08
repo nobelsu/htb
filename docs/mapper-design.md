@@ -176,9 +176,9 @@ included, with no human approval step**. The per-call `requires_confirmation` pr
 
 - **Healing differs from the spec (decided by WeiWei).** The mapper's `heal` re-maps the whole site and
   saves the result as the active version, write actions included, with no approval step. Nobel's
-  `runtime/jobs/healing.py` still holds healed write actions back (`heal_candidates`, "writes are never
+  `runtime/healing.py` still holds healed write actions back (`heal_candidates`, "writes are never
   auto-activated", around line 239); per this decision that hold-back should go.
-- **Next (mapper): `Remapper` adapter.** Wire `mapper heal` in as the runtime's `runtime.jobs.healing.Remapper`
+- **Next (mapper): `Remapper` adapter.** Wire `mapper heal` in as the runtime's `runtime.healing.Remapper`
   (`async remap(card, actions, reason) -> card`), so a `PAGE_CHANGED` heal job re-records and re-maps the
   site automatically. Until then, run `python -m mapper heal captures/<domain>/ --save` by hand.
 
@@ -208,7 +208,7 @@ python -m mapper heal captures/<domain>/ [--live] [--save --db runtime.db]   # r
 ```
 
 Validation = `schema.validate_card` + `tools/check_card.py` + `mapper/checks.py` (no live session value may
-appear in the card). `--live` runs each read action's examples through `runtime.run.executor.Executor` (via the
+appear in the card). `--live` runs each read action's examples through `runtime.executor.Executor` (via the
 `Executor` protocol in `mapper/validate.py`) with the capture's session; it sends real requests, so it is
-opt-in. `--save` writes a valid card to `runtime.store.registry.Registry`. Optional LLM steps use Claude Sonnet 5.5
+opt-in. `--save` writes a valid card to `runtime.registry.Registry`. Optional LLM steps use Claude Sonnet 5.5
 (`claude-sonnet-5-5`) when `ANTHROPIC_API_KEY` is set and the `[llm]` extra is installed.

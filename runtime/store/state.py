@@ -1,5 +1,5 @@
-"""Runtime learnings, healing and mapping records: `action_state`, `heal_jobs`, `heal_candidates`,
-`heal_events`, `map_jobs`.
+"""Runtime learnings, healing and mapping records: `action_state`, `heal_jobs`, `heal_events`,
+`map_jobs`.
 
 Lives in the same SQLite file as the registry (separate connection, WAL mode).
 """
@@ -40,15 +40,6 @@ CREATE TABLE IF NOT EXISTS heal_jobs (
     finished_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS heal_jobs_domain ON heal_jobs (domain, status);
-CREATE TABLE IF NOT EXISTS heal_candidates (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    domain       TEXT NOT NULL,
-    action       TEXT NOT NULL,
-    job_id       TEXT NOT NULL,
-    action_json  TEXT NOT NULL,
-    status       TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
-    created_at   TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS heal_events (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id   TEXT NOT NULL,
@@ -352,31 +343,6 @@ class StateStore:
                 "at": r["at"],
             }
             for r in self._conn.execute(sql, args).fetchall()
-        ]
-
-    # ---- heal_candidates ---------------------------------------------------
-
-    def add_candidate(self, domain: str, action: str, job_id: str, action_json: dict[str, Any]) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO heal_candidates (domain, action, job_id, action_json, created_at) VALUES "
-                "(?,?,?,?,?)",
-                (domain, action, job_id, json.dumps(action_json), _now()),
-            )
-
-    def candidates(self, domain: str) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            "SELECT * FROM heal_candidates WHERE domain = ? ORDER BY id", (domain,)
-        ).fetchall()
-        return [
-            {
-                "id": r["id"],
-                "action": r["action"],
-                "job_id": r["job_id"],
-                "status": r["status"],
-                "action_json": json.loads(r["action_json"]),
-            }
-            for r in rows
         ]
 
     # ---- map_jobs ----------------------------------------------------------

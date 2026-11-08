@@ -343,7 +343,7 @@ def infer(flow: Flow, runs: list[Run], prefer: tuple[str, str, str] | None = Non
     elif kind == "read":  # a write was held back: its only response is the stand-in, nothing to read
         found = _output(ctx, main)
         if found is not None:
-            from_expr, container, fields, field_samples, page_size_items = found
+            from_expr, container, fields, field_samples, _ = found
             first_body = main[real[0].run_id].body
             streamed = _json(first_body) is None and _stream_doc(first_body) is not None
             if streamed and from_expr.startswith("$[*]"):

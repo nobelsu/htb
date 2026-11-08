@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,8 +26,6 @@ CREATE TABLE IF NOT EXISTS action_maps (
 CREATE UNIQUE INDEX IF NOT EXISTS action_maps_one_active
     ON action_maps (domain) WHERE active = 1;
 """
-
-ChangeListener = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -58,7 +55,6 @@ class Registry:
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA_SQL)
         self._active: dict[str, StoredCard] = {}
-        self._listeners: list[ChangeListener] = []
         self._data_version = -1
         self.refresh()
 
@@ -134,14 +130,10 @@ class Registry:
 
     # ---- change tracking ---------------------------------------------------
 
-    def on_change(self, listener: ChangeListener) -> None:
-        """Call `listener(domain)` whenever a domain's active card changes."""
-        self._listeners.append(listener)
-
     def refresh(self) -> set[str]:
         """Reload active cards if the database changed (including writes by other processes).
 
-        Returns the domains whose active card changed, after notifying listeners.
+        Returns the domains whose active card changed.
         """
         with self._lock:
             dv = self._conn.execute("PRAGMA data_version").fetchone()[0]
@@ -158,9 +150,6 @@ class Registry:
                 if (fresh.get(d) and fresh[d].version) != (self._active.get(d) and self._active[d].version)
             }
             self._active = fresh
-        for domain in sorted(changed):
-            for listener in self._listeners:
-                listener(domain)
         return changed
 
     def close(self) -> None:

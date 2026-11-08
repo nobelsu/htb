@@ -34,7 +34,6 @@ log = logging.getLogger("flowmap.explore")
 MAX_PER_ROUND = 4  # per page looked at
 MAX_ACTIONS = 12  # new actions per explore
 MAX_DEPTH = 3  # pages reached by following results' links, from the start page (0)
-LINKS_PER_KIND = 1  # one example page of each kind is looked at
 MAX_INPUTS = 4
 MAX_WRITES = 2  # per round
 NEVER = re.compile(
