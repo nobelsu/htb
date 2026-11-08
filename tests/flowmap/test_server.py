@@ -393,3 +393,76 @@ async def test_the_blocking_test_keeps_the_request_whose_absence_empties_the_pag
     monkeypatch.setattr(server, "candidates", lambda f, r: [page, ping])
     blocked.clear()
     assert await mapper._confirm_source(flow, [run], None, lambda line: None) == page  # type: ignore[arg-type]
+
+
+@pytest.mark.browser
+async def test_exploring_again_carries_on_from_the_actions_the_site_has(
+    bookshop: str, tmp_path: Path
+) -> None:
+    """A site with just the author search: exploring again proposes nothing new on the start page, but the
+    crawl starts from where the search's results lead (book pages) and adds get_book there."""
+    pytest.importorskip("playwright.async_api")
+    import re
+
+    from tests.flowmap.test_agent import last_page
+
+    def same_again(messages: list[dict[str, Any]]) -> dict[str, Any]:
+        task = {
+            "action": "search_by_author",
+            "kind": "read",
+            "task": 'Search the books by the author "Author D"',
+            "start_url": bookshop + "/authors",
+            "inputs": [{"name": "author", "value": "Author D"}],
+        }
+        return {"name": "propose_tasks", "input": {"tasks": [task]}}  # taken: dropped before it runs
+
+    def book_page(messages: list[dict[str, Any]]) -> dict[str, Any]:
+        url = re.search(r"This page: (\S+/book/(b\d+))", last_page(messages))
+        assert url is not None
+        task = {
+            "action": "get_book",
+            "kind": "read",
+            "task": f"Read the book {url.group(2)}",
+            "start_url": url.group(1),
+            "inputs": [{"name": "book_id", "value": url.group(2)}],
+        }
+        return {"name": "propose_tasks", "input": {"tasks": [task]}}
+
+    client = FakeClient(
+        [
+            # the first map: just the author search
+            {"name": "fill", "input": {"element": role("textbox", "Search by author"), "text": "Author D"}},
+            {"name": "press", "input": {"key": "Enter"}},
+            done_with_headings(3),
+            # exploring again
+            same_again,
+            book_page,
+            done_with_headings(1),
+            {"name": "propose_tasks", "input": {"tasks": []}},
+        ]
+    )
+    executor = Executor(InMemorySessionStore(), Confirmer("s"))
+    registry, state = Registry(tmp_path / "rt.db"), StateStore(tmp_path / "rt.db")
+    mapper = BookshopMapper(
+        executor, tmp_path / "flows", channel="chromium", pause_s=0, client=client, use_llm=False
+    )
+    maps = MapManager(registry, state, executor, mapper, config=MapConfig(allow_local=True))
+    try:
+        first = await maps.request(
+            "alice",
+            bookshop + "/authors",
+            "search books by author",
+            "search_by_author",
+            {"author": "Author D"},
+        )
+        await maps.drain()
+        assert (await maps.status(first["job_id"], "alice") or {}).get("status") == "succeeded"
+        again = await maps.request("alice", bookshop + "/authors")
+        await maps.drain()
+        out = await maps.status(again["job_id"], "alice")
+        assert out is not None and out["status"] == "succeeded", out
+        assert out["result"]["added"] == ["get_book"] and out["new_version"] == 2
+        assert not client.script
+    finally:
+        registry.close()
+        state.close()

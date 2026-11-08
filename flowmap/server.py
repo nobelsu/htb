@@ -292,6 +292,10 @@ class FlowMapper:
         tried: list[dict[str, Any]] = []
         frontier: deque[tuple[str, int, str | None]] = deque([(request.url, 0, None)])
         kinds: set[str] = set()
+        if card is not None:  # exploring again: carry on from where the actions it has lead, not just the top
+            for existing in [x for x in card["actions"] if x["kind"] == "read"]:
+                for link in await self._links(card, existing["name"], request):
+                    frontier.append((link, 1, existing["name"]))
         added = 0
         no_links: list[str] = []  # kept actions whose results carry ids, not links (a JSON API's)
         while frontier and added < MAX_ACTIONS:
