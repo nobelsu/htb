@@ -6753,17 +6753,13 @@
           "id": "me",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/voyager/api/graphql",
-            "query": {
-              "includeWebMetadata": "true",
-              "variables": "()",
-              "queryId": "voyagerFeedDashGlobalNavs.a618d03c522276ae43e2ecc891d11cf2"
-            },
+            "url": "{{base_url}}/voyager/api/me",
+            "query": {},
             "headers": {
+              "accept": "application/vnd.linkedin.normalized+json+2.1",
               "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
-              "x-restli-protocol-version": "2.0.0",
               "x-li-lang": "en_US",
-              "accept": "application/vnd.linkedin.normalized+json+2.1"
+              "x-restli-protocol-version": "2.0.0"
             },
             "body": null
           },
@@ -6772,15 +6768,13 @@
               200
             ],
             "content_type": "any",
-            "paths": [
-              "$.data.data.feedDashGlobalNavs.primaryItems"
-            ]
+            "paths": []
           },
           "extract": {
             "profile": {
               "from": "body",
               "type": "jsonpath",
-              "expr": "$.data.data.feedDashGlobalNavs.primaryItems[5].meMenu['*profile']"
+              "expr": "$..dashEntityUrn"
             }
           }
         },
