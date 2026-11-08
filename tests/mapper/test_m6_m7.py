@@ -238,7 +238,9 @@ def test_server_rendered_page_outputs_its_visible_text():
         "</nav><main><h1 class='gvy1'>Granite Labs</h1><p>Software Development</p>"
         "<span>10K+ employees</span><div><b>x</b></div></main></body></html>"
     )
-    b = make_bundle("real", [har_entry("GET", "https://example.com/company/granite/", mime="text/html", body=page)])
+    b = make_bundle(
+        "real", [har_entry("GET", "https://example.com/company/granite/", mime="text/html", body=page)]
+    )
     goal = SimpleNamespace(id="granite", extract={})
     plan = plan_html_output(goal, b.entries[0], ["Granite Labs", "10K+ employees"])
     assert plan.source == "page_text" and plan.output["fields"] == {}
@@ -252,7 +254,12 @@ def test_one_graphql_path_serves_many_reads():
     from mapper.pipeline.m3_goal import counterpart, operation_key
 
     def gql(q, at):
-        return har_entry("GET", f"https://example.com/api/graphql?variables=()&queryId={q}.abc{at}", at=at, body={"data": {}})
+        return har_entry(
+            "GET",
+            f"https://example.com/api/graphql?variables=()&queryId={q}.abc{at}",
+            at=at,
+            body={"data": {}},
+        )
 
     live = make_bundle("real", [gql("navs", 1), gql("me", 2)])
     m1 = make_bundle("m1", [gql("navs", 1), gql("me", 2)])

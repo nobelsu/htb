@@ -141,7 +141,11 @@ def assemble(
     answers = [p.draft.entry for m in mapped for p in m.plans]
     # 999: the non-standard "you look like a bot" status (LinkedIn); marking it blocked lets the executor
     # move the action up a tier (to a real browser) instead of failing
-    blocked = ["status:403", "status:999", *challenge_signals([e for m in mapped for e in m.entries], answers)]
+    blocked = [
+        "status:403",
+        "status:999",
+        *challenge_signals([e for m in mapped for e in m.entries], answers),
+    ]
     card = {
         "schema_version": "0.4",
         "domain": domain,
@@ -150,7 +154,9 @@ def assemble(
         "blocked_signals": blocked,
         "changed_signals": [],
         "provenance": {"mapped_at": iso_now(), "source": "network_capture", "mapper_version": __version__},
-        "connect_providers": [placeholder_provider(prefix, mapped, base_url, login_url)] if uses_session else [],
+        "connect_providers": [placeholder_provider(prefix, mapped, base_url, login_url)]
+        if uses_session
+        else [],
         "defaults": defaults,
         "actions": actions,
     }

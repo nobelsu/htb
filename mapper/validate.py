@@ -145,11 +145,17 @@ def live_validate(card: dict, executor: Executor, session_cookies: dict[str, str
         if action["kind"] != "read":
             continue
         tier = action.get("tier") or (card.get("defaults") or {}).get("tier")
-        if tier == "browser" and getattr(executor, "http_only", False):  # the gateway's browser pool runs these
+        if tier == "browser" and getattr(
+            executor, "http_only", False
+        ):  # the gateway's browser pool runs these
             for ex in action.get("examples", []):
                 results.append(
                     LiveResult(
-                        action["name"], ex["params"], "SKIPPED", 0, ex.get("min_items", 1),
+                        action["name"],
+                        ex["params"],
+                        "SKIPPED",
+                        0,
+                        ex.get("min_items", 1),
                         "needs the browser tier: test it through the gateway",
                     )
                 )

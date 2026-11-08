@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit, quote, quote_plus, urljoin
+from urllib.parse import quote, quote_plus, urljoin, urlsplit
 
 from mapper.capture.driver import AFTER_MARK_MS, TYPING_PAUSE_MS, settle
 from mapper.domains import hostname, same_site
@@ -202,8 +202,10 @@ SIGN_IN_PATH = re.compile(r"/(log-?in|sign-?in|auth(wall)?|uas/login|session)(/|
 
 
 def signed_out(start_url: str, landed_url: str, page) -> bool:
-    """``page`` is a sign-in page (or a "confirm your password" one) instead of the signed-in page asked for."""
-    if urlsplit(landed_url).path == urlsplit(start_url).path and not SIGN_IN_PATH.search(urlsplit(landed_url).path):
+    """``page`` is a sign-in page (or a "confirm your password" one), not the signed-in page asked for."""
+    if urlsplit(landed_url).path == urlsplit(start_url).path and not SIGN_IN_PATH.search(
+        urlsplit(landed_url).path
+    ):
         return False
     try:
         has_password = page.locator("input[type=password]").count() > 0

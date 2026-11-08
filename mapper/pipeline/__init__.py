@@ -330,7 +330,9 @@ class DomainResult:
 
 def task_dirs(captures_dir: Path, task: str | None = None) -> list[Path]:
     dirs = sorted(  # "<task>.bad" / "<task>.failed": set aside, not mapped
-        d for d in captures_dir.iterdir() if d.is_dir() and "." not in d.name and (d / "m1" / "meta.json").exists()
+        d
+        for d in captures_dir.iterdir()
+        if d.is_dir() and "." not in d.name and (d / "m1" / "meta.json").exists()
     )
     if task is not None:
         dirs = [d for d in dirs if d.name == task]
@@ -374,7 +376,9 @@ def map_domain(
     for tr in tasks[1:]:
         if tr.goal.entry.base_url != base_url:
             tr.warnings.append(f"goal is on {tr.goal.entry.base_url}, card base_url is {base_url}")
-    card, notes = assemble(domain, base_url, [t.mapped for t in tasks], login_url=_explore_start(captures_dir))
+    card, notes = assemble(
+        domain, base_url, [t.mapped for t in tasks], login_url=_explore_start(captures_dir)
+    )
     notes = [*skipped, *notes]
 
     cookies: dict[str, str] = {}
@@ -393,7 +397,10 @@ def map_domain(
             if r.status == "BLOCKED" and "tiers tried" in r.message:
                 action = next(a for a in card["actions"] if a["name"] == r.action)
                 action["tier"] = "browser"
-                r.status, r.message = "SKIPPED", f"blocked without a browser ({r.message}): tier set to 'browser'"
+                r.status, r.message = (
+                    "SKIPPED",
+                    f"blocked without a browser ({r.message}): tier set to 'browser'",
+                )
                 notes.append(f"{r.action}: the site blocks it without a real browser; tier set to 'browser'")
     every_entry = [
         e for tr in tasks for b in tr.runs.values() for e in (*b.entries, *(d for d, _ in b.dropped))

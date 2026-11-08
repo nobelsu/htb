@@ -169,7 +169,9 @@ def find_write_goal(bundle: Bundle, mark_index: int = 0) -> Goal:
     # Explored writes: the request the blocker stopped that carries the made-up text is the send itself
     # (its timing says little: it starts inside the click, and bot sensors post around it)
     values = [v for v in bundle.values.values() if v]
-    carrying = [e for e in writes if e.blocked and values and any(entry_mentions(bundle, e, v) for v in values)]
+    carrying = [
+        e for e in writes if e.blocked and values and any(entry_mentions(bundle, e, v) for v in values)
+    ]
     if carrying:  # drafts saved while typing come before the send, retries of it after
         at_mark = [e for e in carrying if mark is None or e.started <= mark + WRITE_GRACE]
         chosen = at_mark[-1] if at_mark else carrying[0]

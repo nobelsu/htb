@@ -459,7 +459,10 @@ def explore(
     cached = _cached_survey(domain_dir, start_url) if not resurvey else None
     if cached:
         site, pages = cached
-        _say(f"reusing the look-around of {len(pages)} page(s) from {domain_dir / SURVEY_FILE} (--resurvey redoes it)")
+        _say(
+            f"reusing the look-around of {len(pages)} page(s) from {domain_dir / SURVEY_FILE} "
+            "(--resurvey redoes it)"
+        )
         _check_signed_in(start_url, state, headless, step_timeout_ms)
     else:
         with sync_playwright() as pw:
@@ -476,7 +479,8 @@ def explore(
                 browser.close()
         domain_dir.mkdir(parents=True, exist_ok=True)
         (domain_dir / SURVEY_FILE).write_text(
-            json.dumps({"start_url": start_url, "surveyed_at": iso_now(), "site": site, "pages": pages}) + "\n"
+            json.dumps({"start_url": start_url, "surveyed_at": iso_now(), "site": site, "pages": pages})
+            + "\n"
         )
 
     listed = load_task_list(tasks_file) if tasks_file else None
@@ -509,7 +513,10 @@ def explore(
         later = specs[batch:]
         specs = specs[:batch]
         if later:
-            _say(f"this go: {len(specs)} task(s); {len(later)} left for later goes: {', '.join(s.name for s in later)}")
+            _say(
+                f"this go: {len(specs)} task(s); {len(later)} left for later goes: "
+                + ", ".join(s.name for s in later)
+            )
     stop = threading.Event()  # signed out: every task stops
 
     def one(spec: TaskSpec) -> TaskOutcome:
