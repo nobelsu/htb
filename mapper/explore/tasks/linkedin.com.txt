@@ -26,7 +26,7 @@ LinkedIn: decline a pending connection invitation. The invitation disappears fro
 start_conversation
 (recipient_profile_urn, mailbox_urn, text)
 sign-in
-LinkedIn: start a NEW message thread with someone and send the first message. Use this when no thread with that person exists yet; to post into an existing thread use send_message. This is a REAL SEND — the recipient receives it immediately and it cannot be unsent. `recipient_profile_urn` is the other person's 'urn:li:fsd_profile:…' (search_people_at_company and list_invitations both return these); `mailbox_urn` is your OWN, from get_me. Returns the created message and the conversation urn of the new thread, which you can then pass to send_message or get_conversation_messages. Verified only for 1st-degree connections (`degree` DISTANCE_1 on the search row). For a 2nd/3rd-degree member use send_inmail instead (InMail: free when verify_open_profile says paid_inmail=false, otherwise one InMail credit).
+LinkedIn: start a NEW message thread with someone and send the first message. Use this when no thread with that person exists yet; to post into an existing thread use send_message. This is a REAL SEND — the recipient receives it immediately and it cannot be unsent. `recipient_profile_urn` is the other person's 'urn:li:fsd_profile:…' (search_people_at_company and list_invitations both return these); `mailbox_urn` is your OWN, from get_me. Returns the created message and the conversation urn of the new thread, which you can then pass to send_message or get_conversation_messages. Verified only for 1st-degree connections (`degree` DISTANCE_1 on the search row). A 2nd/3rd-degree member needs an InMail (a Premium feature, not mapped).
 
 send_connection_request
 (profile_urn)
@@ -121,15 +121,6 @@ verify_open_profile
 (profile_id)
 sign-in
 LinkedIn: the OPEN PROFILE check — can the signed-in member message this person WITHOUT spending an InMail credit? Reads the compose option behind the profile's Message button. One row: `compose_option_type` and `paid_inmail`, read together. PREMIUM_INMAIL = no thread exists yet, so paid_inmail decides: false = free to message (on a non-connection that is LinkedIn's Open Profile, the Premium setting that lets anyone message them free), true = one InMail credit. REPLY = a thread with this person already exists, so a message is a free reply whatever their setting (send_message on that thread; if that thread is your own unanswered InMail, LinkedIn blocks it until they reply). Verified live 2026-10-01 on ten never-messaged 2nd/3rd-degree members: five free, five paid. Takes the ACoAA… profile id. Run it over a prospect list to keep the free-to-message ones, then send_inmail; get_inmail_credits shows the balance. READ-ONLY: open the profile and look at what its Message button offers; never type into or send a message. On an account without Premium or with no InMail credits left (the account explored has neither), LinkedIn answers with an upgrade prompt or a 'no InMail credits' notice instead of a message box: that refusal IS the result for a paid recipient, not a failure.
-
-get_inmail_credits
-sign-in
-LinkedIn: the signed-in member's remaining InMail credits (a Premium allowance), e.g. 29. One row, `inmail_credits`. Takes no parameters. Read it before an InMail sequence; recipients with an Open Profile (verify_open_profile paid_inmail=false) do not consume credits. Needs Premium: the account explored has no Premium, so LinkedIn shows no InMail allowance (0 / an upgrade prompt), and Premium pages may ask to confirm the password: never enter it, read the allowance from a page that shows it without asking.
-
-send_inmail
-(recipient_profile_urn, mailbox_urn, subject, text)
-sign-in
-LinkedIn: send an InMail — a message with a subject line to a member who is NOT a 1st-degree connection. Free when the recipient has an Open Profile (verify_open_profile: PREMIUM_INMAIL with paid_inmail=false); otherwise it spends one InMail credit (get_inmail_credits). REAL SEND, cannot be unsent. Free and credit-paid sends use the identical request; LinkedIn decides the charge. LinkedIn allows ONE unanswered InMail per recipient: until they reply, another send_inmail fails with HTTP 422 UNRESPONDED_INMAIL_EXISTS and a send_message into that thread fails with HTTP 422 NOT_ALLOWED_PREMIUM_INMAIL_SUBSEQUENT_REPLY (both verified 2026-10-04; nothing sent, no credit). Takes `recipient_profile_urn` (verify_open_profile's recipient_urn, or search_people / get_profile), `mailbox_urn` (your OWN, from get_me), `subject` and `text`. Returns the created message with the new thread's conversation urn. For 1st-degree connections use start_conversation. The account explored has no Premium and no InMail credits: LinkedIn refuses the send for any recipient without an Open Profile, so explore it on an Open Profile recipient (verify_open_profile paid_inmail=false).
 
 list_my_followers
 (start?, count?)

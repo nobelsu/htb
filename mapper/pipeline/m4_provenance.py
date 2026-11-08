@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -52,8 +53,24 @@ BROWSER_HEADERS = frozenset(
 
 TRIVIAL_WORDS = frozenset({"true", "false", "null", "none", "yes", "no", "on", "off", "undefined"})
 LOCALE_RE = re.compile(r"^[a-z]{2,3}([-_][A-Za-z]{2,4})?$")
-VERSION_RE = re.compile(r"^v?\d+(\.\d+){0,3}$")
+VERSION_RE = re.compile(r"^(v\d+(\.\d+){0,3}|\d+(\.\d+){1,3})$")  # v2, 1.4.2; not a bare number (an id)
 MIME_RE = re.compile(r"^[a-z*]+/[a-z0-9.+*-]+(;.*)?$", re.I)
+# a dotted code name (``proto.sdui.actions.core.ShowToast``): part of the site's code, not a fetched value
+CODE_NAME_RE = re.compile(r"^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)+$")
+CAMEL_NAME_RE = re.compile(r"^[a-z]+([A-Z][a-z0-9]+){2,}$")  # invitationManagerReceivedAllCount
+
+
+def code_like(value: Any) -> bool:
+    """A name from the site's code (a dotted class name, a camelCase key): never an item's detail."""
+    s = as_text(value)
+    return bool(CODE_NAME_RE.match(s) or CAMEL_NAME_RE.match(s))
+
+
+# words that say nothing about which input a field carries
+GENERIC_WORDS = frozenset(
+    {"id", "ids", "urn", "urns", "key", "value", "type", "url", "path", "query", "body"}
+)
+PAGING_INPUTS = frozenset({"start", "count", "cursor", "page", "offset", "limit", "next_token"})
 
 # Path characters a browser leaves as-is (RFC 3986 pchar minus "%").
 PATH_SAFE = "-._~:@!$&'()*+,;="
@@ -397,11 +414,17 @@ def _evaluate(src: Source, entry: Entry) -> list[str]:
 
 def _find_source(
     ctx: _Ctx, f: Field, f2: Field | None, entry: Entry, m2_entry: Entry | None
-) -> Source | None:
+) -> tuple[Source | None, Source | None]:
+    """``(source, loose)``: the earlier response a value comes from, and (when no extract can pick it out
+    alone) the first page it merely appears on, which is enough to tell a picked item."""
     earlier = [e for e in ctx.m1.entries if e.started < entry.started and e is not entry]
     hits = _hits(earlier, f)
+    if f2 is not None and f2.value == f.value:  # a fixed value: from the first page holding it, not
+        order = {id(e): i for i, e in enumerate(earlier)}  # a later prefetch of some other page
+        hits.sort(key=lambda h: order[id(h.entry)])
+    loose: Source | None = None
     if not hits:
-        return None
+        return None, None
     text1 = as_text(f.value)
     text2 = as_text(f2.value) if f2 is not None else None
     first: Source | None = None
@@ -416,15 +439,16 @@ def _find_source(
             hit.extract = {"from": "body", "type": "regex", "expr": expr}
             hit.hint = _key_hint(f)
             if not unique:
+                loose = loose or hit
                 continue
         if m2e is None or text2 is None:
             first = first or hit
             continue
         if _evaluate(hit, m2e) == [text2] and _evaluate(hit, hit.entry) == [text1]:
             hit.confirmed = True
-            return hit
+            return hit, None
         first = first or hit
-    return first
+    return first, loose
 
 
 # --- labelling ---------------------------------------------------------------------------------
@@ -473,12 +497,39 @@ def label_field(
         name, strip = hit
         return Label(f, "session_cookie", cookie=name, strip_quotes=strip, m2=f2, notes=notes)
 
-    # 3. earlier response
+    # 3. earlier response. A value that differs between the runs, or looks like a token, may have been
+    # fetched. One m2 never sent, and that is no token, is part of the site's code: searching for it finds
+    # pages that merely repeat it (e.g. the member's own profile) and adds them as needless steps.
     same = f2 is not None and f2.value == f.value
-    if depth < MAX_DEPTH and not is_trivial(f.value) and (not same or token_like(f.value)):
-        src = _find_source(ctx, f, f2, entry, m2_entry)
-        if src is not None and not src.confirmed and not same and ctx.picks and _picked_item(src, f, f2):
-            return _pick_label(f, f2, _pick_name(ctx.picks, f), notes)
+    varies = (f2 is not None and not same) or (f2 is None and ctx.m2 is None)
+    fixed_token = token_like(f.value) and not CODE_NAME_RE.match(as_text(f.value))
+    # a clicked item's details travel in the address or the body; headers carry page and tracking state
+    picking = not same and bool(ctx.picks) and not code_like(f.value) and f.location != "header"
+    short_name = isinstance(f.value, str) and len(f.value) >= 3 and f.value.isalpha()  # "Ada", "Jay"
+    if (
+        depth < MAX_DEPTH
+        and (not is_trivial(f.value) or (picking and short_name))
+        and (varies or fixed_token)
+    ):
+        src, loose = _find_source(ctx, f, f2, entry, m2_entry)
+        if picking:  # m1 and m2 clicked different items: the value is the agent's input
+            if (
+                src is not None
+                and not src.confirmed
+                and _picked_item(_with_m2_page(ctx, src, f2, m2_entry), f, f2)
+            ):
+                return _pick_label(f, f2, "", notes)
+            if (
+                src is None
+                and loose is not None
+                and _picked_item(_with_m2_page(ctx, loose, f2, m2_entry), f, f2)
+            ):
+                return _pick_label(f, f2, "", notes)
+        # a plain word only one recorded page held (a prefetch m2 never made) is the site's own word:
+        # no reason to fetch that page for it
+        lone = src is not None and ctx.m2 is not None and not src.confirmed and src.m2_entry is None
+        if lone and not token_like(f.value):
+            src = None
         if src is not None:
             if not src.confirmed:
                 notes.append("dependency not confirmed on m2")
@@ -502,6 +553,25 @@ def _general(path: str) -> str:
     return re.sub(r"\[\d+\]", "[*]", path)
 
 
+def _with_m2_page(ctx: _Ctx, src: Source, f2: Field | None, m2_entry: Entry | None) -> Source:
+    """A page source with no m2 counterpart (m2 opened the list at another address, e.g. after a
+    redirect) gets the latest m2 page, before m2's request, that shows m2's value."""
+    if src.m2_entry is not None or ctx.m2 is None or f2 is None or src.kind not in ("html", "text", "stream"):
+        return src
+    text2 = as_text(f2.value)
+    before = m2_entry.started if m2_entry is not None else None
+    pages = [
+        e
+        for e in ctx.m2.entries
+        if e.response_kind == src.kind
+        and (before is None or e.started < before)
+        and text2 in (e.response_body or "")
+    ]
+    if pages:
+        src.m2_entry = pages[-1]
+    return src
+
+
 def _picked_item(src: Source, f: Field, f2: Field | None) -> bool:
     """m1 and m2 picked different items of one list: m2's value sits in the same list as m1's (same path,
     another index), where a dependency would sit at the very same spot in both runs."""
@@ -517,17 +587,196 @@ def _picked_item(src: Source, f: Field, f2: Field | None) -> bool:
     return src.kind in ("html", "text", "stream") and text2 in (m2e.response_body or "")
 
 
-def _pick_name(picks: list[str], f: Field) -> str:
-    """Which picked input a field carries: the one whose words appear in its address, else the first."""
-    words = set(re.findall(r"[a-z]+", f.address.lower()))
-    return max(picks, key=lambda p: len(words & set(p.lower().split("_"))))
+def _words(text: str) -> set[str]:
+    """``payload.invitationId`` → {payload, invitation} (camelCase split, generic words left out)."""
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    return {w for w in re.findall(r"[a-z]+", spaced.lower()) if w not in GENERIC_WORDS}
 
 
-def _pick_label(f: Field, f2: Field | None, name: str, notes: list[str]) -> Label:
+ROLES = {
+    "id": "id",
+    "ids": "id",
+    "urn": "id",
+    "urns": "id",
+    "url": "url",
+    "link": "url",
+    "href": "url",
+    "token": "token",
+    "name": "name",
+}
+
+
+def _role(text: str) -> str | None:
+    """What kind of value a name or key ends in: ``profileId`` / ``profile_urn`` → "id"."""
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    words = re.findall(r"[a-z]+", spaced.lower())
+    return ROLES.get(words[-1]) if words else None
+
+
+def _core(lab: Label) -> str:
+    """The part of a picked value that changes with the item: m1's value without the start and end it
+    shares with m2's (cut at a separator), e.g. ``https://site/in/jane-doe`` vs ``…/in/max`` →
+    ``jane-doe``. Two fields built from one item's slug or number then share one input."""
+    a = as_text(lab.field.value)
+    b = as_text(lab.m2.value) if lab.m2 is not None else ""
+    if not b or a == b:
+        return a
+    pre = _common_prefix(a, b)
+    pre = pre[: max((pre.rfind(c) + 1 for c in "/:=?&#-_.;,| "), default=0)]
+    rest_a, rest_b = a[len(pre) :], b[len(pre) :]
+    suf = _common_suffix(rest_a, rest_b)  # "=" ends base64 padding, not a separate part
+    cut = min((suf.find(c) for c in "/:?&#-_.;,| " if c in suf), default=len(suf))
+    suf = suf[cut:]
+    core = rest_a[: len(rest_a) - len(suf)] if suf else rest_a
+    return core if len(core) >= 3 else a
+
+
+def _score(name: str, keys: list[str]) -> float:
+    """How well an input name fits a value's field keys: shared words, plus half a point when both end
+    in the same kind of thing (an id, a url, a token), less a little for each word the key adds."""
+    want = _words(name)
+    best = 0.0
+    for key in keys:
+        got = _words(key)
+        shared = len(want & got)
+        if not shared:
+            continue
+        role = 0.5 if _role(name) and _role(name) == _role(key) else 0.0
+        best = max(best, shared + role - 0.01 * len(got - want))
+    return best
+
+
+def _field_key(lab: Label) -> str:
+    """The field's own key: ``body.$.payload.isDisabled.key`` → ``isDisabled.key``'s meaningful part."""
+    keys = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", lab.field.address.split(".", 1)[-1])
+    meaningful = [k for k in keys if _words(k)]
+    return meaningful[-1] if meaningful else ""
+
+
+Namer = Callable[[list[dict]], "list[str] | None"]
+
+
+def _key_name(lab: Label) -> str:
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", _field_key(lab)).lower()
+
+
+def name_picks(
+    drafts: list[StepDraft], picks: list[str], others: list[str], namer: Namer | None = None
+) -> None:
+    """Name every picked field. A value is reduced to the part that changes with the item (``_core``);
+    fields sharing that part carry one input, and two different parts never share one. An unknown field
+    holding exactly such a part (the member number inside a urn) carries it too. With several parts an
+    optional ``namer`` (the LLM) names them all; else each takes the listed input that best fits its
+    fields' keys (the picked inputs first, then the ones the site supplies, like an invitation's token),
+    a picked input still free, or its field's own key."""
+    names = list(dict.fromkeys([*picks, *(o for o in others if o not in PAGING_INPUTS)]))
+    labs = [lab for d in drafts for lab in d.labels if lab.encoding == "picked" and not lab.params[0]]
+    if picks and not labs:  # an item was clicked but no field changed with it: a value read off a page
+        for d in drafts:  # that differs between the runs is that item (the page held the clicked one)
+            for i, lab in enumerate(d.labels):
+                src = lab.source
+                if (
+                    lab.provenance == "dependency"
+                    and src is not None
+                    and src.kind in ("html", "text", "stream")
+                    and lab.field.location != "header"
+                    and lab.m2 is not None
+                    and lab.m2.value != lab.field.value
+                    and not code_like(lab.field.value)
+                ):
+                    d.labels[i] = _pick_label(lab.field, lab.m2, "", lab.notes)
+                    labs.append(d.labels[i])
+    # a field that is plainly one listed input ("conversationUrn" for conversation_urn) takes the whole
+    # value, as the agent gets it from another action, even where part of it is the same in both runs
+    cores = {
+        id(lab): as_text(lab.field.value)
+        for lab in labs
+        if any(_score(n, [_field_key(lab)]) >= 1.5 for n in names)
+    }
+
+    def core_of(lab: Label) -> str:
+        return cores.get(id(lab)) or _core(lab)
+
+    groups: dict[str, list[Label]] = {}
+    for lab in labs:
+        groups.setdefault(core_of(lab), []).append(lab)
+    # the same detail elsewhere is the same input: an unknown whose changing part it is (its number inside
+    # a urn), or a value some earlier page was searched for (the compose page's recipient)
+    for d in drafts:
+        for i, lab in enumerate(d.labels):
+            if lab.provenance not in ("unknown", "dependency") or code_like(lab.field.value):
+                continue
+            if lab.field.location == "header":
+                continue
+            key = as_text(lab.field.value) if lab.provenance == "dependency" else _core(lab)
+            if key in groups:
+                d.labels[i] = _pick_label(lab.field, lab.m2, "", [], key)
+                cores[id(d.labels[i])] = key
+                groups[key].append(d.labels[i])
+    if not groups:
+        return
+    chosen: dict[str, str] = {}
+    if namer is not None and len(groups) > 1:
+        asked = [
+            {
+                "keys": sorted({m.field.address.split(".", 1)[-1][-80:] for m in members}),
+                "m1": core,
+                "m2": _core_m2(members[0], core),
+            }
+            for core, members in groups.items()
+        ]
+        got = namer(asked)
+        if got and len(got) == len(groups) and len(set(got)) == len(got):
+            chosen = dict(zip(groups, got, strict=True))
+    if not chosen:
+        scored = []
+        for core, members in groups.items():
+            keys = [_field_key(m) for m in members]
+            for n in names:
+                score = _score(n, keys)
+                if score:
+                    scored.append((-score, names.index(n), core, n))
+        for _, _, core, n in sorted(scored):
+            if core not in chosen and n not in chosen.values():
+                chosen[core] = n
+        for core, members in groups.items():  # left over: a free picked input, else the field's own key
+            if core in chosen:
+                continue
+            free = [p for p in picks if p not in chosen.values()]
+            # named after the field holding the most of it ("memberId" over "state:…:<number>")
+            best = max(
+                members, key=lambda m: (len(core) / max(1, len(as_text(m.field.value))), -len(_key_name(m)))
+            )
+            name = free[0] if free else (_key_name(best) or "item")
+            while name in chosen.values():
+                name += "_2"
+            chosen[core] = name
+    for d in drafts:
+        for i, lab in enumerate(d.labels):
+            if lab.encoding == "picked" and not lab.params[0]:
+                core = core_of(lab)
+                d.labels[i] = _pick_label(lab.field, lab.m2, chosen[core], lab.notes, core)
+
+
+def _core_m2(lab: Label, core: str) -> str:
+    """m2's counterpart of ``core``: m2's value with the same start and end cut off."""
+    a, b = as_text(lab.field.value), as_text(lab.m2.value) if lab.m2 is not None else ""
+    i = a.find(core)
+    if not b or i < 0:
+        return b
+    end = len(a) - i - len(core)
+    return b[i : len(b) - end if end else len(b)]
+
+
+def _pick_label(f: Field, f2: Field | None, name: str, notes: list[str], core: str | None = None) -> Label:
+    """``name`` empty: named later by ``name_picks``, once every picked field of the action is known.
+    ``core``: the part of the value the input fills (the whole value by default)."""
     filt = filter_for(f.context)
     value = as_text(f.value)
-    template = splice(value, [(value, placeholders.param(name, filt))], lambda t: literal_for(f.context, t))
-    notes = [*notes, f"picked: differs with the item chosen ({name})"]
+    part = core or value
+    template = splice(value, [(part, placeholders.param(name, filt))], lambda t: literal_for(f.context, t))
+    if name:
+        notes = [*notes, f"picked: differs with the item chosen ({name})"]
     return Label(
         f, "param", template=template, params=(name,), filter=filt, encoding="picked", m2=f2, notes=notes
     )
@@ -542,8 +791,27 @@ def label_entry(ctx: _Ctx, entry: Entry, m2_entry: Entry | None, depth: int) -> 
     return StepDraft(entry, m2_entry, depth, labels)
 
 
-def trace(m1: Bundle, goal: Entry, m2: Bundle | None = None, m2_goal: Entry | None = None) -> Provenance:
-    """Label the goal request and every request it depends on (breadth-first, max depth 4)."""
+def _reachable(drafts: dict[int, StepDraft], goal: Entry) -> list[StepDraft]:
+    """The drafts the goal still needs once picked values became inputs (a page searched only for the
+    picked item is no longer fetched)."""
+    keep, todo = {id(goal)}, [drafts[id(goal)]]
+    while todo:
+        for lab in todo.pop().labels:
+            if lab.source is not None and id(lab.source.entry) not in keep and id(lab.source.entry) in drafts:
+                keep.add(id(lab.source.entry))
+                todo.append(drafts[id(lab.source.entry)])
+    return [d for k, d in drafts.items() if k in keep]
+
+
+def trace(
+    m1: Bundle,
+    goal: Entry,
+    m2: Bundle | None = None,
+    m2_goal: Entry | None = None,
+    namer: Namer | None = None,
+) -> Provenance:
+    """Label the goal request and every request it depends on (breadth-first, max depth 4).
+    ``namer``: optional, names the inputs one picked item carries (see ``name_picks``)."""
     ctx = _Ctx(
         m1=m1,
         m2=m2,
@@ -553,6 +821,7 @@ def trace(m1: Bundle, goal: Entry, m2: Bundle | None = None, m2_goal: Entry | No
         capture_time=m1.started_at,
         picks=[k for k, how in (m1.meta.get("inputs_via") or {}).items() if how == "picked"],
     )
+    others = [k for k, how in (m1.meta.get("inputs_via") or {}).items() if how == "other"]
     drafts: dict[int, StepDraft] = {}
     queue: list[tuple[Entry, Entry | None, int]] = [(goal, m2_goal, 0)]
     while queue:
@@ -565,7 +834,8 @@ def trace(m1: Bundle, goal: Entry, m2: Bundle | None = None, m2_goal: Entry | No
         for lab in draft.labels:
             if lab.source is not None and id(lab.source.entry) not in drafts:
                 queue.append((lab.source.entry, lab.source.m2_entry, depth + 1))
-    prov = Provenance(drafts[id(goal)], list(drafts.values()), ctx.warnings)
+    name_picks(list(drafts.values()), ctx.picks, others, namer)
+    prov = Provenance(drafts[id(goal)], _reachable(drafts, goal), ctx.warnings)
     for lab in prov.unknowns:
         prov.warnings.append(
             f"unknown value in {lab.address} ({'; '.join(lab.notes)}): action needs tier 'browser'"

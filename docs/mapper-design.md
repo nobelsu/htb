@@ -259,6 +259,15 @@ and summarised in the mapping report.
   take outputs from it when no list grew (one object, or nothing typed). Count-like values ("1,323,457
   followers") become fields found by pattern at any depth. All fields relevant to the action's
   description are returned (no 3–8 cap). Blocked write requests are kept as write goals.
+- **No recorded person in a card (2026-11-08):** every detail of a picked item becomes an input, not just
+  its id. A click on a person sends their id, names, url slug, picture and member number; each value is cut
+  to the part that changes with the item (`…/in/<slug>`, `…:member:<number>`), fields sharing that part
+  share one input, and an LLM names them (fallback: the listed input names, then the field's key). A field
+  that is plainly a listed input (`conversationUrn` for `conversation_urn`) keeps its whole value. Headers
+  and code names (`proto.sdui…`, camelCase keys) are never picked. A value m2 never sent and that is no
+  token, or a plain word only an unconfirmed prefetch held, is a constant, so a prefetch of the member's
+  own profile is no longer a step. A task whose picked input reached no request (both replays clicked the
+  same item) is **not mapped**: the card would act on the recorded item every time.
 
 - **Please review: spec addition `resolve: "rows"` (made on the mapper side, 2026-11-07).** LinkedIn's web app
   answers searches with streamed React Server Components rows (`<hex id>:<JSON>` per line, labelled

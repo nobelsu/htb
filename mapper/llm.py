@@ -181,6 +181,38 @@ class LLM:
                 out[name] = candidates[i][0]
         return out if out else None
 
+    def name_inputs(
+        self, task: str, groups: list[dict], listed: list[str], description: str = ""
+    ) -> list[str] | None:
+        """Names for the inputs one picked item carries: each group holds the request keys a value sits
+        in and its value in two runs that picked different items. One snake_case name per group."""
+        schema = {
+            "type": "object",
+            "properties": {"names": {"type": "array", "items": {"type": "string"}}},
+            "required": ["names"],
+            "additionalProperties": False,
+        }
+        listing = "\n".join(
+            f"{i}. keys {g['keys'][:4]}; values {str(g['m1'])[:60]!r} / {str(g['m2'])[:60]!r}"
+            for i, g in enumerate(groups)
+        )
+        about = f" {description[:1500]}" if description else ""
+        prompt = (
+            f"An agent will call the action {task!r}.{about} Doing it means choosing one item (a person, a "
+            "post, an invitation…), and the site's request carries these details of the chosen item; each "
+            "line gives where the detail sits in the request and its value for two different items. Name "
+            "each detail as an input the agent passes: short snake_case saying what it is (e.g. "
+            "profile_id, vanity_name, first_name, member_id). Use the action's own input names where one "
+            f"fits: {', '.join(listed) or 'none'}. Return exactly one distinct name per line, in order."
+            f"\n{listing}"
+        )
+        data = self.ask_json("input names", prompt, schema, max_tokens=800)
+        names = [str(n) for n in (data or {}).get("names", [])]
+        ok = len(names) == len(groups) and len(set(names)) == len(names)
+        if not ok or not all(re.fullmatch(r"[a-z][a-z0-9_]{0,40}", n) for n in names):
+            return None
+        return names
+
     def describe(self, summary: dict) -> dict | None:
         """``{"description": str, "params": {name: str}}`` for an action's MCP tool."""
         schema = {

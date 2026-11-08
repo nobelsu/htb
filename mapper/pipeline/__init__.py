@@ -226,7 +226,12 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     m2_goal = _matching_goal(m2, goal, m1, kind)
     real_goal = _matching_goal(real, goal, m1, kind)
 
-    prov = trace(m1, goal.entry, m2, m2_goal.entry if m2_goal else None)
+    listed = list((m1.meta.get("inputs_via") or {}).keys())
+
+    def namer(groups: list[dict]) -> list[str] | None:  # one picked item, several inputs: the LLM names them
+        return llm.name_inputs(task, groups, listed, m1.meta.get("task_description", ""))
+
+    prov = trace(m1, goal.entry, m2, m2_goal.entry if m2_goal else None, namer=namer)
     # Explorer recordings say read/write themselves (the LLM driver was told what the task does); a
     # person's recording falls back to the method, so a forgotten --kind write can't make a write a read.
     explorer = any(b.meta.get("driver") == "agent" for b in runs.values())
@@ -268,13 +273,17 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     warnings += output.warnings + prov.warnings
 
     used = [p for d in prov.steps for lab in d.labels for p in lab.params]
-    params = [p for p in dict.fromkeys([*m1.values, *_picks(m1)]) if p in used]
+    # a picked item can carry more than one input (an invitation's id and its token): all are params
+    params = [p for p in dict.fromkeys([*m1.values, *_picks(m1), *used]) if p in used]
     for p in m1.values:
         if p not in params:
             warnings.append(f"input {p!r} was typed but never reached a request")
-    for p in _picks(m1):
+    for p in _picks(m1):  # the card would act on the recorded item every time (message that person)
         if p not in params:
-            warnings.append(f"picked input {p!r}: no request field changed with the item chosen")
+            raise MapError(
+                f"picked input {p!r}: no request changed with the item chosen (the replays clicked the "
+                "same one?), so the action would always use the recorded item; explore it again"
+            )
     real_inputs = dict(real.values) if real is not None else {}
     if real is not None and real_goal is not None:  # a picked input's example: what the real run chose
         real_fields = real.field_map(real_goal.entry)

@@ -528,7 +528,7 @@ def test_task_lists_are_read_from_the_written_format():
     nxt = next(t for t in tasks if t.name == "list_conversations_next")
     assert [(i.name, i.optional) for i in nxt.inputs] == [("cursor", False), ("count", True)]
     assert tasks[0].sign_in and tasks[0].description.startswith("Fixture: who is signed in")
-    assert len(parse_task_list(task_list_for("linkedin.com").read_text())) == 47  # the bundled LinkedIn list
+    assert len(parse_task_list(task_list_for("linkedin.com").read_text())) == 45  # the bundled LinkedIn list
 
 
 def test_counts_are_found_by_pattern_wherever_they_sit():
