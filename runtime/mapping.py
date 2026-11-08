@@ -74,6 +74,9 @@ class MapRequest:
     # The site's card when it has one: add to it (an action it lacks, or what an explore finds), never
     # re-map what's there.
     existing: dict[str, Any] | None = None
+    # A named write (send, follow, post...): recorded with the committing request held back, so nothing
+    # reaches the site while mapping; saved marked never run until a confirmed call succeeds.
+    write: bool = False
 
 
 def provider_for(domain: str) -> str:
@@ -131,7 +134,14 @@ class MapManager:
     # ---- requests ----------------------------------------------------------
 
     async def request(
-        self, user: str, site: str, task: str = "", action: str = "", inputs: dict[str, Any] | None = None
+        self,
+        user: str,
+        site: str,
+        task: str = "",
+        action: str = "",
+        inputs: dict[str, Any] | None = None,
+        *,
+        write: bool = False,
     ) -> dict[str, Any]:
         """Queue a map job, or say why not (``{"error": ...}``). With no ``action`` the job explores the site
         (``task``, optional, says what the person wants to do there)."""
@@ -151,6 +161,8 @@ class MapManager:
             return {"error": "action must be a short snake_case name, e.g. search_companies"}
         if not action and inputs:
             return {"error": "inputs go with an action; to explore the site, give neither"}
+        if write and not action:
+            return {"error": "write goes with a named action; exploring maps writes by itself"}
         values: dict[str, str] = {}
         for name, value in (inputs or {}).items():
             if not ACTION_NAME.match(name) or isinstance(value, (dict, list)) or value is None:
@@ -171,7 +183,7 @@ class MapManager:
         start = f"{parts.scheme}://{parts.netloc}{parts.path or '/'}" + (
             f"?{parts.query}" if parts.query else ""
         )
-        job = self.state.create_map_job(domain, start, task, action, values, user)
+        job = self.state.create_map_job(domain, start, task, action, values, user, write=write)
         log.info("queued map %s for %s (%s) by %s", job.id, domain, action, user)
         self._wake.set()
         return self._status(job, user)
@@ -326,6 +338,7 @@ class MapManager:
             or (providers[0].login_url if providers else None)
             or (job.url if signed_in else None),
             existing=existing,
+            write=job.write,
         )
         try:
             outcome = await self.mapper.map_site(request, lambda line: self.state.map_progress(job.id, line))

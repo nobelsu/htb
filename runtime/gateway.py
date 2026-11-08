@@ -145,11 +145,13 @@ REQUEST_MAP_TOOL = types.Tool(
     description="Ask for a website to be set up, when find_actions has nothing for a site the user needs. "
     "Either name one action: what it should do (task), a snake_case name (action) and the values you'd use "
     "for its inputs (e.g. {\"query\": \"robotics\"}); an agent does it once on the site and turns it into "
-    "an action (a few minutes). Or give only the site (and, optionally, what the user wants to do there as "
+    "an action (a few minutes); set write for one that changes something (send, follow, post, add): its last "
+    "click is held back, so nothing reaches the site while it's set up, and running it later asks the user to "
+    "confirm first. Or give only the site (and, optionally, what the user wants to do there as "
     "task) to explore it: the server finds the site's main reads itself and maps the ones that work (up to "
     "ten minutes; it also maps common writes, which never reach the site while mapping). Tell the user, then "
     "follow it with map_status. For a site with no actions, or to add what a site can't do yet (a named action it "
-    "lacks, or explore again for more); what it can do already is never re-mapped. A named action is a read.",
+    "lacks, or explore again for more); what it can do already is never re-mapped.",
     input_schema={
         "type": "object",
         "properties": {
@@ -168,6 +170,10 @@ REQUEST_MAP_TOOL = types.Tool(
                 "description": "input name -> the value to use while setting it up, "
                 "e.g. {\"query\": \"harbour\"}",
                 "additionalProperties": {"type": ["string", "number", "boolean"]},
+            },
+            "write": {
+                "type": "boolean",
+                "description": "true when the named action changes something on the site (default false)",
             },
         },
         "required": ["site"],
@@ -399,12 +405,14 @@ class Gateway:
         assert self.maps is not None
         if name == REQUEST_MAP_TOOL.name:
             site, task, action = args.get("site"), args.get("task", ""), args.get("action", "")
-            inputs = args.get("inputs")
+            inputs, write = args.get("inputs"), args.get("write", False)
+            if not isinstance(write, bool):
+                return _error_result("write must be true or false")
             if not all(isinstance(v, str) for v in (site, task, action)):
                 return _error_result("site (a string) is required; task and action are strings")
             if inputs is not None and not isinstance(inputs, dict):
                 return _error_result("inputs must be an object")
-            out = await self.maps.request(user, str(site), str(task), str(action), inputs)
+            out = await self.maps.request(user, str(site), str(task), str(action), inputs, write=write)
         else:
             job_id, wait = args.get("job_id"), args.get("wait_seconds", 25)
             if not isinstance(job_id, str):

@@ -467,3 +467,60 @@ async def test_exploring_again_carries_on_from_the_actions_the_site_has(
     finally:
         registry.close()
         state.close()
+
+
+@pytest.mark.browser
+async def test_a_named_write_is_held_back_and_saved_never_run(bookshop: str, tmp_path: Path) -> None:
+    """request_map with write: the agent clicks the committing button, the site never gets it, and the
+    action is saved as a write that asks for confirmation and is marked never run for real."""
+    pytest.importorskip("playwright.async_api")
+    from tests.flowmap.site import state as state_site
+    from tests.flowmap.test_agent import NONE
+
+    client = FakeClient(
+        [
+            {"name": "click", "input": {"element": role("button", "Add to cart")}},
+            {"name": "done", "input": {"summary": "added", "results": [], "next_page": NONE}},
+        ]
+    )
+    executor = Executor(InMemorySessionStore(), Confirmer("s"))
+    registry, state = Registry(tmp_path / "rt.db"), StateStore(tmp_path / "rt.db")
+    mapper = BookshopMapper(
+        executor, tmp_path / "flows", channel="chromium", pause_s=0, client=client, use_llm=False
+    )
+    maps = MapManager(registry, state, executor, mapper, config=MapConfig(allow_local=True))
+    carts = dict(state_site.carts)
+    try:
+        job = await maps.request(
+            "alice",
+            bookshop + "/book/b002",
+            "add the book to the cart",
+            "add_to_cart",
+            {"book_id": "b002"},
+            write=True,
+        )
+        assert job["status"] == "queued" and job["write"], job
+        await maps.drain()
+        out = await maps.status(job["job_id"], "alice")
+        assert out is not None and out["status"] == "succeeded", out
+        assert state_site.carts == carts  # held back every time
+        stored = registry.get("bookshop.test")
+        assert stored is not None
+        cart = stored.card.action("add_to_cart")
+        assert cart is not None and cart.kind == "write" and cart.requires_confirmation
+        assert state.is_never_run("bookshop.test", "add_to_cart")
+        env = await executor.run(stored, "add_to_cart", {"book_id": "b003"}, user="bob")
+        assert env.status == ResultCode.NEEDS_CONFIRMATION, env  # nothing sent without the user's yes
+        assert state_site.carts == carts
+    finally:
+        registry.close()
+        state.close()
+
+
+async def test_a_named_action_that_is_never_mapped_or_reads_like_a_change(tmp_path: Path) -> None:
+    """Payments, deleting and settings are refused as named actions too; change wording is a write."""
+    from flowmap.explore import NEVER, changes
+
+    assert NEVER.search("delete my account") and NEVER.search("pay invoice")
+    assert changes("send a connect request") and changes("follow a company")
+    assert not changes("search people")

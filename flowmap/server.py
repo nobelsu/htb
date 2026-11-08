@@ -36,7 +36,17 @@ from flowmap.agent import AgentError, record_with_agent, settle, snapshot
 from flowmap.assemble import AssembleError, map_action
 from flowmap.browser import BrowserSetup, SignInMissing, new_page
 from flowmap.capture import capture_flow, visible_without
-from flowmap.explore import MAX_ACTIONS, MAX_DEPTH, Task, links, page_kind, propose_tasks, samples
+from flowmap.explore import (
+    MAX_ACTIONS,
+    MAX_DEPTH,
+    NEVER,
+    Task,
+    changes,
+    links,
+    page_kind,
+    propose_tasks,
+    samples,
+)
 from flowmap.flows import flow_path, load_flow, save_flow
 from flowmap.infer import InferError, candidates, registrable, request_sig
 from flowmap.minimise import executor_replayer
@@ -110,7 +120,15 @@ class FlowMapper:
             raise SignInNeeded(str(e), lines, request.login_url) from e
         if not request.action:
             return await self._explore(request, setup, step, lines)
-        task = Task(request.action, request.task, request.url, dict(request.inputs))
+        words = request.action.replace("_", " ")
+        if NEVER.search(words) or NEVER.search(request.task):
+            raise MapError(
+                f"{request.action} isn't something that gets mapped (payments, deleting, settings)"
+            )
+        # Wording that changes something is a write even if not asked as one: the click that commits it is
+        # then held back instead of refused (a read never clicks one).
+        write = request.write or changes(words) or changes(request.task)
+        task = Task(request.action, request.task, request.url, dict(request.inputs), write=write)
         card, report = await self._map_task(task, request, setup, request.existing, step, lines)
         card, private = await self._public_examples(card, {request.action}, request, step)
         report["privacy"] = private.to_json()

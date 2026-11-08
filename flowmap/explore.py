@@ -197,7 +197,7 @@ def clean_tasks(raw: list[Any], *, start_url: str, taken: set[str]) -> list[Task
         if NEVER.search(action.replace("_", " ")) or NEVER.search(task):
             log.info("dropped %s: never mapped", action)
             continue
-        if not write and (_changes(action.replace("_", " ")) or _changes(task)):
+        if not write and (changes(action.replace("_", " ")) or changes(task)):
             log.info("dropped %s: it looks like a change but isn't marked as a write", action)
             continue
         if write and sum(t.write for t in out) >= MAX_WRITES:
@@ -220,7 +220,7 @@ def clean_tasks(raw: list[Any], *, start_url: str, taken: set[str]) -> list[Task
     return out
 
 
-def _changes(text: str) -> bool:
+def changes(text: str) -> bool:
     """Wording that does something to the site. A change word after a reading verb is data ("get order",
     "search posts"), not a change."""
     reads = re.match(r"\s*(search|find|look up|list|show|open|view|get|browse|see|read|check)\b", text, re.I)

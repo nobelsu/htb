@@ -567,3 +567,8 @@ markers and infers the card deterministically, and the LLM only names things. We
     plain request gets, though the data is there. When it finds too little, a selector is built from the
     HTML itself with the same rules (`runtime/extract.py html_selector`), for scoring candidates and for the
     card. Data kept only inside scripts (no elements) is still not read.
+  - Named writes (asked, 2026-11-08): `request_map` takes `write: true` with a named action (send a connect
+    request, follow, add to cart). It's recorded like explore's writes: the committing click is held back,
+    the action is saved needing confirmation and marked never run until a confirmed call succeeds. A named
+    action whose wording changes something is a write even without the flag (a read can't click a committing
+    button, so it would only fail); payments, deleting and settings are refused by name, as in explore.

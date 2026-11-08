@@ -135,6 +135,7 @@ class MapJob:
     created_at: str
     started_at: str | None
     finished_at: str | None
+    write: bool = False  # a named write: recorded with the committing request held back
 
     @property
     def open(self) -> bool:
@@ -155,6 +156,8 @@ class MapJob:
             out.update(
                 {"action": self.action, "task": self.task, "progress": self.progress, "result": self.result}
             )
+            if self.write:
+                out["write"] = True
         return out
 
 
@@ -171,6 +174,8 @@ class StateStore:
             self._conn.execute("ALTER TABLE action_state ADD COLUMN never_run INTEGER NOT NULL DEFAULT 0")
         if "cleared" not in {r[1] for r in self._conn.execute("PRAGMA table_info(map_jobs)")}:
             self._conn.execute("ALTER TABLE map_jobs ADD COLUMN cleared INTEGER NOT NULL DEFAULT 0")
+        if "write" not in {r[1] for r in self._conn.execute("PRAGMA table_info(map_jobs)")}:
+            self._conn.execute("ALTER TABLE map_jobs ADD COLUMN write INTEGER NOT NULL DEFAULT 0")
 
     def close(self) -> None:
         self._conn.close()
@@ -369,14 +374,22 @@ class StateStore:
     # ---- map_jobs ----------------------------------------------------------
 
     def create_map_job(
-        self, domain: str, url: str, task: str, action: str, inputs: dict[str, str], user: str
+        self,
+        domain: str,
+        url: str,
+        task: str,
+        action: str,
+        inputs: dict[str, str],
+        user: str,
+        *,
+        write: bool = False,
     ) -> MapJob:
         job_id = "m_" + secrets.token_hex(6)
         with self._lock:
             self._conn.execute(
-                "INSERT INTO map_jobs (id, domain, url, task, action, inputs, user, status, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
-                (job_id, domain, url, task, action, json.dumps(inputs), user, _now()),
+                "INSERT INTO map_jobs (id, domain, url, task, action, inputs, user, status, created_at, write) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
+                (job_id, domain, url, task, action, json.dumps(inputs), user, _now(), int(write)),
             )
         job = self.get_map_job(job_id)
         assert job is not None
@@ -478,6 +491,7 @@ def _row_to_map_job(row: sqlite3.Row) -> MapJob:
         created_at=row["created_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
+        write=bool(row["write"]),
     )
 
 
