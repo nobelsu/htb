@@ -50,13 +50,28 @@ With `MAPPER=flowmap` (and `ANTHROPIC_API_KEY`), agents get two more tools. `req
 inputs)` asks for a site with no card to be set up; the gateway does `record --agent` and `map` itself, one job
 at a time, and saves the card once its examples work through the executor. `map_status(job_id)` waits for the
 result. A site that already has a card isn't mapped again: if an action is broken, the request starts its heal.
-Reads only for now, and sites that need a sign-in stop with `needs_sign_in` (signing in to a site that has no
-card yet isn't built). Raw captures go to a temporary folder deleted when the job ends; the flow is kept in
+Reads only for now. Raw captures go to a temporary folder deleted when the job ends; the flow is kept in
 `FLOWS_DIR` for heal. Addresses on this machine or a private network are refused unless `MAP_ALLOW_LOCAL=1`.
 
 ```bash
 MAPPER=flowmap MAP_ALLOW_LOCAL=1 uv run python -m runtime.gateway   # then request_map http://127.0.0.1:8910/
 ```
+
+### Sites behind a sign-in
+
+When the agent finds a sign-in page, the job stops with `needs_sign_in`, and `map_status` gives the requester
+a Connect link for that page (it's on their account page too). The site has no card yet, so nothing can check
+the sign-in: like a site with a weak check, the user clicks "I've signed in", which only counts once signing in
+has changed the site's cookies. The job then carries on by itself, mapping with their stored sign-in (provider
+id: the site's name, `linkedin` for linkedin.com), and the action gets that `auth_provider`.
+
+The card's connect provider is worked out afterwards (`flowmap/signin.py`). Each step of the mapped action that
+needs no earlier step's value (example values written in), then the start page, is sent with the sign-in and
+with no cookies; the first that passes signed in and fails signed out becomes the `session_check`, and what
+only the signed-out response showed (a 401 or 403, a redirect to the login page) becomes its
+`logged_out_signals`. If none can tell the two apart, the first that passes is kept as a weak check (reported as
+`sign_in.strength: weak`). The runtime runs the check with the requester's sign-in before saving. Cookie
+values never go into the card. On the test bookshop, `/orders` is behind a sign-in (reader / reader-pass).
 
 ## Try it on the test bookshop
 
@@ -81,3 +96,4 @@ uv run python -m flowmap heal bookshop.test search_books --pause 0
 | `flowmap/assemble.py` | Card, validation, replay of a fresh example, `registry.save()` |
 | `flowmap/heal.py` | The runtime's `Remapper`: re-captures and re-infers only the broken action |
 | `flowmap/server.py` | The runtime's `Mapper`: a map job (agent recording, capture, map) inside the gateway |
+| `flowmap/signin.py` | A new card's sign-in check and logged-out signals, from the action mapped while signed in |

@@ -2,8 +2,13 @@
 
 Only when the site has no card yet; when it has one and an action is broken, the request starts the heal
 instead. Jobs run inside the gateway process, one at a time, apart from heal jobs. The mapper plugs in through
-`Mapper` (flowmap's is `flowmap.server.FlowMapper`); the runtime checks the card it returns (validation, then
-every read example run through the executor) before saving it as the site's first version.
+`Mapper` (flowmap's is `flowmap.server.FlowMapper`); the runtime checks the card it returns (validation, every
+read example run through the executor, and its sign-in check with the requester's sign-in) before saving it as
+the site's first version.
+
+A site that wants a sign-in: the job stops at ``needs_sign_in`` and its status carries a Connect link for the
+requester. Once they've signed in (``ConnectionManager.on_connected``) the job is queued again and maps signed
+in with their stored sign-in, under the provider id `provider_for` gives the site.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
+from runtime.connect import ConnectionManager
 from runtime.executor import Executor
 from runtime.healing import HealManager, example_passes
 from runtime.registry import Registry
@@ -43,7 +49,13 @@ class MapError(Exception):
 
 
 class SignInNeeded(MapError):
-    """The site wants a sign-in before the task can be done."""
+    """The site wants a sign-in before the task can be done. ``login_url`` is the page that asked for it."""
+
+    def __init__(
+        self, message: str, log_lines: list[str] | None = None, login_url: str | None = None
+    ) -> None:
+        super().__init__(message, log_lines)
+        self.login_url = login_url
 
 
 @dataclass(frozen=True)
@@ -55,6 +67,15 @@ class MapRequest:
     action: str
     inputs: dict[str, str]
     user: str
+    # Set when the requester has signed in for this job: map signed in with their stored sign-in under this
+    # provider id, and give the card a connect provider of that id whose login page is ``login_url``.
+    sign_in: str | None = None
+    login_url: str | None = None
+
+
+def provider_for(domain: str) -> str:
+    """The connect provider id of a site mapped while signed in: its name (linkedin for linkedin.com)."""
+    return re.sub(r"[^a-z0-9]+", "_", domain.split(".")[0].lower()).strip("_") or "site"
 
 
 @dataclass
@@ -91,6 +112,7 @@ class MapManager:
         mapper: Mapper,
         healer: HealManager | None = None,
         config: MapConfig | None = None,
+        connections: ConnectionManager | None = None,
     ) -> None:
         self.registry = registry
         self.state = state
@@ -98,7 +120,10 @@ class MapManager:
         self.mapper = mapper
         self.healer = healer
         self.config = config or MapConfig()
+        self.connections = connections
         self._wake = asyncio.Event()
+        if connections is not None:
+            connections.on_connected.append(self._signed_in)
 
     # ---- requests ----------------------------------------------------------
 
@@ -178,7 +203,8 @@ class MapManager:
             job = self.state.get_map_job(job_id)
             if job is None:
                 return None
-            if not job.open or time.monotonic() - started >= wait_s:
+            waiting = job.open or (job.status == "needs_sign_in" and self._sign_in_pending(job))
+            if not waiting or time.monotonic() - started >= wait_s:
                 return self._status(job, user)
             await asyncio.sleep(min(self.config.poll_s, 1.0))
 
@@ -198,10 +224,25 @@ class MapManager:
             out["user_message"] = f"{job.domain} is ready."
             out["hint"] = f"use find_actions(site={job.domain!r}), then run_action"
         elif job.status == "needs_sign_in":
-            out["user_message"] = (
-                f"{job.domain} needs you to be signed in, and setting up a new site behind a sign-in isn't "
-                "available yet."
-            )
+            link = self._sign_in_link(job) if owner else None
+            if link is not None and link.get("url"):
+                out["user_message"] = f"{job.domain} needs you to sign in before it can be set up. " + str(
+                    link["user_message"]
+                )
+                out["sign_in"] = {"url": link["url"], "expires_at": link.get("expires_at")}
+                out["retry_after_s"] = self.config.retry_after_s
+                out["hint"] = (
+                    "The user can't see this result: write the user_message (it holds the sign-in link) "
+                    "in your reply, then call map_status(job_id, wait_seconds=45) until the status is "
+                    "succeeded. The job carries on by itself once they've signed in; their password is never "
+                    "shared with you."
+                )
+            elif owner:
+                out["user_message"] = (
+                    f"{job.domain} needs you to be signed in, and signing in isn't available on this server."
+                )
+            else:
+                out["user_message"] = f"{job.domain} needs a sign-in before it can be set up."
         else:
             out["user_message"] = f"Setting up {job.domain} didn't work" + (
                 f": {error}" if owner and error else "."
@@ -244,12 +285,33 @@ class MapManager:
             self.state.finish_map_job(job.id, "failed", {"error": f"{job.domain} was mapped in the meantime"})
             return
         started = time.monotonic()
-        request = MapRequest(job.id, job.domain, job.url, job.task, job.action, dict(job.inputs), job.user)
+        provider = provider_for(job.domain)
+        signed_in = self.executor.sessions.get(job.user, job.domain, provider) is not None
+        request = MapRequest(
+            job.id,
+            job.domain,
+            job.url,
+            job.task,
+            job.action,
+            dict(job.inputs),
+            job.user,
+            sign_in=provider if signed_in else None,
+            login_url=(job.result or {}).get("login_url") or (job.url if signed_in else None),
+        )
         try:
             outcome = await self.mapper.map_site(request, lambda line: self.state.map_progress(job.id, line))
         except SignInNeeded as e:
-            self.state.finish_map_job(job.id, "needs_sign_in", {"error": str(e), "log": e.log[-20:]})
+            stop: dict[str, Any] = {
+                "error": str(e),
+                "log": e.log[-20:],
+                "login_url": e.login_url or request.login_url or job.url,
+                "provider": provider,
+            }
+            self.state.finish_map_job(job.id, "needs_sign_in", stop)
             log.info("map %s needs a sign-in: %s", job.id, e)
+            stopped = self.state.get_map_job(job.id)
+            if stopped is not None:
+                self._sign_in_link(stopped)  # so the link is waiting (and on the account page) right away
             return
         except MapError as e:
             self.state.finish_map_job(job.id, "failed", {"error": str(e), "log": e.log[-20:]})
@@ -276,13 +338,52 @@ class MapManager:
                 {"error": "the mapped actions don't work yet", "examples": problems, "ms": ms},
             )
             return
+        for p in card.connect_providers:
+            code = await self.executor.check_session(card, p.id, job.user)
+            if code is not None:
+                self.state.finish_map_job(
+                    job.id,
+                    "failed",
+                    {"error": f"the mapped sign-in check fails with your sign-in ({code.value})", "ms": ms},
+                )
+                return
         if self.registry.get(job.domain) is not None:
             self.state.finish_map_job(job.id, "failed", {"error": f"{job.domain} was mapped in the meantime"})
             return
         version = self.registry.save(card, note=f"map {job.id}: {', '.join(a.name for a in card.actions)}")
-        result = {"actions": [a.name for a in card.actions], "ms": ms, "report": outcome.report}
+        names = [a.name for a in card.actions]
+        result: dict[str, Any] = {"actions": names, "ms": ms, "report": outcome.report}
         self.state.finish_map_job(job.id, "succeeded", result, new_version=version)
         log.info("map %s succeeded: %s version %d in %d ms", job.id, job.domain, version, ms)
+
+    # ---- signing in ------------------------------------------------------------
+
+    def _sign_in_link(self, job: MapJob) -> dict[str, Any] | None:
+        """The requester's Connect link for a job that stopped for a sign-in (a new one once it expires)."""
+        if self.connections is None or job.status != "needs_sign_in":
+            return None
+        result = job.result or {}
+        parts = urlsplit(job.url)
+        return self.connections.start_for_new_site(
+            job.user,
+            job.domain,
+            result.get("provider") or provider_for(job.domain),
+            result.get("login_url") or job.url,
+            f"{parts.scheme}://{parts.netloc}",
+        )
+
+    def _sign_in_pending(self, job: MapJob) -> bool:
+        conn = self.connections.latest(job.user, job.domain) if self.connections is not None else None
+        return conn is not None and conn.status == "pending"
+
+    def _signed_in(self, user: str, domain: str, provider: str) -> None:
+        """A sign-in was stored: carry on with the user's jobs that stopped for it (decision 4)."""
+        if provider != provider_for(domain) or self.registry.get(domain) is not None:
+            return
+        resumed = self.state.resume_map_jobs(user, domain)
+        if resumed:
+            log.info("%s signed in to %s: resuming %s", user, domain, ", ".join(resumed))
+            self._wake.set()
 
     async def _check_examples(self, card: Card, user: str) -> dict[str, str]:
         """Every read action's examples, run through the executor as agents will call them."""

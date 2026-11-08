@@ -855,6 +855,7 @@ def main() -> None:
         MapManager(
             registry, state, executor, mapper, healer,
             MapConfig(allow_local=os.environ.get("MAP_ALLOW_LOCAL", "0") == "1"),
+            connections,
         )
         if mapper is not None
         else None

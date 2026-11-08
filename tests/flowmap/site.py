@@ -6,7 +6,9 @@ Pages fetch JSON the way real sites do, with the traps a mapper must get right:
 - a typeahead (GET /api/suggest) that sends only the first 3 characters typed (a partial marker);
 - an analytics beacon to another host (localhost instead of 127.0.0.1) that carries the query (a decoy);
 - a book page that fetches a one-time token first, then the book with it (a two-step action);
-- add to cart (POST /api/cart, a write) with the csrf header.
+- add to cart (POST /api/cart, a write) with the csrf header;
+- a members area behind a sign-in: /orders (your orders, searchable) sends you to /login when signed out, and
+  GET /api/orders answers 401 without the HttpOnly ``member`` cookie. Test sign-in: reader / reader-pass.
 
 Breaks, for healing (POST /_admin/break/{kind}, POST /_admin/reset); the pages follow the change, as a
 redesigned site would: ``endpoint`` (/api/search → /api/v2/search), ``field`` (title → name),
@@ -21,9 +23,10 @@ import json
 import secrets
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 BREAKS = ("endpoint", "field", "nested", "param")
 PAGE_SIZE = 10
@@ -59,6 +62,8 @@ BOOKS: list[dict[str, Any]] = [
     for i, t in enumerate(_TITLES + [f"{t} (Second Edition)" for t in _TITLES], start=1)
 ]
 BY_ID = {b["id"]: b for b in BOOKS}
+MEMBER = ("reader", "reader-pass")  # the members area's test sign-in
+ORDERS = [BOOKS[i] for i in (0, 3, 6, 7, 15, 17, 26, 39)]  # what the member has bought
 
 
 @dataclass
@@ -66,11 +71,13 @@ class State:
     breaks: set[str] = field(default_factory=set)
     tokens: set[str] = field(default_factory=set)
     carts: dict[str, list[str]] = field(default_factory=dict)
+    members: set[str] = field(default_factory=set)  # signed-in ``member`` cookie values
 
     def reset(self) -> None:
         self.breaks.clear()
         self.tokens.clear()
         self.carts.clear()
+        self.members.clear()
 
 
 state = State()
@@ -267,6 +274,73 @@ async def add_to_cart(request: Request) -> Response:
     items = state.carts.setdefault(sid or "", [])
     items.extend([body["book_id"]] * int(body.get("quantity", 1)))
     return JSONResponse({"items": items})
+
+
+# ---------- members area ----------
+
+_LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Sign in</title></head><body>
+<h1>Sign in to Bookshop</h1>
+<form method="post" action="/login"><input type="hidden" name="next" value="%NEXT%">
+<label>Username <input name="username" autocomplete="username"></label>
+<label>Password <input name="password" type="password" autocomplete="current-password"></label>
+<button type="submit">Sign in</button></form><p id="error">%ERROR%</p></body></html>"""
+
+_ORDERS_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Your orders</title></head><body>
+<h1>Your orders</h1>
+<form id="f"><input id="q" placeholder="Search your orders"><button type="submit">Search</button></form>
+<p id="count"></p><div id="orders"></div>
+<script>
+document.getElementById("f").addEventListener("submit", async e => {
+  e.preventDefault();
+  const q = document.getElementById("q").value;
+  const r = await fetch("/api/orders?q=" + encodeURIComponent(q), {headers: {"accept": "application/json"}});
+  const d = await r.json();
+  document.getElementById("count").textContent = d.total + " orders";
+  document.getElementById("orders").innerHTML = d.orders.map(o =>
+    '<div class="order"><h3>' + o.book.title + "</h3><span>" + o.ordered_at + "</span></div>").join("");
+});
+</script></body></html>"""
+
+
+def _member(request: Request) -> bool:
+    return request.cookies.get("member") in state.members
+
+
+@app.get("/login")
+async def login_page(next: str = "/") -> HTMLResponse:
+    target = next if next.startswith("/") else "/"
+    return HTMLResponse(_LOGIN_PAGE.replace("%NEXT%", target).replace("%ERROR%", ""))
+
+
+@app.post("/login")
+async def login(request: Request) -> Response:
+    form = {k: v[0] for k, v in parse_qs((await request.body()).decode()).items()}
+    target = form.get("next", "/")
+    if (form.get("username"), form.get("password")) != MEMBER:
+        page = _LOGIN_PAGE.replace("%NEXT%", target).replace("%ERROR%", "Wrong username or password")
+        return HTMLResponse(page, status_code=401)
+    value = secrets.token_hex(16)
+    state.members.add(value)
+    response = RedirectResponse(target if target.startswith("/") else "/", status_code=303)
+    response.set_cookie("member", value, httponly=True, samesite="lax")
+    return response
+
+
+@app.get("/orders")
+async def orders_page(request: Request) -> Response:
+    if not _member(request):
+        return RedirectResponse("/login?next=/orders", status_code=302)
+    return HTMLResponse(_ORDERS_PAGE)
+
+
+@app.get("/api/orders")
+async def orders(request: Request, q: str = "") -> Response:
+    if not _member(request):
+        return JSONResponse({"error": "sign in to see your orders"}, status_code=401)
+    words = q.lower().split()
+    hits = [b for b in ORDERS if not words or any(w in b["title"].lower() for w in words)]
+    out = [{"id": f"o{i}", "book": b, "ordered_at": f"2026-0{1 + i % 9}-1{i}"} for i, b in enumerate(hits)]
+    return JSONResponse({"orders": out, "total": len(out)})
 
 
 @app.post("/collect")

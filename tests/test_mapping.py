@@ -15,14 +15,25 @@ import mcp_types as types
 import pytest
 
 from runtime.confirm import Confirmer
+from runtime.connect import ConnectError, ConnectionManager
 from runtime.executor import Executor
 from runtime.gateway import Gateway
 from runtime.healing import HealConfig, HealManager
-from runtime.mapping import MapConfig, MapError, MapManager, MapOutcome, MapRequest, SignInNeeded
+from runtime.mapping import (
+    MapConfig,
+    MapError,
+    MapManager,
+    MapOutcome,
+    MapRequest,
+    SignInNeeded,
+    provider_for,
+)
 from runtime.registry import Registry
 from runtime.sessions import InMemorySessionStore
 from runtime.state import StateStore
+from tests.fixture_site.app import CSRF, VALID_SID
 from tests.fixture_site.remapper import FixtureRemapper
+from tests.test_login_confirm import FakeNeko
 
 DOMAIN = "fixture.test"
 
@@ -31,10 +42,11 @@ WORKING_READS = ("search_products", "get_product", "get_item")
 
 
 def public_reads(card: dict[str, Any]) -> dict[str, Any]:
-    """The fixture card with only its plain working reads (it also holds deliberately failing ones), as a
-    fresh map would find."""
+    """The fixture card with only its plain working reads (it also holds deliberately failing ones) and no
+    sign-in, as a fresh map of a public site would find."""
     out = copy.deepcopy(card)
     out["actions"] = [a for a in out["actions"] if a["name"] in WORKING_READS]
+    out["connect_providers"] = []
     return out
 
 
@@ -178,6 +190,95 @@ async def test_mapping_failures(
     assert out["result"]["log"]
     other = await m.status(job["job_id"], "bob")
     assert other is not None and "no search box" not in other["user_message"]  # only the requester sees why
+    assert registry.get(DOMAIN) is None
+
+
+class SignInFirst(StandIn):
+    """A site that wants a sign-in: asks for one until the job has one, then maps with it."""
+
+    def __init__(self, card: dict[str, Any], login_url: str) -> None:
+        super().__init__(card)
+        self.login_url = login_url
+
+    async def map_site(self, request: MapRequest, progress: Callable[[str], None]) -> MapOutcome:
+        if request.sign_in is None:
+            self.requests.append(request)
+            raise SignInNeeded("fixture.test wants a sign-in for this", ["open", "sign in?"], self.login_url)
+        out = await super().map_site(request, progress)
+        provider = copy.deepcopy(self.card_provider)
+        provider.update(id=request.sign_in, login_url=request.login_url)
+        out.card["connect_providers"] = [provider]
+        return out
+
+
+async def test_a_site_behind_a_sign_in(
+    registry: Registry, state: StateStore, executor: Executor, fixture_card: dict[str, Any], site_url: str
+) -> None:
+    neko = FakeNeko()
+    connections = ConnectionManager(
+        registry,
+        executor.sessions,
+        executor,
+        "http://gw",
+        neko=neko,
+        check_every_s=0.02,  # type: ignore[arg-type]
+    )
+    mapper = SignInFirst(public_reads(fixture_card), f"{site_url}/login")
+    mapper.card_provider = fixture_card["connect_providers"][0]  # type: ignore[attr-defined]
+    healer = HealManager(registry, state, executor, FixtureRemapper(), HealConfig(cooldown_s=0))
+    m = MapManager(
+        registry, state, executor, mapper, healer, MapConfig(allow_local=True, poll_s=0.01), connections
+    )
+    job = await m.request(
+        "alice", f"{site_url}/account", "search products", "search_products", {"query": "x"}
+    )
+    await m.drain()
+
+    # The job stops with a sign-in link for the requester (the same link while it's pending) ...
+    out = await m.status(job["job_id"], "alice")
+    assert out is not None and out["status"] == "needs_sign_in", out
+    assert "/connect/" in out["sign_in"]["url"] and "Sign in to fixture.test" in out["user_message"]
+    assert "map_status" in out["hint"] and out["result"]["login_url"] == f"{site_url}/login"
+    again = await m.status(job["job_id"], "alice")
+    assert again is not None and again["sign_in"]["url"] == out["sign_in"]["url"]
+    assert [p["domain"] for p in connections.pending_for("alice")] == [DOMAIN]  # on the account page too
+    other = await m.status(job["job_id"], "bob")
+    assert other is not None and "sign_in" not in other and "/connect/" not in json.dumps(other)
+    waited = await m.status(job["job_id"], "alice", wait_s=0.2)  # held while the sign-in is pending
+    assert waited is not None and waited["status"] == "needs_sign_in"
+
+    # ... where there's no check yet, so the user confirms, and only once signing in changed the cookies.
+    token = out["sign_in"]["url"].rsplit("/", 1)[1]
+    assert (await connections.start_browser_login(token))["confirm"] is True
+    await asyncio.sleep(0.1)  # the login browser's first cookies are read
+    with pytest.raises(ConnectError):
+        await connections.confirm_browser_login(token)
+    neko.cookies_now = {"anon": "1", "sid": VALID_SID, "csrftoken": CSRF}
+    await connections.confirm_browser_login(token)
+
+    # Signed in: the job carries on by itself, signed in, and the card's provider is checked with the sign-in.
+    resumed = state.get_map_job(job["job_id"])
+    assert resumed is not None and resumed.status == "queued"
+    await m.drain()
+    done = await m.status(job["job_id"], "alice")
+    assert done is not None and done["status"] == "succeeded", done
+    second = mapper.requests[-1]
+    assert second.sign_in == provider_for(DOMAIN) == "fixture" and second.login_url == f"{site_url}/login"
+    stored = registry.get(DOMAIN)
+    assert stored is not None and [p.id for p in stored.card.connect_providers] == ["fixture"]
+
+
+async def test_a_sign_in_check_that_fails_is_not_saved(
+    registry: Registry, state: StateStore, executor: Executor, fixture_card: dict[str, Any], site_url: str
+) -> None:
+    executor.sessions.put("alice", DOMAIN, "fixture", {"sid": "sid-revoked"})  # type: ignore[attr-defined]
+    mapper = SignInFirst(public_reads(fixture_card), f"{site_url}/login")
+    mapper.card_provider = fixture_card["connect_providers"][0]  # type: ignore[attr-defined]
+    m = maps(registry, state, executor, mapper)
+    job = await m.request("alice", "fixture.test", "search", "search_products")
+    await m.drain()
+    out = await m.status(job["job_id"], "alice")
+    assert out is not None and out["status"] == "failed" and "sign-in check" in out["result"]["error"]
     assert registry.get(DOMAIN) is None
 
 

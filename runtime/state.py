@@ -407,6 +407,22 @@ class StateStore:
                 (status, json.dumps(result), new_version, _now(), job_id),
             )
 
+    def resume_map_jobs(self, user: str, domain: str) -> list[str]:
+        """Queue ``user``'s jobs for ``domain`` that stopped for a sign-in again (they've signed in now).
+        Their result is kept: it holds the page that asked for the sign-in."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM map_jobs WHERE user = ? AND domain = ? AND status = 'needs_sign_in'",
+                (user, domain),
+            ).fetchall()
+            ids = [r["id"] for r in rows]
+            for job_id in ids:
+                self._conn.execute(
+                    "UPDATE map_jobs SET status = 'queued', progress = ?, finished_at = NULL WHERE id = ?",
+                    ("signed in; carrying on", job_id),
+                )
+            return ids
+
     def fail_orphaned_map_jobs(self) -> int:
         with self._lock:
             cur = self._conn.execute(

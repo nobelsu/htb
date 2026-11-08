@@ -12,6 +12,7 @@ import asyncio
 import logging
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -97,6 +98,8 @@ class ConnectionManager:
         self.check_every_s = check_every_s
         self._by_token: dict[str, Connection] = {}
         self._latest: dict[tuple[str, str], Connection] = {}  # (user, domain) -> most recent connection
+        # Called with (user, domain, provider) whenever a sign-in is stored (map jobs resume on it).
+        self.on_connected: list[Callable[[str, str, str], None]] = []
 
     def _card(self, domain: str) -> Card | None:
         stored = self.registry.get(domain)
@@ -131,6 +134,40 @@ class ConnectionManager:
         self._latest[(user, domain)] = conn
         log.info("connection started for %s on %s (%s)", user, domain, chosen.id)
         return self._with_instructions(conn)
+
+    def start_for_new_site(
+        self, user: str, domain: str, provider: str, login_url: str, base_url: str
+    ) -> dict[str, Any]:
+        """A sign-in for a site that has no card yet, because a map job needs one (DECISIONS M8).
+
+        There is no session_check to verify it with yet, so it is treated like a weak check: the user clicks
+        "I've signed in", and that only counts once signing in has changed the site's cookies. The latest
+        pending link is reused."""
+        current = self._latest.get((user, domain))
+        if current is not None:
+            current.refresh()
+            if current.status == "pending" and current.provider == provider:
+                return self._with_instructions(current)
+        conn = Connection(
+            token=secrets.token_urlsafe(24),
+            user=user,
+            domain=domain,
+            provider=provider,
+            login_url=login_url,
+            base_url=base_url,
+            expires_at=time.time() + self.timeout_s,
+            check_is_weak=True,
+        )
+        self._by_token[conn.token] = conn
+        self._latest[(user, domain)] = conn
+        log.info("connection started for %s on %s (a site being mapped)", user, domain)
+        return self._with_instructions(conn)
+
+    def latest(self, user: str, domain: str) -> Connection | None:
+        conn = self._latest.get((user, domain))
+        if conn is not None:
+            conn.refresh()
+        return conn
 
     def _with_instructions(self, conn: Connection) -> dict[str, Any]:
         out = conn.public(self.public_base_url)
@@ -268,6 +305,11 @@ class ConnectionManager:
         conn.status, conn.message = "connected", f"connected to {conn.domain}"
         shown = f"Chrome {identity.major} on {identity.platform}" if identity is not None else "default identity"
         log.info("%s connected to %s via %s (%d cookies, %s)", conn.user, conn.domain, via, len(jar), shown)
+        for hook in self.on_connected:
+            try:
+                hook(conn.user, conn.domain, conn.provider)
+            except Exception:
+                log.exception("a sign-in hook failed")
 
     # ---- "log in here": a Neko login browser ------------------------------
 

@@ -469,7 +469,13 @@ markers and infers the card deterministically, and the LLM only names things. We
     planning call). The runtime validates the mapped card and runs every read example through the executor
     before saving version 1, as heal does; the mapper never saves. A second request for a site being mapped
     joins the same job and sees only its status (not the first user's task, values or log). Reads only.
-    Not built: signing in to a site that has no card (Connect needs the card's `connect_providers` and
-    `session_check`, which flowmap doesn't infer yet), so such jobs end `needs_sign_in`. Addresses on this
-    machine or a private network are refused (names are resolved first) unless `MAP_ALLOW_LOCAL=1`; redirects
-    during the browser's first visit aren't checked.
+    Addresses on this machine or a private network are refused (names are resolved first) unless
+    `MAP_ALLOW_LOCAL=1`; redirects during the browser's first visit aren't checked.
+  - Sign-in for a site with no card: the job stops at `needs_sign_in` with a Connect link for the page that
+    asked (`ConnectionManager.start_for_new_site`). With no `session_check` yet it works like a weak check:
+    the user clicks "I've signed in", which counts only once the cookies changed. The stored sign-in
+    (`on_connected`) queues the job again, and it maps signed in under the provider id `provider_for(domain)`
+    (the site's name). flowmap then works out `session_check` and `logged_out_signals` by sending the mapped
+    action's request (then the start page) signed in and signed out; a check that can't tell them apart is
+    kept as weak and reported. The runtime runs the check with the requester's sign-in before saving.
+    The card is shared: other users sign in through the normal Connect flow once it exists.

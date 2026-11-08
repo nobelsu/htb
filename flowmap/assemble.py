@@ -88,7 +88,10 @@ def merge(
     *,
     source: str,
     mapped_at: str | None = None,
+    providers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """The card with ``action`` added. ``providers`` are a new card's ``connect_providers`` (a site mapped
+    while signed in); an existing card keeps its own."""
     provenance = {
         "mapped_at": mapped_at or datetime.now(UTC).isoformat(timespec="seconds"),
         "source": source,
@@ -103,7 +106,7 @@ def merge(
             "blocked_signals": [],
             "changed_signals": list(inferred.changed_signals),
             "provenance": provenance,
-            "connect_providers": [],
+            "connect_providers": copy.deepcopy(providers or []),
             "defaults": {"tier": "http"},
             "actions": [],
         }
@@ -204,6 +207,7 @@ async def map_action(
     use_llm: bool | None = None,
     pause_s: float = 1.0,
     note: str | None = None,
+    providers: list[dict[str, Any]] | None = None,
 ) -> Mapped:
     """Infer → label → merge → minimise → validate, replay and save one action."""
     inferred = infer(flow, runs)
@@ -211,7 +215,7 @@ async def map_action(
     labels = await label(inferred, flow, visible=visible, client=llm_client, use_llm=use_llm)
     action = build_action(inferred, labels, flow)
     session = runs[0].session if runs else "manual"
-    card = merge(action, inferred, flow, existing, source=f"flowmap capture {session}")
+    card = merge(action, inferred, flow, existing, source=f"flowmap capture {session}", providers=providers)
     minimised = None
     if replay is not None:
         args = inferred.examples[0]["params"] if inferred.examples else {}
