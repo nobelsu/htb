@@ -479,6 +479,8 @@ async def test_a_named_write_is_held_back_and_saved_never_run(bookshop: str, tmp
 
     client = FakeClient(
         [
+            # done before doing anything: refused, since nothing was held back yet
+            {"name": "done", "input": {"summary": "added", "results": [], "next_page": NONE}},
             {"name": "click", "input": {"element": role("button", "Add to cart")}},
             {"name": "done", "input": {"summary": "added", "results": [], "next_page": NONE}},
         ]
@@ -509,6 +511,7 @@ async def test_a_named_write_is_held_back_and_saved_never_run(bookshop: str, tmp
         cart = stored.card.action("add_to_cart")
         assert cart is not None and cart.kind == "write" and cart.requires_confirmation
         assert state.is_never_run("bookshop.test", "add_to_cart")
+        assert out["result"]["report"]["turns"] == 3 and not client.script  # the early done was refused
         env = await executor.run(stored, "add_to_cart", {"book_id": "b003"}, user="bob")
         assert env.status == ResultCode.NEEDS_CONFIRMATION, env  # nothing sent without the user's yes
         assert state_site.carts == carts

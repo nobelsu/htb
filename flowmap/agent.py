@@ -674,6 +674,11 @@ async def _act(
                 + ", ".join(f"{n} = {json.dumps(inputs[n])}" for n in unused)
                 + ". Do the task with them, typed or chosen exactly."
             )
+        if hold is not None and not hold.held:
+            raise AgentError(
+                "nothing has been done yet: this is a change, so click the button that does it (it's held "
+                "back, the site won't get it), then call done"
+            )
         pointed = [e for e in args.get("result_elements") or [] if e.get("by") not in (None, "none")]
         texts = [str(t) for t in args.get("results") or []]
         selector: str | None

@@ -18,6 +18,7 @@ Optional fields: ``results_selector`` (each result's visible text, to match agai
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import re
 from collections.abc import Awaitable, Callable, Iterator
@@ -293,7 +294,17 @@ async def play(
 
 async def _play_step(page: Any, step: Any, values: dict[str, str], timeout_ms: int) -> None:
     if isinstance(step, Goto):
-        await page.goto(render(step.url, values, url=True), timeout=timeout_ms * 3)
+        url = render(step.url, values, url=True)
+        try:
+            await page.goto(url, timeout=timeout_ms * 3)
+        except Exception as e:
+            # The page's own navigation (a search sent with Enter, a script redirect) cancelled this one:
+            # let it finish, then open the address again.
+            if "ERR_ABORTED" not in str(e) and "interrupted by another navigation" not in str(e):
+                raise
+            with contextlib.suppress(Exception):
+                await page.wait_for_load_state("load", timeout=timeout_ms * 3)
+            await page.goto(url, timeout=timeout_ms * 3)
     elif isinstance(step, Fill):
         await resolve(page, step.target).fill(render(step.value, values), timeout=timeout_ms)
     elif isinstance(step, Press):
