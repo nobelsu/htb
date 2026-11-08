@@ -29,6 +29,7 @@ from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlsplit
 
 from flowmap.capture import SECRET, Exchange, Run
 from flowmap.flows import Flow, Goto, Select, placeholders, render
+from flowmap.holdback import HELD_HEADER
 from runtime.extract import css_items
 
 OUTPUT_MATCH = 0.6  # share of visible values the output must account for
@@ -403,6 +404,10 @@ def _carries_any(ex: Exchange, run: Run) -> bool:
     return any(v and carries(ex, v) for v in _all_values(run))
 
 
+def _held(ex: Exchange) -> bool:
+    return any(k.lower() == HELD_HEADER for k, _ in ex.response_headers)
+
+
 def _submit_step(flow: Flow) -> int:
     used = [i for i, s in enumerate(flow.steps) if placeholders(s)]
     return max(used) if used else 0
@@ -417,7 +422,13 @@ def _pick(
     marker_runs = [r for r in ctx.runs if r.kind == "marker"]
     real = [r for r in ctx.runs if r.kind == "real"]
     scored = []
+    held = {sig for sig, by_run in groups.items() if any(_held(ex) for ex in by_run.values())}
     for sig, by_run in groups.items():
+        if flow.kind == "write" and held and sig not in held:
+            continue  # the write is the request that was held back (flowmap/holdback.py)
+        exs_all = list(by_run.values())
+        if flow.kind != "write" and not any((ex.body or "").strip() for ex in exs_all):
+            continue  # a read returns something: an always-empty answer is a beacon (analytics, presence)
         partial = False
         marker_hits = 0
         for r in marker_runs:

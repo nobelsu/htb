@@ -263,9 +263,19 @@ COMMON_SELECTOR = """(texts) => {
     .filter((el) => !el.closest("script,style,noscript,head"));
   const found = [], missing = [];
   for (const t of texts) {
+    const want = norm(t);
     let best = null;
-    for (const el of all) if (norm(el.textContent) === norm(t)) best = el;  // the deepest one
-    if (best) found.push(best); else missing.push(t);
+    for (const el of all) if (norm(el.textContent) === want) best = el;  // the deepest one
+    if (!best && want.length >= 4) {
+      // A title with badges after it ("Data Analyst (Verified job)", "Ann Lee Premium 3rd+"): the deepest
+      // element whose text starts with it.
+      for (const el of all) if (norm(el.textContent).startsWith(want)) best = el;
+    }
+    if (best) {
+      const link = best.closest("a[href]");  // a result is a link: take it, so its href is the page
+      if (link && norm(link.textContent).startsWith(want)) best = link;
+      found.push(best);
+    } else missing.push(t);
   }
   if (!found.length) return {selector: null, missing};
   const good = (c) => /^[A-Za-z][\\w-]{1,40}$/.test(c) && !/\\d{3,}|^css-|^sc-|^_/.test(c);
@@ -283,14 +293,19 @@ COMMON_SELECTOR = """(texts) => {
     }
   }
   let best = null;
+  // Every named result if one selector covers them all, else most of them (70%): one result's title can sit
+  // in a different element (a highlighted word, a badge).
+  const need = found.length <= 2 ? found.length : Math.ceil(found.length * 0.7);
   for (const sel of candidates) {
     let matches;
     try { matches = [...document.querySelectorAll(sel)]; } catch (e) { continue; }
-    if (!found.every((el) => matches.includes(el))) continue;
-    // Fewest matches; on a tie the more specific (longer) selector, which survives other links appearing.
-    const better = !best || matches.length < best.count
-      || (matches.length === best.count && sel.length > best.selector.length);
-    if (better) best = {selector: sel, count: matches.length};
+    const covered = found.filter((el) => matches.includes(el)).length;
+    if (covered < need) continue;
+    // Most results covered; then fewest matches; then the more specific (longer) selector.
+    const better = !best || covered > best.covered
+      || (covered === best.covered && (matches.length < best.count
+        || (matches.length === best.count && sel.length > best.selector.length)));
+    if (better) best = {selector: sel, count: matches.length, covered};
   }
   return {selector: best && best.selector, count: best ? best.count : 0, missing};
 }"""

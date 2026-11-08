@@ -542,3 +542,27 @@ async def test_bookshop_actions_infer_to_valid_cards(bookshop: str) -> None:
         assert report.ok, report.errors
         assert inf.confidence == 1.0, inf.reasons
         assert "127.0.0.1" not in json.dumps(inf.steps)  # the origin is {{base_url}} everywhere
+
+
+def test_a_write_is_the_request_that_was_held_back() -> None:
+    """LinkedIn's follow: background POSTs (presence, live updates) carry the input too, but the write is
+    the one the browser held back while mapping."""
+
+    def make(b: Builder, v: str, i: int, kind: str) -> None:
+        body = '{"item": "' + v + '"}'
+        b.add(SITE + "/api/presence", method="POST", post=body, req_ctype="application/json", body={})
+        held = b.add(SITE + "/api/cart", method="POST", post=body, req_ctype="application/json", body={})
+        held.response_headers.append(("x-flowmap-held", "1"))
+
+    out = infer(flow(kind="write", results_selector=None), runs_with(make))
+    assert out.steps[-1]["request"]["url"].endswith("/api/cart") and out.kind == "write"
+
+
+def test_an_always_empty_answer_is_not_a_read() -> None:
+    """A tracking ping that carries the search term but answers nothing isn't the search."""
+
+    def make(b: Builder, v: str, i: int, kind: str) -> None:
+        b.add(SITE + "/api/track?term=" + quote(v), method="POST", body="", ctype="text/plain")
+
+    with pytest.raises(InferError, match="no request carries"):
+        infer(flow(), runs_with(make))

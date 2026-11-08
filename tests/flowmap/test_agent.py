@@ -286,3 +286,28 @@ def test_an_address_holding_every_input_becomes_the_flow() -> None:
     assert url_shortcut(url, {"query": "robotics", "location": "London"}, "linkedin.com") is None  # not all
     assert url_shortcut(url, {"page": "2"}, "linkedin.com") is None  # too short to trust
     assert url_shortcut("https://evil.example/?q=robotics", {"query": "robotics"}, "linkedin.com") is None
+
+
+@pytest.mark.browser
+async def test_results_with_badges_after_their_titles_still_get_a_selector() -> None:
+    """LinkedIn's results: "Ann Lee Premium 3rd+", "Data Analyst (Verified job)". The titles alone find the
+    result links, even when one title sits in a different element."""
+    pytest.importorskip("playwright.async_api")
+    from playwright.async_api import async_playwright
+
+    from flowmap.agent import results_selector
+
+    html = """<ul class="results">
+      <li class=row><a class=card href="/in/ann"><span class=t>Ann Lee</span> <span>Premium</span></a></li>
+      <li class=row><a class=card href="/in/bo"><span class=t>Bo Chan</span> <span>Verified</span></a></li>
+      <li class=row><a class=card href="/in/cy"><strong>Cy Diaz</strong> <span>3rd+</span></a></li>
+    </ul><a href="/feed">Home</a>"""
+    async with async_playwright() as p:
+        browser, page = await _page(p)
+        try:
+            await page.set_content(html)
+            selector = await results_selector(page, ["Ann Lee", "Bo Chan", "Cy Diaz"])
+            links = await page.eval_on_selector_all(selector, "els => els.map(e => e.getAttribute('href'))")
+        finally:
+            await browser.close()
+    assert links == ["/in/ann", "/in/bo", "/in/cy"], selector  # the result links, not "Home"
