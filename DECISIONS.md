@@ -572,3 +572,5 @@ markers and infers the card deterministically, and the LLM only names things. We
     the action is saved needing confirmation and marked never run until a confirmed call succeeds. A named
     action whose wording changes something is a write even without the flag (a read can't click a committing
     button, so it would only fail); payments, deleting and settings are refused by name, as in explore.
+    A task with change wording and no action name ("follow a company page") is sent back at once with what
+    to send instead (action, inputs, write: true), rather than starting an explore of the whole site.

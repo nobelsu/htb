@@ -512,3 +512,15 @@ async def test_a_site_that_is_set_up_can_gain_actions(
     )
     latest = registry.get(DOMAIN)
     assert latest is not None and latest.version == 3
+
+
+async def test_a_change_without_a_name_is_sent_back_to_be_named(
+    registry: Registry, state: StateStore, executor: Executor
+) -> None:
+    """'follow a company page' with no action isn't an explore: the caller is told to name it as a write."""
+    m = maps(registry, state, executor, StandIn())
+    out = await m.request("alice", "shop.test", "follow a company page")
+    assert "name it" in out["error"] and "write: true" in out["hint"], out
+    assert state.open_map_job_for(DOMAIN) is None
+    explore = await m.request("alice", "shop.test", "find books about the sea")  # a goal to read: explores
+    assert "job_id" in explore

@@ -38,6 +38,14 @@ ACTION_NAME = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 MAX_TASK = 500
 MAX_INPUTS = 8
 MAX_WAIT_S = 45.0
+# Wording that does something on the site (the runtime's own copy: the mapper is pluggable). A task like this
+# with no action name is one specific write, not a site to explore: the caller is asked to name it.
+CHANGE = re.compile(
+    r"\b(follow|connect|send|post|publish|like|subscribe|message|invite|endorse|apply|reply|comment|share"
+    r"|repost|add to (?:cart|basket|bag)|save|bookmark|join|accept|vote|rate|review)\b",
+    re.I,
+)
+READING = re.compile(r"\s*(search|find|look up|list|show|open|view|get|browse|see|read|check)\b", re.I)
 
 
 class MapError(Exception):
@@ -163,6 +171,13 @@ class MapManager:
             return {"error": "inputs go with an action; to explore the site, give neither"}
         if write and not action:
             return {"error": "write goes with a named action; exploring maps writes by itself"}
+        if not action and CHANGE.search(task) and not READING.match(task):
+            return {
+                "error": "that's one specific change, not a site to explore: name it",
+                "hint": "call request_map again with action (a snake_case name, e.g. follow_company), "
+                'inputs with the values to use (e.g. {"company": "anthropic"}: who or what it acts on) and '
+                "write: true. Nothing reaches the site while it's set up.",
+            }
         values: dict[str, str] = {}
         for name, value in (inputs or {}).items():
             if not ACTION_NAME.match(name) or isinstance(value, (dict, list)) or value is None:

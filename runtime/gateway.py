@@ -143,7 +143,7 @@ HEAL_STATUS_TOOL = types.Tool(
 REQUEST_MAP_TOOL = types.Tool(
     name="request_map",
     description="Ask for a website to be set up, when find_actions has nothing for a site the user needs. "
-    "Either name one action: what it should do (task), a snake_case name (action) and the values you'd use "
+    "For one specific thing the user wants done, name it as one action: what it should do (task), a snake_case name (action) and the values you'd use "
     "for its inputs (e.g. {\"query\": \"robotics\"}); an agent does it once on the site and turns it into "
     "an action (a few minutes); set write for one that changes something (send, follow, post, add): its last "
     "click is held back, so nothing reaches the site while it's set up, and running it later asks the user to "
