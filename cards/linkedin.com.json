@@ -4189,7 +4189,7 @@
     },
     {
       "name": "search_people",
-      "description": "Search for people on the professional networking platform by keywords, returning matching profiles with name, headline, location, current or past position, connection degree, profile URL and image links, and mutual connections. This is a read-only operation that changes no data and is safe to retry.",
+      "description": "Search for people on the professional networking platform by keywords, returning matching profiles with name, headline, location, current or past position, connection degree, profile URL and image links, and mutual connections. This is a read-only operation that changes no data and is safe to retry. Fields: name (else name_2, else name_3), headline, location, current_or_past_position, connection_degree (' \u2022 2nd'), profile_id (ACoAA\u2026), profile_url (else profile_url_2, a relative /in/<slug>/). The vanity_name for get_profile / send_connection_request is the <slug> in the profile link.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -5093,27 +5093,16 @@
       "output": {
         "from": "steps.people.items",
         "fields": {
-          "profile_id": "$[3].children[3].children[3].triggers[0].action.actions[0].value.requestedArguments.payload.profileId",
-          "name": "$..children[0][3].children[0][1]",
-          "profile_image_base_url": "$..rootUrl",
-          "profile_image_100": "$..suffixUrl",
-          "profile_image_200": "$..imageRenditions[1].suffixUrl",
-          "profile_image_400": "$..imageRenditions[2].suffixUrl",
-          "profile_image_800": "$..imageRenditions[3].suffixUrl",
-          "profile_image_asset_urn": "$..assetUrn",
-          "profile_path": "$..screen.url",
-          "connection_degree": "$[3].children[3].children[3].children[3].children[0][3].children[3].children[1][3].children[0][3].children[3].textProps.children[1][3].children[0][3].children[0]",
+          "name": "$..triggers[0].action.actions[1].value.state.value.stringValue",
+          "name_2": "$..textProps.children[0][3].children[0][3].children[0][1]",
+          "name_3": "$..a11yText",
           "headline": "$[3].children[3].children[3].children[3].children[0][3].children[3].children[1][3].children[1][3].textProps.children[0]",
           "location": "$[3].children[3].children[3].children[3].children[0][3].children[3].children[1][3].children[2][3].textProps.children[0]",
           "current_or_past_position": "$[3].children[3].children[3].children[3].children[1][3].textProps.children[0][3].children[0][1]",
-          "profile_url": "$..actions[0].value.content.url.urlValue.url",
-          "mutual_connection_name": "$[3].children[3].children[3].children[3].children[0][3].children[3].children[0][3].a11yText",
-          "mutual_connection_name_2": "$[3].children[3].children[3].children[3].children[2][3].children[3].children[3].children[1][3].children[3].textProps.children[0][3].children[1][3].children[0]",
-          "mutual_connection_name_3": "$[3].children[3].children[3].children[3].children[2][3].children[3].children[3].children[1][3].children[3].textProps.children[1][3].children[1][3].children[0]",
-          "mutual_connection_or_company_name": "$[3].children[3].children[3].triggers[0].action.actions[1].value.state.value.stringValue",
-          "mutual_connection_or_company_name_2": "$[3].children[3].children[3].children[3].children[2][3].children[3].children[3].children[1][3].children[3].textProps.children[0][3].children[1][3].children[0]",
-          "mutual_connection_or_company_name_3": "$[3].children[3].children[3].children[3].children[1][3].textProps.children[0][3].children[1][3].children[0][3].children[0]",
-          "mutual_connection_headline": "$[3].children[3].children[3].triggers[0].action.actions[2].value.state.value.stringValue"
+          "connection_degree": "$[3].children[3].children[3].children[3].children[0][3].children[3].children[1][3].children[0][3].children[3].textProps.children[1][3].children[0][3].children[0]",
+          "profile_id": "$[3].children[3].children[3].triggers[0].action.actions[0].value.requestedArguments.payload.profileId",
+          "profile_url": "$..triggers[0].action.actions[5].value.content.url.urlValue.url",
+          "profile_url_2": "$..triggers[0].action.actions[1].value.content.screen.url"
         },
         "limit": 10,
         "next_params": null
