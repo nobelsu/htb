@@ -30,7 +30,7 @@ from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlsplit
 from flowmap.capture import SECRET, Exchange, Run
 from flowmap.flows import Flow, Goto, Select, placeholders, render
 from flowmap.holdback import HELD_HEADER
-from runtime.extract import css_items, html_selector
+from runtime.extract import STREAM_ROW, css_items, html_selector, resolve_rows, stream_rows
 
 # Endpoints that sound like the page's background chatter, not an action: only ever a tie-breaker.
 BACKGROUND = re.compile(
@@ -159,6 +159,29 @@ def _json(text: str | None) -> Any:
         return json.loads(text)
     except ValueError:
         return None
+
+
+# A streamed answer's JSON rows (CARD_SPEC "Streamed rows"): what a `regex` + `resolve: "rows"` extract reads.
+STREAM_EXPR = r"(?m)^[0-9a-f]{1,8}:(\[.*\]|\{.*\})$"
+
+
+def _stream_doc(body: str | None) -> list[Any] | None:
+    """A streamed answer (React Server Components rows, LinkedIn's newer pages) as one JSON document: each
+    object/array row with its pointers to other rows filled in. None when the body isn't such a stream."""
+    if not body or len(STREAM_ROW.findall(body[:200_000])) < 2:
+        return None
+    rows = stream_rows(body)
+    # Only the top rows (no other row points to them): a row that's pointed to is already inside one, filled
+    # in, and reading it on its own too would find each result twice.
+    pointed = set(re.findall(r'"\$[L@]?([0-9a-f]{1,8})(?=[":])', body))
+    top = [v for k, v in rows.items() if k not in pointed and isinstance(v, (dict, list))]
+    return [resolve_rows(v, rows) for v in top] or None
+
+
+def _doc(body: str | None) -> Any:
+    """The response as JSON: plain JSON, or a streamed answer's rows filled in."""
+    doc = _json(body)
+    return doc if doc is not None else _stream_doc(body)
 
 
 def _ctype(headers: Iterable[tuple[str, str]]) -> str:
@@ -319,9 +342,24 @@ def infer(flow: Flow, runs: list[Run], prefer: tuple[str, str, str] | None = Non
         found = _output(ctx, main)
         if found is not None:
             from_expr, container, fields, field_samples, page_size_items = found
-            extract["items"] = {"from": "body", "type": "jsonpath", "expr": from_expr}
+            first_body = main[real[0].run_id].body
+            streamed = _json(first_body) is None and _stream_doc(first_body) is not None
+            if streamed and from_expr.startswith("$[*]"):
+                # A streamed answer: every JSON row, pointers filled in, then the results inside a row.
+                extract["items"] = {
+                    "from": "body",
+                    "type": "regex",
+                    "expr": STREAM_EXPR,
+                    "parse": "json",
+                    "resolve": "rows",
+                    "then": "$" + from_expr[len("$[*]") :] or "$",
+                }
+                ctx.reasons.append("the answer is a stream of rows: read with resolve: rows")
+                expect_paths = []
+            else:
+                extract["items"] = {"from": "body", "type": "jsonpath", "expr": from_expr}
+                expect_paths = [container] if container != "$" else []
             output = {"from": f"steps.{main_id}.items", "fields": fields}
-            expect_paths = [container] if container != "$" else []
         elif kind == "read":
             raise InferError("the response doesn't hold what the page showed", ctx.reasons)
 
@@ -519,7 +557,7 @@ def _ranked(
                         share = max(share, _html_score(ex.body, rebuilt, r.visible) if rebuilt else 0.0)
                     out += share
                 else:
-                    out += _output_score(_json(ex.body), r.visible)
+                    out += _output_score(_doc(ex.body), r.visible)
         exs = list(by_run.values())
         post = sum(1 for ex in exs if ex.step > submit or (submit_is_goto and ex.step == submit))
         writes = sig[0] not in ("GET", "HEAD")
@@ -640,7 +678,7 @@ def _output(
     for r in ctx.runs:
         if r.kind != "real" or not r.visible:
             continue
-        doc = _json(main[r.run_id].body)
+        doc = _doc(main[r.run_id].body)
         if doc is None:
             kind = content_kind(main[r.run_id])
             raise InferError(

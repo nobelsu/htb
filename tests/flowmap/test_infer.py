@@ -621,3 +621,30 @@ def test_a_request_missing_from_some_real_runs_gives_way() -> None:
 
     out = infer(flow(), runs_with(make))
     assert out.steps[-1]["request"]["url"].endswith("/api/search")
+
+
+def stream(found: list[str]) -> str:
+    """A streamed answer (React Server Components rows): the results point at their names in other rows."""
+    lines = ['0:{"results":"$1"}']
+    items = [{"name": f"${hex(i + 2)[2:]}", "url": f"/c/{i}"} for i in range(len(found))]
+    lines.append("1:" + json.dumps(items))
+    lines += [f"{hex(i + 2)[2:]}:" + json.dumps(n) for i, n in enumerate(found)]
+    lines.append('9:I["chunk.js",[]]')  # a module row: not JSON, left alone
+    return "\n".join(lines) + "\n"
+
+
+def test_a_streamed_answer_is_read_with_resolve_rows() -> None:
+    """LinkedIn's newer pages answer with streamed rows that point to each other: the rows are filled in,
+    the results found in them, and the extract reads them the same way (Wei Wei's resolve: "rows")."""
+    from runtime.extract import ResponseView, run_extract
+    from schema.card import Extract
+
+    def make(b: Builder, v: str, i: int, kind: str) -> None:
+        b.add(SITE + "/rsc/search?q=" + quote(v), body=stream(names(v, kind)), ctype="application/octet-stream")
+
+    out = infer(flow(), runs_with(make))
+    items = out.steps[-1]["extract"]["items"]
+    assert items["type"] == "regex" and items["resolve"] == "rows" and items["parse"] == "json"
+    assert any("stream" in r for r in out.reasons)
+    got = run_extract(Extract.model_validate(items), ResponseView(stream(["Desk lamp", "Mug"]), {}, {}))
+    assert [g["name"] for g in got] == ["Desk lamp", "Mug"]
