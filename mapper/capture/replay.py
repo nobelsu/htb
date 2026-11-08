@@ -13,7 +13,7 @@ import secrets
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, quote_plus, urlsplit
 
 from mapper.bundle import ACTIONS_FILE, MARKER_RUNS, META_FILE, RUNS, STATE_FILE, parse_iso
 
@@ -42,6 +42,15 @@ def _relative(url: str) -> str:
     return parts.path + (f"?{parts.query}" if parts.query else "")
 
 
+def _with_params(url: str, values: dict[str, str]) -> str:
+    """An input given in the address (``/company/<name>/``) becomes ``{{params.NAME}}`` there too."""
+    for name, v in values.items():
+        for form in dict.fromkeys([quote(v, safe=""), quote_plus(v), v]):
+            if v and form in url:
+                url = url.replace(form, "{{params." + name + "}}")
+    return url
+
+
 def script_from_actions(actions: list[dict], meta: dict) -> tuple[list[dict], list[str]]:
     """Driver steps that redo a recorded run. Typed inputs become ``{{params.NAME}}``."""
     values = {**(meta.get("markers") or {}), **(meta.get("real_inputs") or {})}
@@ -68,7 +77,7 @@ def script_from_actions(actions: list[dict], meta: dict) -> tuple[list[dict], li
             if not seen_start and url == start:
                 seen_start = True  # record() opens start_url itself
             elif not caused:
-                steps.append({"type": "navigate", "url": url})
+                steps.append({"type": "navigate", "url": _with_params(url, values)})
         elif kind == "input":
             value = str(ev.get("value", ""))
             if value == "[redacted]":

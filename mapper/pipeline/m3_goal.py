@@ -171,6 +171,60 @@ def find_write_goal(bundle: Bundle, mark_index: int = 0) -> Goal:
     return Goal(chosen, reason, pool, _distinct_endpoints(pool, {}) > 1, None, mark)
 
 
+SCREEN_GRACE = timedelta(seconds=3)  # a page that performs the task fetches its data right after loading
+
+
+def similar_entry(bundle: Bundle, like: Entry) -> Entry | None:
+    """The same endpoint in another run when one path segment differs (a picked item's id in the path:
+    /api/conversations/<id>/messages): same method, host and segment count, one segment at most apart."""
+    segs = like.path.strip("/").split("/")
+    same = [
+        e
+        for e in bundle.entries
+        if (e.method, e.host) == (like.method, like.host)
+        and len(e.path.strip("/").split("/")) == len(segs)
+        and sum(a != b for a, b in zip(e.path.strip("/").split("/"), segs, strict=True)) <= 1
+    ]
+    return same[0] if same else None
+
+
+def find_screen_goal(
+    bundle: Bundle, screen: list[str], mark_index: int = 0, values: dict[str, str] | None = None
+) -> Goal:
+    """Reads that take no input (nothing typed to look for): the answer that holds most of what the page
+    showed. Each text counts less the more answers carry it (menus are on every page), and a data answer
+    (JSON, streamed rows) wins over the page's HTML unless it holds less than half as much."""
+    mark = _pick_mark(bundle, mark_index)
+    anchor = _anchor(bundle, None, mark)  # the click/Enter that performed the task, if it was one
+    texts = [t for t in dict.fromkeys(screen) if len(t) >= 3]
+    forms = {t: (t, json.dumps(t)[1:-1]) for t in texts}
+    pool = [
+        e
+        for e in bundle.entries
+        if (not values or any(entry_mentions(bundle, e, v) for v in values.values() if v))
+        and e.response_kind in ("json", "stream", "html", "text")
+        and e.response_body
+        and 200 <= e.status < 300
+        and (mark is None or e.started <= mark + SCREEN_GRACE)
+        and (anchor is None or e.started >= anchor)
+    ]
+    holds = {id(e): {t for t in texts if any(f in e.response_body for f in forms[t])} for e in pool}
+    spread = {t: sum(t in h for h in holds.values()) for t in texts}
+    score = {id(e): sum(1 / spread[t] for t in holds[id(e)]) for e in pool}
+    scored = [e for e in pool if score[id(e)] > 0]
+    if not scored:
+        raise GoalNotFound(f"{bundle.run}: no answer holds the text the page showed")
+    best = max(score[id(e)] for e in scored)
+    data = [e for e in scored if e.response_kind in ("json", "stream")]
+    if data and max(score[id(e)] for e in data) * 2 >= best:
+        scored = data
+    top = max(score[id(e)] for e in scored)
+    window = sorted((e for e in scored if score[id(e)] == top), key=lambda e: e.started)
+    held = len(holds[id(window[0])])
+    reason = f"its answer holds {held} of the {len(texts)} texts the page showed"
+    return Goal(window[0], reason, sorted(scored, key=lambda e: -score[id(e)])[:5], False, None, mark)
+
+
 def find_goal(bundle: Bundle, kind: str | None = None, mark_index: int = 0) -> Goal:
     kind = kind or bundle.kind_hint
     if kind == "write":

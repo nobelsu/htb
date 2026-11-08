@@ -94,11 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("start_url", help="page to start from (logged in, via --state)")
     ex.add_argument("--state", help="logged-in Playwright storage_state to explore with")
     ex.add_argument("--tasks", nargs="*", help='only these tasks, in plain English (e.g. "search companies")')
-    ex.add_argument("--max-tasks", type=int, default=6, help="most tasks to pick (default 6)")
+    ex.add_argument("--max-tasks", type=int, default=30, help="most tasks the AI lists (default 30)")
     ex.add_argument(
-        "--include-writes",
-        action="store_true",
-        help="also explore tasks that change things (really performs them)",
+        "--tasks-file",
+        help="the actions to map, as a task list (default: mapper/explore/tasks/<domain>.txt if it exists)",
     )
     ex.add_argument("--headed", action="store_true", help="show the browser")
     ex.add_argument("--parallel", type=int, default=4, help="tasks explored at the same time (default 4)")

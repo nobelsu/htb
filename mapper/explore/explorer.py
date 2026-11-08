@@ -28,7 +28,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -39,6 +39,7 @@ from mapper.domains import hostname, registrable_domain, same_site
 from mapper.explore.agent import AgentFailed, AgentRun, EmptyResult, drive
 from mapper.explore.planner import Attempt, PlanError, Planner, TaskPlan, TaskSpec
 from mapper.explore.snapshot import as_text, page_snapshot
+from mapper.explore.tasklist import load_task_list, task_list_for
 from mapper.llm import LLM
 
 EXPLORE_FILE = "explore.json"
@@ -47,9 +48,10 @@ EXPLORER_MODEL, EXPLORER_EFFORT = "claude-opus-5-5", "high"
 UNSAFE_LINK = re.compile(
     r"log\s*-?out|sign\s*-?out|log\s*off|delete|remove|deactivate|unsubscribe|close account", re.I
 )
+SCREEN_FILE = "screen.json"  # the text on the live run's final page (finds reads that take no input)
 RUN_LABELS = {
-    "m1": "replaying it with a made-up word",
-    "m2": "replaying it with a second made-up word",
+    "m1": "replaying it with a made-up word (or another picked item)",
+    "m2": "replaying it with a second made-up word (or another picked item)",
     "page2": "replaying it with the example input, then opening page 2",
 }
 
@@ -169,6 +171,8 @@ class Capture:
             headless=self.headless,
             force=True,
             step_timeout_ms=self.step_timeout_ms,
+            block_writes=spec.kind == "write",  # a write's final request never reaches the site
+            extra_meta={"inputs_via": spec.via} if spec.via else {},
             **driver_kw,
         )
 
@@ -195,18 +199,24 @@ def run_task(
     while failures < max_attempts:
         n = len(plan.attempts) + 1
         shutil.rmtree(task_dir, ignore_errors=True)  # every try starts clean
-        shown = f" with {spec.inputs}" if spec.inputs else ""
-        _say(f"{spec.name}: Claude is doing the task live{shown} (try {n}), recorded as 'real'")
+        # Reads: the live run uses the example and is the `real` run (its answer shows the results).
+        # Writes: there are no results to learn, so the live run types made-up words and is `m1`.
+        live, live_spec = "real", spec
+        if spec.kind == "write":
+            live, live_spec = "m1", replace(spec, inputs={k: new_marker() for k in spec.inputs})
+        shown = f" with {live_spec.inputs}" if live_spec.inputs else ""
+        _say(f"{spec.name}: Claude is doing the task live{shown} (try {n}), recorded as '{live}'")
         done: dict[str, AgentRun] = {}
 
-        def agent(page, tracker, mark, done=done) -> None:
+        def agent(page, tracker, mark, done=done, live_spec=live_spec) -> None:
             page.set_default_timeout(cap.step_timeout_ms)
             done["run"] = drive(
-                page, tracker, mark, planner=planner, spec=spec, start_url=url, feedback=feedback
+                page, tracker, mark, planner=planner, spec=live_spec, start_url=url, feedback=feedback
             )
 
+        values = {"real_inputs": dict(spec.inputs)} if live == "real" else {"markers": dict(live_spec.inputs)}
         try:
-            cap.record(cap.config(spec, "real", real_inputs=dict(spec.inputs), agent=agent))
+            cap.record(cap.config(spec, live, agent=agent, **values))
         except EmptyResult as e:
             plan.attempts.append(Attempt(e.run.actions if e.run else [], str(e)))
             _say(f"{spec.name}: try {n} worked, but the site found nothing for {spec.inputs}")
@@ -228,8 +238,11 @@ def run_task(
         else:
             run = done["run"]
             _say(f"{spec.name}: done in {len(run.actions)} actions; final check: {run.verdict}")
+            (task_dir / live / SCREEN_FILE).write_text(
+                json.dumps(run.screen, ensure_ascii=False, indent=1) + "\n"
+            )
             try:
-                plan.script, runs = replay_runs(spec, run, cap, task_dir)
+                plan.script, runs = replay_runs(spec, run, cap, task_dir, live)
             except ReplayFailed as e:
                 actions, error = run.actions, f"the live run worked, but {e}"
             except Exception as e:
@@ -262,23 +275,53 @@ def replay_start(steps: list[dict], start_url: str) -> tuple[str, list[dict]]:
     return url, steps[i:]
 
 
-def replay_runs(spec: TaskSpec, run: AgentRun, cap: Capture, task_dir: Path) -> tuple[list[dict], list[str]]:
-    """Re-run the live run's recorded actions for m1, m2 (fresh markers) and page2, all at once.
-    Returns the replayed steps and the runs recorded."""
+def _actions(run_dir: Path) -> list[dict]:
+    from mapper.bundle import ACTIONS_FILE
+
+    path = run_dir / ACTIONS_FILE
+    return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()] if path.exists() else []
+
+
+def _swap_picks(steps: list[dict], run: AgentRun, actions: list[dict], choice: int) -> list[dict]:
+    """The live run's steps with each picked item replaced by another item of the same list."""
+    from mapper.bundle import parse_iso
+
+    steps = [dict(st) for st in steps]
+    for name, pick in run.picks.items():
+        at = parse_iso(pick["at"])
+        clicked = next(
+            (a["selector"] for a in actions if a.get("type") == "click" and parse_iso(a["t"]) >= at), None
+        )
+        i = next(
+            (k for k, st in enumerate(steps) if st["type"] == "click" and st["selector"] == clicked), None
+        )
+        if i is None or choice >= len(pick["others"]):
+            raise ReplayFailed(f"could not find the click that picked {name!r} to choose another item")
+        steps[i] = {"type": "click", "selector": pick["others"][choice]}
+    return steps
+
+
+def replay_runs(
+    spec: TaskSpec, run: AgentRun, cap: Capture, task_dir: Path, live: str = "real"
+) -> tuple[list[dict], list[str]]:
+    """Re-run the live run's recorded actions with other inputs, all at once. Reads: m1 and m2 (made-up
+    words, other picked items) and page2; writes (live run = m1): m2. Returns the steps and the runs."""
     from mapper.capture.replay import plan_bundle
 
-    steps = plan_bundle(task_dir / "real").steps
+    plan = plan_bundle(task_dir / live)
+    steps = plan.steps
     untyped = [k for k in spec.inputs if "{{params." + k + "}}" not in json.dumps(steps)]
     if untyped:
         raise ReplayFailed(
-            f"its recorded actions never type the input(s) {untyped}, so they can't be replayed"
+            f"its recorded actions never give the input(s) {untyped}, so they can't be replayed"
         )
     start, steps = replay_start(steps, urljoin(cap.start_url, spec.start_path))
-    runs: dict[str, dict] = {
-        "m1": {"markers": {k: new_marker() for k in spec.inputs}, "script": steps},
-        "m2": {"markers": {k: new_marker() for k in spec.inputs}, "script": steps},
-    }
-    if run.next_selector:
+    names = ["m1", "m2"] if live == "real" else ["m2"]
+    runs: dict[str, dict] = {}
+    for choice, name in enumerate(names):
+        script = _swap_picks(steps, run, _actions(task_dir / live), choice) if run.picks else steps
+        runs[name] = {"markers": {k: new_marker() for k in spec.inputs}, "script": script}
+    if run.next_selector and live == "real":
         page2 = [*steps, {"type": "click", "selector": run.next_selector}, {"type": "mark"}]
         runs["page2"] = {"real_inputs": dict(spec.inputs), "script": page2}
     for name, kw in runs.items():
@@ -304,16 +347,17 @@ def replay_runs(spec: TaskSpec, run: AgentRun, cap: Capture, task_dir: Path) -> 
                 "categories or filters before you type and submit the input."
             )
         raise ReplayFailed(f"replaying it broke ({detail}).{hint}")
-    return steps, ["real", *runs]
+    return steps, [live, *runs]
 
 
 def check_task(task_dir: Path, kind: str) -> str | None:
-    from mapper.pipeline.m3_goal import GoalNotFound, find_goal
-    from mapper.pipeline.runs import load_bundle
+    """The mapper must be able to find the task's goal request in the recordings."""
+    from mapper.pipeline import MapError, find_task_goal
+    from mapper.pipeline.m3_goal import GoalNotFound
 
     try:
-        find_goal(load_bundle(task_dir / "m1"), kind)
-    except GoalNotFound as e:
+        find_task_goal(task_dir)
+    except (GoalNotFound, MapError) as e:
         return str(e)
     return None
 
@@ -324,13 +368,13 @@ def explore(
     state: str | Path | None = None,
     out: str | Path = "captures",
     wanted: list[str] | None = None,
-    max_tasks: int = 6,
-    include_writes: bool = False,
+    max_tasks: int = 30,
+    tasks_file: str | Path | None = None,
     llm: LLM | None = None,
     headless: bool = True,
     max_attempts: int = 3,
     step_timeout_ms: int = 8000,
-    extra_pages: int = 4,
+    extra_pages: int = 15,
     parallel: int = 4,
     max_browsers: int = 8,
 ) -> ExploreResult:
@@ -357,14 +401,28 @@ def explore(
             context.close()
             browser.close()
 
-    specs = planner.discover(site, max_tasks, wanted)
-    _say(f"the AI picked {len(specs)} task(s): {', '.join(s.name for s in specs)}")
+    listed = load_task_list(tasks_file) if tasks_file else None
+    if listed is None and (bundled := task_list_for(registrable_domain(hostname(start_url)))):
+        listed = load_task_list(bundled)
+    if listed and wanted:  # --tasks names some of the listed ones ("search companies" → search_companies)
+        names = {re.sub(r"[^a-z0-9]+", "_", w.lower()).strip("_") for w in wanted}
+        listed = [t for t in listed if t.name in names] or None
+    folded: dict[str, str] = {}
+    if listed:
+        names = {t.name for t in listed}
+        folded = {
+            t.name: t.name[: -len("_next")]
+            for t in listed
+            if t.name.endswith("_next") and t.name[:-5] in names
+        }
+        todo = [t for t in listed if t.name not in folded]
+        specs = planner.plan_listed(site, todo)
+        _say(f"planned {len(specs)} listed task(s); {len(folded)} '_next' ones are paging of another")
+    else:
+        specs = planner.discover(site, max_tasks, wanted)
+        _say(f"the AI picked {len(specs)} task(s): {', '.join(s.name for s in specs)}")
 
     def one(spec: TaskSpec) -> TaskOutcome:
-        if spec.kind == "write" and not include_writes:
-            reason = "write task: exploring it really performs it; pass --include-writes"
-            _say(f"{spec.name}: skipped ({reason})")
-            return TaskOutcome(TaskPlan(spec), "skipped", reason)
         try:
             plan, runs = run_task(planner, spec, cap, domain_dir / spec.name, max_attempts)
         except Exception as e:  # one task's crash must not stop the others
@@ -376,6 +434,9 @@ def explore(
 
     with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
         outcomes = list(pool.map(one, specs))  # tasks run side by side; results stay in task order
+    for name, base in folded.items():
+        reason = f"the next page of {base}: mapped as paging on {base}"
+        outcomes.append(TaskOutcome(TaskPlan(TaskSpec(name, reason, "read", "/", {})), "skipped", reason))
 
     result = ExploreResult(start_url, domain_dir, pages, outcomes)
     domain_dir.mkdir(parents=True, exist_ok=True)
@@ -408,7 +469,7 @@ def main(args: argparse.Namespace) -> int:
             out=args.out,
             wanted=args.tasks or None,
             max_tasks=args.max_tasks,
-            include_writes=args.include_writes,
+            tasks_file=args.tasks_file,
             headless=not args.headed,
             parallel=args.parallel,
             max_browsers=args.max_browsers,

@@ -102,29 +102,36 @@ class LLM:
             return None
         return int(data["index"])
 
-    def pick_output_fields(self, task: str, item: Any, candidates: list[str]) -> list[str] | None:
-        """3–8 of ``candidates`` (JSONPaths relative to one result item) worth returning to an agent."""
+    def pick_output_fields(
+        self, task: str, item: Any, candidates: list[str], description: str = ""
+    ) -> list[str] | None:
+        """The ``candidates`` (JSONPaths relative to one result item) relevant to what the action returns."""
         schema = {
             "type": "object",
             "properties": {"paths": {"type": "array", "items": {"type": "string"}}},
             "required": ["paths"],
             "additionalProperties": False,
         }
+        about = f" It returns: {description[:1500]}" if description else ""
         prompt = (
-            f"Task: {task!r}. One result item from the site's response:\n"
+            f"Task: {task!r}.{about} One result item from the site's response:\n"
             f"{json.dumps(item, indent=1)[:6000]}\n\n"
-            "Pick 3 to 8 of these JSONPaths (relative to the item) that an AI agent would want back: "
-            f"names, titles, identifiers, URLs, short descriptive fields. Candidates: {candidates}"
+            "Pick EVERY one of these JSONPaths (relative to the item) whose value is relevant to what this "
+            "action returns: names, titles, identifiers, URLs, counts, dates, short descriptive fields. As "
+            "many as apply; skip only what is unrelated to the action (styling, tracking, UI labels). "
+            f"Candidates: {candidates}"
         )
         data = self.ask_json("output fields", prompt, schema)
         if data is None:
             return None
         picked = [p for p in data.get("paths", []) if p in candidates]
-        return picked[:8] if len(picked) >= 1 else None
+        return picked[:30] if len(picked) >= 1 else None
 
-    def name_output_fields(self, task: str, candidates: list[tuple[str, list[Any]]]) -> dict[str, str] | None:
-        """For streamed answers: pick 3–8 of ``candidates`` (path, example values from a few results) and
-        name them. Returns ``{name: path}``."""
+    def name_output_fields(
+        self, task: str, candidates: list[tuple[str, list[Any]]], description: str = ""
+    ) -> dict[str, str] | None:
+        """For streamed answers: pick the ``candidates`` (path, example values from a few results) relevant
+        to what the action returns, and name them. Returns ``{name: path}``."""
         schema = {
             "type": "object",
             "properties": {
@@ -142,12 +149,13 @@ class LLM:
             "additionalProperties": False,
         }
         listing = "\n".join(f"{i}. {[str(v)[:80] for v in vals]}" for i, (_, vals) in enumerate(candidates))
+        about = f" It returns: {description[:1500]}" if description else ""
         prompt = (
-            f"Task: {task!r}. Each line holds one value from each of a few results the site returned "
-            "(the same spot in every result). Pick the 3 to 8 an AI agent would want back (a name or "
-            "title, a link, short facts like location, category or counts) and give each a short "
-            "snake_case name. Skip button labels, repeated boilerplate and anything that is not about "
-            f"the result itself.\n{listing}"
+            f"Task: {task!r}.{about} Each line holds one value from each of a few results the site "
+            "returned (the same spot in every result). Pick EVERY line relevant to what this action "
+            "returns (names, links, ids, counts, dates, descriptions: as many as apply, using the names the "
+            "description gives where they fit) and give each a short snake_case name. Skip only button "
+            f"labels, repeated boilerplate and anything not about the result itself.\n{listing}"
         )
         data = self.ask_json("output field names", prompt, schema, max_tokens=1500)
         if data is None:

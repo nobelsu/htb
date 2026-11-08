@@ -72,6 +72,29 @@ def stream_search() -> str:
     )
 
 
+def me() -> str:
+    """The signed-in member's own page: filled in from GET /api/me (a read that takes no input)."""
+    return _page("Me", '<h2 id="name"></h2><p id="headline"></p><script src="/static/me.js"></script>')
+
+
+def company() -> str:
+    """A company page; the slug in the address is the input (GET /api/companies/<slug>)."""
+    return _page(
+        "Company", '<h2 id="cname"></h2><p id="cinfo"></p><script src="/static/company.js"></script>'
+    )
+
+
+def messages() -> str:
+    """Threads to pick from (GET /api/conversations); picking one loads its messages; Send posts one."""
+    return _page(
+        "Messages",
+        '<ul id="threads"></ul><h2 id="who"></h2><ul id="msgs"></ul>'
+        '<textarea id="msg" aria-label="Write a message"></textarea> '
+        '<button id="send" type="button">Send</button>'
+        '<script src="/static/messages.js"></script>',
+    )
+
+
 APP_CSS = "body{color:#222}"
 
 SEARCH_JS = r"""
@@ -177,3 +200,61 @@ STREAM_JS = r"""
   });
 })();
 """
+
+ME_JS = r"""
+fetch("/api/me").then((r) => r.json()).then((d) => {
+  document.getElementById("name").textContent = d.member.first_name + " " + d.member.last_name;
+  document.getElementById("headline").textContent = d.member.headline;
+});
+"""
+
+COMPANY_JS = r"""
+const slug = location.pathname.split("/")[2];
+fetch("/api/companies/" + encodeURIComponent(slug)).then((r) => r.json()).then((d) => {
+  const c = d.company || { name: "No such company", industry: "", followers: 0 };
+  document.getElementById("cname").textContent = c.name;
+  document.getElementById("cinfo").textContent = c.industry + " · " + c.followers + " followers";
+});
+"""
+
+MESSAGES_JS = r"""
+let current = null;
+const path = (urn) => "/api/conversations/" + encodeURIComponent(urn) + "/messages";
+fetch("/api/conversations").then((r) => r.json()).then((d) => {
+  const list = document.getElementById("threads");
+  for (const c of d.elements) {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = c.title;
+    b.addEventListener("click", () => {
+      current = c.conversation_urn;
+      document.getElementById("who").textContent = c.title;
+      fetch(path(current)).then((r) => r.json()).then((m) => {
+        const msgs = document.getElementById("msgs");
+        msgs.innerHTML = "";
+        for (const x of m.elements) {
+          const item = document.createElement("li");
+          item.textContent = x.sender + ": " + x.text;
+          msgs.appendChild(item);
+        }
+      });
+    });
+    li.appendChild(b);
+    list.appendChild(li);
+  }
+});
+document.getElementById("send").addEventListener("click", () => {
+  const text = document.getElementById("msg").value;
+  fetch(path(current), {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: text }),
+  });
+});
+"""
+
+CONVERSATIONS = [
+    {"conversation_urn": "urn:fx:conv:1", "title": "Ada Lovelace", "unread": 1},
+    {"conversation_urn": "urn:fx:conv:2", "title": "Grace Hopper", "unread": 0},
+    {"conversation_urn": "urn:fx:conv:3", "title": "Alan Turing", "unread": 2},
+    {"conversation_urn": "urn:fx:conv:4", "title": "Katherine Johnson", "unread": 0},
+]

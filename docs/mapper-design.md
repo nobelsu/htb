@@ -183,10 +183,14 @@ reads network traffic; finding the goal and decoding stay in `map`.
 1. **Survey.** Open the start page logged in, plus up to 4 same-site pages it links to (never log-out,
    delete or similar links), and take a text snapshot of each: headings, links, fields and buttons.
    Snapshots never contain field values.
-2. **Pick tasks (LLM).** From the snapshots the LLM lists the 3–6 tasks people come to *this* site for
-   (search people/companies on a network, search products/add to cart on a shop), each with a start page,
-   the inputs a user would type (with a realistic example), read/write, and whether results paginate.
-   `--tasks` names the tasks instead, in plain English.
+2. **The tasks.** A person's task list wins: `--tasks-file`, or `mapper/explore/tasks/<domain>.txt` (format
+   in `mapper/explore/tasklist.py`: name, `(inputs, optional?)`, `sign-in`, description). One LLM call per
+   10 listed tasks decides read/write, the start page, whether results paginate, and how each input is
+   given in the browser: **typed**, in the **address** (`/company/<name>/`), **picked** by clicking an item
+   in a list, or **other** (supplied by the site, like the member's own id, or paging). `*_next` tasks whose
+   base task is listed are folded into it (mapped as its paging). Without a list, the LLM lists every
+   action a user might want (up to `--max-tasks`, default 30) from snapshots of up to 15 pages. `--tasks`
+   narrows either to the ones named.
 3. **Live run (LLM driver, `explore/agent.py`), recorded as `real`.** The LLM does the task with the
    example input, one action at a time (click, type, press, navigate), choosing each from the page's
    accessibility tree (roles and names; typed field contents are removed). It is told to apply any
@@ -201,12 +205,21 @@ reads network traffic; finding the goal and decoding stay in `map`.
    else"; a third ends the attempt. If everything was done right but the site found nothing for the
    example input, that is not counted as a failure: Claude picks a new example (up to 3) and the run is
    redone. Task discovery asks for examples that certainly return results (a well-known name, not a phrase).
+   **Inputs in the address** are allowed (Claude opens `/company/<example>/`); heal's replay puts the
+   made-up word into the address the same way it does into typed text. **Picked inputs:** Claude flags the
+   click that chooses the item; before it, the driver notes how to click the same spot in two other items of
+   that list, so each replay picks a different one. **Writes** are explored too, but the final send/submit
+   click Claude flags is intercepted in the browser (`WriteBlocker`): the request is recorded (`blocked.json`,
+   status −1 in the HAR) and never reaches the site. Claude never types payment, card or bank details or
+   passwords. The live run's final page text goes into `screen.json`.
    **Filter first, search last:** the replays use made-up words that find nothing, so Claude is told to set
    any category or filter before it types and submits the input, and the final check rejects a run whose
    flagged action needs results on screen (a filter clicked on the results page).
-4. **Replays.** The `real` run's `actions.jsonl` becomes a driver script exactly as in healing (typed
-   inputs → `{{params.NAME}}`, marks where they were), recorded again with fresh markers as m1 and m2, and
-   with the next-page click and a second mark added as page2. The three replays run at the same time, and
+4. **Replays.** The live run's `actions.jsonl` becomes a driver script exactly as in healing (typed and
+   in-the-address inputs → `{{params.NAME}}`, marks where they were). Reads: the live run is `real` (the
+   example), then m1 and m2 with fresh markers (and other picked items), plus page2 with the next-page
+   click. Writes have no results to learn: the live run types made-up words and is `m1`, and one replay
+   is `m2`; every run's final request is blocked. The three replays run at the same time, and
    start on the page where the live run began working (page loads it only passed through, like the feed
    before it went to the companies search page, are skipped). Replays use the same per-step timeout as the
    live run. If a replay breaks (a step that only exists when there are results), that whole try is thrown
@@ -237,6 +250,15 @@ attempt's actions and why it failed, the replay script) is saved in `captures/<d
 and summarised in the mapping report.
 
 ## Open items for Nobel
+
+- **Mapper rules added with the explorer's task lists (2026-11-08):** M4 takes a value from the *earliest*
+  response that carries it (LinkedIn repeats session values in every response; the latest one chained 9
+  calls before each search). A picked input becomes a param when m2's value sits in the same list as m1's,
+  one item along. Reads recorded by the explorer pick their goal as the answer (carrying the input, if
+  any, and loaded after the triggering click) that holds most of what the live run's page showed, and
+  take outputs from it when no list grew (one object, or nothing typed). Count-like values ("1,323,457
+  followers") become fields found by pattern at any depth. All fields relevant to the action's
+  description are returned (no 3–8 cap). Blocked write requests are kept as write goals.
 
 - **Please review: spec addition `resolve: "rows"` (made on the mapper side, 2026-11-07).** LinkedIn's web app
   answers searches with streamed React Server Components rows (`<hex id>:<JSON>` per line, labelled

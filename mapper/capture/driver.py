@@ -24,6 +24,7 @@ run can be fed back in. ``{{params.NAME}}`` in a value is replaced with the run'
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import time
@@ -84,14 +85,52 @@ def substitute(value: str, params: dict[str, str]) -> str:
 NEVER_ENDING = frozenset({"eventsource", "websocket"})
 
 
+class WriteBlocker:
+    """Stops the browser from sending changes to the site while armed: around the final click of a write
+    task (send, post, connect) during exploring, so nothing reaches the site, but the recording still
+    holds the request it would have sent (method, address, headers, body)."""
+
+    SAFE = ("GET", "HEAD", "OPTIONS")
+
+    def __init__(self, context, host_is_site: Callable[[str], bool]) -> None:
+        self.context, self.host_is_site = context, host_is_site
+        self.blocked: list[dict] = []
+        self.armed = False
+
+    def _handle(self, route) -> None:
+        req = route.request
+        try:
+            if req.method.upper() not in self.SAFE and self.host_is_site(req.url):
+                self.blocked.append({"method": req.method.upper(), "url": req.url})
+                route.abort("blockedbyclient")
+            else:
+                route.continue_()
+        except Exception:  # the page may be gone; never fail the step that is running
+            pass
+
+    def arm(self) -> None:
+        if not self.armed:
+            self.context.route("**/*", self._handle)
+            self.armed = True
+
+    def disarm(self) -> None:
+        if self.armed:
+            with contextlib.suppress(Exception):  # the browser may already be closing
+                self.context.unroute("**/*", self._handle)
+            self.armed = False
+
+
 class NetworkTracker:
     """Counts in-flight requests on a browser context so the driver can wait for quiet."""
+
+    blocker: WriteBlocker | None = None  # set for write tasks: armed around the marked action
 
     def __init__(self, context) -> None:
         self.inflight = 0
         self.last_change = time.monotonic()
         self.started: dict[int, tuple[float, object]] = {}  # in-flight: id -> (when it started, request)
         self.action_at = time.monotonic()
+        self.window_until: float | None = None  # see extend()
         context.on("request", self._start)
         context.on("requestfinished", self._end)
         context.on("requestfailed", self._end)
@@ -113,6 +152,12 @@ class NetworkTracker:
     def action(self) -> None:
         """Call right before the driver acts: what starts in the next moment belongs to that action."""
         self.action_at = time.monotonic()
+        self.window_until = None
+
+    def extend(self, ms: int = ACTION_WINDOW_MS) -> None:
+        """After a page load that performs the task: the data the page fetches right after loading
+        belongs to the action too."""
+        self.window_until = time.monotonic() + ms / 1000
 
     def wait_for_action(self, page, timeout_ms: int, window_ms: int = ACTION_WINDOW_MS) -> None:
         """Wait until the requests the last action started (within ``window_ms`` of it) are answered.
@@ -120,12 +165,11 @@ class NetworkTracker:
         Background traffic that was already running, or starts later (prefetching, tracking, bot-check
         sensors), is ignored: on busy sites it never stops. At most ``timeout_ms``."""
         since, deadline = self.action_at, time.monotonic() + timeout_ms / 1000
+        end = self.window_until or since + window_ms / 1000
         while time.monotonic() < deadline:
             page.wait_for_timeout(50)  # also pumps Playwright events
-            now = time.monotonic()
-            if (now - since) * 1000 < window_ms:
+            if time.monotonic() < end:
                 continue  # the action's requests may not all have started yet
-            end = since + window_ms / 1000
             if not any(since <= t <= end for t, _ in self.started.values()):
                 return
 
@@ -157,14 +201,22 @@ def _run_step(
 ) -> None:
     kind = step["type"]
     marks_next = i + 1 < len(steps) and steps[i + 1]["type"] == "mark"
+    blocker = getattr(tracker, "blocker", None)
+    if marks_next and blocker is not None and kind in ("click", "key", "navigate", "goto", "input"):
+        blocker.arm()  # a write's final action: what it sends is recorded but never reaches the site
     if kind == "mark":
         on_mark()  # right after the triggering action, like a person pressing Enter in the terminal
         tracker.wait_for_action(page, AFTER_MARK_MS)  # until the task's own requests are answered
+        if blocker is not None:
+            blocker.disarm()
     elif kind in ("navigate", "goto"):
         url = substitute(str(step["url"]), {k: quote(v, safe="") for k, v in params.items()})
         tracker.action()
         page.goto(urljoin(start_url, url), wait_until="load")
-        settle(page)
+        if marks_next:
+            tracker.extend()  # the task is this page: include what it fetches right after loading
+        else:
+            settle(page)
     elif kind == "input":
         tracker.action()
         page.fill(step["selector"], substitute(str(step["value"]), params))

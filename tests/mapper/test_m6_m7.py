@@ -73,14 +73,14 @@ def _search_plan(items_real):
     return plan, g1.entry, real.entries[0]
 
 
-def test_plan_output_fallback_caps_fields_at_eight_and_sets_expect():
+def test_plan_output_fallback_returns_every_field_and_sets_expect():
     item = {f"f{i}": i for i in range(12)}
     plan, m1_goal, real_goal = _search_plan([item, item])
     out = plan_output(plan, m1_goal, real_goal, "search", LLM(enabled=False))
     assert out.source == "fallback"
     assert out.output["from"] == "steps.search.items"
     assert out.output["limit"] == 2
-    assert list(out.output["fields"]) == [f"f{i}" for i in range(8)]
+    assert list(out.output["fields"]) == [f"f{i}" for i in range(12)]  # all of them (capped at 30)
     assert plan.extract["items"] == {"from": "body", "type": "jsonpath", "expr": "$.elements[*]"}
     assert expect_for(plan) == {"status": [200], "content_type": "json", "paths": ["$.elements"]}
 

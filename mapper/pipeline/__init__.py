@@ -20,7 +20,10 @@ from mapper.pipeline.m3_goal import (
     endpoint_key,
     find_goal,
     find_read_goal,
+    find_screen_goal,
+    similar_entry,
 )
+from mapper.pipeline.m3_goal import _pick_mark as pick_mark
 from mapper.pipeline.m4_provenance import Provenance, trace
 from mapper.pipeline.m5_steps import StepPlan, plan_steps
 from mapper.pipeline.m6_output import OutputPlan, expect_for, find_result_list, plan_output
@@ -67,7 +70,7 @@ def _matching_goal(bundle: Bundle | None, like: Goal, like_bundle: Bundle, kind:
                 return Goal(c, "same endpoint as m1's goal", g.candidates, False, g.typed_at, g.mark)
     except GoalNotFound:
         pass
-    entry = counterpart(bundle, like.entry, like_bundle.values)
+    entry = counterpart(bundle, like.entry, like_bundle.values) or similar_entry(bundle, like.entry)
     return Goal(entry, "same endpoint as m1's goal") if entry is not None else None
 
 
@@ -106,6 +109,49 @@ def _pagination(page2: Bundle, goal: Goal, m1: Bundle, real_goal: Goal | None):
     return pagination.infer(page2, first, page2, last, items_path)
 
 
+SCREEN_FILE = "screen.json"  # written by the explorer: the text on its live run's final page
+
+
+def _screen(bundle: Bundle | None) -> list[str]:
+    path = bundle.path / SCREEN_FILE if bundle is not None and bundle.path is not None else None
+    return json.loads(path.read_text()) if path is not None and path.exists() else []
+
+
+def _picks(bundle: Bundle) -> list[str]:
+    return [k for k, how in (bundle.meta.get("inputs_via") or {}).items() if how == "picked"]
+
+
+def _task_goal(runs: dict[str, Bundle], kind: str) -> tuple[Goal, str, list[str]]:
+    """m1's goal request, how it was chosen, and (for reads without input) the live run's screen text.
+    A read that takes no input has nothing typed to look for: its goal is the answer that holds what the
+    explorer's live run saw on the page, found in that run and then at the same endpoint in m1."""
+    m1, real = runs["m1"], runs.get("real")
+    live = real or m1
+    screen = _screen(live) if kind == "read" else []
+    if screen:  # recorded by the explorer: the answer that holds what its live run's page showed
+        try:
+            found = find_screen_goal(live, screen, values=live.values or None)
+        except GoalNotFound:
+            found = None
+            if not m1.values:
+                raise
+        if found is not None:
+            entry = found.entry if live is m1 else counterpart(m1, found.entry, live.values)
+            entry = entry or similar_entry(m1, found.entry)
+            if entry is not None:
+                goal = Goal(entry, found.reason, [entry], False, None, pick_mark(m1, 0))
+                return goal, "the text on the page", screen
+    return find_goal(m1, kind), "earliest (no LLM)", screen
+
+
+def find_task_goal(task_dir: str | Path) -> Goal:
+    """The task's goal request in m1 (what ``map`` would use), without the LLM tie-break."""
+    runs = load_task(task_dir)
+    if "m1" not in runs:
+        raise MapError(f"{task_dir}: no m1 run")
+    return _task_goal(runs, runs["m1"].kind_hint)[0]
+
+
 def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     """M3–M7 for one task (one card action)."""
     llm = llm or LLM()
@@ -119,8 +165,7 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     if m2 is None:
         warnings.append("no m2 run: params and dependencies are not cross-checked")
 
-    goal = find_goal(m1, kind)
-    picked_by = "earliest (no LLM)"
+    goal, picked_by, screen = _task_goal(runs, kind)
     if goal.tie:
         idx = llm.pick_goal(task, [_summary(c) for c in goal.candidates])
         if idx is not None:
@@ -144,7 +189,16 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     plans = plan_steps(prov, m1)
     goal_plan = next(p for p in plans if p.draft.is_goal)
     if is_read:
-        output = plan_output(goal_plan, goal.entry, real_goal.entry if real_goal else None, task, llm)
+        output = plan_output(
+            goal_plan,
+            goal.entry,
+            real_goal.entry if real_goal else None,
+            task,
+            llm,
+            description=m1.meta.get("task_description", ""),
+            screen=screen,
+            compare_runs=bool(m1.values),
+        )
     else:
         output = OutputPlan(dict(NO_OUTPUT), source="none")
     if pag is not None and output.output["from"] is not None:
@@ -161,11 +215,20 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
         warnings += p.warnings
     warnings += output.warnings + prov.warnings
 
-    params = [p for p in m1.values if any(p in lab.params for d in prov.steps for lab in d.labels)]
+    used = [p for d in prov.steps for lab in d.labels for p in lab.params]
+    params = [p for p in dict.fromkeys([*m1.values, *_picks(m1)]) if p in used]
     for p in m1.values:
         if p not in params:
             warnings.append(f"input {p!r} was typed but never reached a request")
-    real_inputs = real.values if real is not None else {}
+    for p in _picks(m1):
+        if p not in params:
+            warnings.append(f"picked input {p!r}: no request field changed with the item chosen")
+    real_inputs = dict(real.values) if real is not None else {}
+    if real is not None and real_goal is not None:  # a picked input's example: what the real run chose
+        real_fields = real.field_map(real_goal.entry)
+        for lab in prov.goal.labels:
+            if lab.encoding == "picked" and lab.address in real_fields:
+                real_inputs[lab.params[0]] = str(real_fields[lab.address].value)
     ann = annotate(
         task=task,
         task_description=m1.meta.get("task_description", ""),

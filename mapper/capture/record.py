@@ -36,7 +36,7 @@ from mapper.bundle import (
     iso_now,
 )
 from mapper.capture import driver
-from mapper.domains import hostname, registrable_domain
+from mapper.domains import hostname, registrable_domain, same_site
 
 # The mapper only reads a site's data requests and HTML pages (M1 drops everything else). Capture
 # still lets the browser load everything, exactly as for a person; only the saved file is trimmed:
@@ -56,6 +56,8 @@ def slim_har(path: Path) -> None:
             content["comment"] = "body not saved: the mapper does not read static files"
     path.write_text(json.dumps(har), encoding="utf-8")
 
+
+BLOCKED_FILE = "blocked.json"  # requests a write task's final action was stopped from sending
 
 HUMAN_HELP = (
     "Drive the browser to perform the task.\n"
@@ -85,6 +87,9 @@ class CaptureConfig:
     # loaded, it moves the browser and calls mark() right after the action that performs the task.
     agent: Callable[[Any, driver.NetworkTracker, Callable[[], None]], None] | None = None
     step_timeout_ms: int | None = None  # Playwright's per-action timeout; None keeps its default (30 s)
+    # Write tasks while exploring: the marked action's changes to the site are blocked (see WriteBlocker)
+    block_writes: bool = False
+    extra_meta: dict = field(default_factory=dict)  # e.g. which inputs are picked, for the mapper
     force: bool = False
 
     @property
@@ -203,6 +208,8 @@ def record(cfg: CaptureConfig) -> Path:
         "kind_hint": cfg.kind,
         "driver": "script" if steps is not None else "agent" if cfg.agent is not None else "human",
         "goal_marks": [],
+        **({"writes_blocked": True} if cfg.block_writes else {}),
+        **cfg.extra_meta,
         "started_at": iso_now(),
         "ended_at": None,
         "mapper_version": __version__,
@@ -219,11 +226,16 @@ def record(cfg: CaptureConfig) -> Path:
             record_har_mode="full",
             storage_state=str(cfg.state) if cfg.state else None,
         )
+        tracker = None
         try:
             context.expose_binding("__mapperLog", lambda _source, event: log.add(dict(event)))
             context.add_init_script(_logger_js())
             context.on("page", lambda p: _attach_navigation_log(p, log))
             tracker = driver.NetworkTracker(context)
+            if cfg.block_writes:
+                tracker.blocker = driver.WriteBlocker(
+                    context, lambda url: same_site(hostname(url), cfg.domain)
+                )
             page = context.new_page()
             if cfg.step_timeout_ms:
                 page.set_default_timeout(cfg.step_timeout_ms)
@@ -252,6 +264,10 @@ def record(cfg: CaptureConfig) -> Path:
                     pass
             context.storage_state(path=str(out / STATE_FILE))
         finally:
+            if tracker is not None and tracker.blocker is not None:
+                tracker.blocker.disarm()
+                if tracker.blocker.blocked:
+                    (out / BLOCKED_FILE).write_text(json.dumps(tracker.blocker.blocked, indent=1) + "\n")
             context.close()  # flushes the HAR
             browser.close()
 

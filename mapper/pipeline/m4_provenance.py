@@ -128,6 +128,7 @@ class _Ctx:
     base_url: str
     capture_time: datetime | None
     warnings: list[str] = field(default_factory=list)
+    picks: list[str] = field(default_factory=list)  # inputs chosen by clicking an item (the explorer's)
 
 
 # --- value classification ---------------------------------------------------------------------
@@ -341,7 +342,7 @@ def _key_hint(f: Field, path: str | None = None) -> str:
 def _hits(earlier: list[Entry], f: Field) -> list[Source]:
     text = as_text(f.value)
     hits: list[Source] = []
-    for e in reversed(earlier):  # nearest first
+    for e in earlier:  # earliest first: a value every response repeats comes from the first (page load)
         if e.response_json is not None:
             for path, leaf in jsonpaths.flatten(e.response_json):
                 if _leaf_equals(leaf, text):
@@ -373,7 +374,7 @@ def _hits(earlier: list[Entry], f: Field) -> list[Source]:
                 )
         if e.response_kind in ("html", "text", "stream") and e.response_body and text in e.response_body:
             hits.append(Source(e, e.response_kind, {"from": "body", "type": "regex", "expr": ""}, False))
-    order = {id(e): i for i, e in enumerate(reversed(earlier))}
+    order = {id(e): i for i, e in enumerate(earlier)}
     hits.sort(key=lambda h: (SOURCE_RANK[h.kind], order[id(h.entry)]))
     return hits
 
@@ -476,6 +477,8 @@ def label_field(
     same = f2 is not None and f2.value == f.value
     if depth < MAX_DEPTH and not is_trivial(f.value) and (not same or token_like(f.value)):
         src = _find_source(ctx, f, f2, entry, m2_entry)
+        if src is not None and not src.confirmed and not same and ctx.picks and _picked_item(src, f, f2):
+            return _pick_label(f, f2, _pick_name(ctx.picks, f), notes)
         if src is not None:
             if not src.confirmed:
                 notes.append("dependency not confirmed on m2")
@@ -493,6 +496,41 @@ def label_field(
     else:
         notes.append("differs between m1 and m2 and was not found in any earlier response")
     return _literal_label(f, f2, "unknown", ctx, notes)
+
+
+def _general(path: str) -> str:
+    return re.sub(r"\[\d+\]", "[*]", path)
+
+
+def _picked_item(src: Source, f: Field, f2: Field | None) -> bool:
+    """m1 and m2 picked different items of one list: m2's value sits in the same list as m1's (same path,
+    another index), where a dependency would sit at the very same spot in both runs."""
+    m2e, text2 = src.m2_entry, as_text(f2.value) if f2 is not None else None
+    if m2e is None or not text2:
+        return False
+    if src.kind == "json" and m2e.response_json is not None:
+        p1 = src.extract["expr"]
+        return any(
+            _leaf_equals(leaf, text2) and p != p1 and _general(p) == _general(p1)
+            for p, leaf in jsonpaths.flatten(m2e.response_json)
+        )
+    return src.kind in ("html", "text", "stream") and text2 in (m2e.response_body or "")
+
+
+def _pick_name(picks: list[str], f: Field) -> str:
+    """Which picked input a field carries: the one whose words appear in its address, else the first."""
+    words = set(re.findall(r"[a-z]+", f.address.lower()))
+    return max(picks, key=lambda p: len(words & set(p.lower().split("_"))))
+
+
+def _pick_label(f: Field, f2: Field | None, name: str, notes: list[str]) -> Label:
+    filt = filter_for(f.context)
+    value = as_text(f.value)
+    template = splice(value, [(value, placeholders.param(name, filt))], lambda t: literal_for(f.context, t))
+    notes = [*notes, f"picked: differs with the item chosen ({name})"]
+    return Label(
+        f, "param", template=template, params=(name,), filter=filt, encoding="picked", m2=f2, notes=notes
+    )
 
 
 def label_entry(ctx: _Ctx, entry: Entry, m2_entry: Entry | None, depth: int) -> StepDraft:
@@ -513,6 +551,7 @@ def trace(m1: Bundle, goal: Entry, m2: Bundle | None = None, m2_goal: Entry | No
         values_b=m2.values if m2 is not None else {},
         base_url=goal.base_url,
         capture_time=m1.started_at,
+        picks=[k for k, how in (m1.meta.get("inputs_via") or {}).items() if how == "picked"],
     )
     drafts: dict[int, StepDraft] = {}
     queue: list[tuple[Entry, Entry | None, int]] = [(goal, m2_goal, 0)]

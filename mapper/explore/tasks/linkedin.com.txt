@@ -1,0 +1,232 @@
+actions
+get_me
+sign-in
+LinkedIn: identify the signed-in member. Returns one row: profile_urn (the member's OWN 'urn:li:fsd_profile:<id>', exactly what list_conversations and send_message take as mailbox_urn), member_urn, first_name, last_name, public_identifier (the /in/ slug), occupation, premium. Call this FIRST for anything messaging-related. Takes no parameters.
+
+list_conversations
+(mailbox_urn)
+sign-in
+LinkedIn: list the member's message threads (their inbox), most recent first, ~20 rows. Each row: conversation_urn (what get_conversation_messages and send_message take), last_activity_at, unread_count, read, group_chat, the participants' urns / first names / last names / headlines (aligned arrays, the member themselves included), and the latest message's text, time and sender urn. Get `mailbox_urn` from get_me. This is the entry point for anything to do with reading or replying to messages. It only returns the latest ~20 threads: to find a thread by a person's name or a keyword use search_conversations; to page further back use list_conversations_page then list_conversations_next.
+
+list_invitations
+(start_index?)
+sign-in
+LinkedIn: list pending connection invitations the member has received. Returns one row per invitation with `invitation_id`, `validation_token`, `invitation_type` and (for person invites) `profile_id`. Both the id and the token are required by approve_invitation / reject_invitation, and the token is single-use per invitation — always read the list immediately before acting on it rather than reusing an old one. `invitation_type` is GenericInvitationType_CONNECTION for a person or GenericInvitationType_ORGANIZATION for a company page; organization invites have no profile_id.
+
+approve_invitation
+(invitation_id, validation_token)
+sign-in
+LinkedIn: ACCEPT a pending connection invitation. This is a real, immediate change — the person becomes a 1st-degree connection and is notified. Both inputs come from list_invitations, read immediately beforehand (validation tokens are single-use).
+
+reject_invitation
+(invitation_id, validation_token)
+sign-in
+LinkedIn: decline a pending connection invitation. The invitation disappears from the member's pending list and the sender is NOT notified that they were declined. Real and immediate. Both inputs come from list_invitations, read immediately beforehand (validation tokens are single-use). Sends LinkedIn's InviteeActionType_IGNORE, which is what the UI's dismiss button sends; LinkedIn has a separate internal REJECT variant that is not mapped.
+
+start_conversation
+(recipient_profile_urn, mailbox_urn, text)
+sign-in
+LinkedIn: start a NEW message thread with someone and send the first message. Use this when no thread with that person exists yet; to post into an existing thread use send_message. This is a REAL SEND — the recipient receives it immediately and it cannot be unsent. `recipient_profile_urn` is the other person's 'urn:li:fsd_profile:…' (search_people_at_company and list_invitations both return these); `mailbox_urn` is your OWN, from get_me. Returns the created message and the conversation urn of the new thread, which you can then pass to send_message or get_conversation_messages. Verified only for 1st-degree connections (`degree` DISTANCE_1 on the search row). For a 2nd/3rd-degree member use send_inmail instead (InMail: free when verify_open_profile says paid_inmail=false, otherwise one InMail credit).
+
+send_connection_request
+(profile_urn)
+sign-in
+LinkedIn: send a connection invitation to someone. Real and immediate: the person is notified and it counts against the member's weekly invite quota. Takes only the recipient's profile urn; no note is attached. Returns the new invitation urn. Profile urns come from search_people_at_company. To respond to invitations you have RECEIVED, use list_invitations with approve_invitation / reject_invitation instead.
+
+create_post
+(text)
+sign-in
+LinkedIn: publish a text post to the member's feed. This is a REAL, PUBLIC post — it appears on the member's profile and feed immediately and is visible to ANYONE. Takes only the post text. Returns the new post's URN ('urn:li:ugcPost:…'). Text-only: this action does not attach images, video, links, polls, or @mentions/hashtags — those ride a separate media-upload flow not yet mapped.
+
+list_mailboxes
+sign-in
+LinkedIn: list the COMPANY-PAGE mailboxes the signed-in member administers — one row per page mailbox with `mailbox_urn` (urn:li:fsd_pageMailbox:<id>), `company_urn` (the owning urn:li:fsd_company:<id>) and `messaging_enabled`. This does NOT include the member's personal inbox, and a pageMailbox urn is a different type from the urn:li:fsd_profile:… that send_message wants, so it cannot be used as a personal mailbox_urn. Cheap call.
+
+search_companies_and_people
+(query)
+sign-in
+LinkedIn: fast global typeahead over people and companies — the dropdown you get while typing in LinkedIn's search box. One row per suggestion: `suggestion_type` (ENTITY_TYPEAHEAD for a real person or company, QUERY_SUGGESTION_TYPEAHEAD for a search phrase), `name`, `subtitle` (e.g. '• Company • Software Development' or '• 2nd • <headline>'), `tracking_urn` (urn:li:company:<id> for a company, urn:li:member:<id> for a person), `url` and `company_urn` (urn:li:fsd_company:<id>, company rows only). This is the quick ID-RESOLUTION step: a company name to the numeric company id that search_people_at_company, list_people_at_company and search_jobs_at_company take (strip 'urn:li:company:' from tracking_urn). It does NOT return the universalName slug that get_company needs — use search_companies for that. Few results by design; for full result sets use the search actions.
+
+search_companies
+(keywords, start?, count?)
+sign-in
+LinkedIn: search for COMPANIES by name or keyword — the Companies tab of the full search-results page, 10 per page, each row with name, summary (industry, and city when LinkedIn shows one), followers, the company page URL (linkedin.com/company/<universal_name>/) and the search-result urn that carries the numeric company id. This is the resolution step for get_company (which takes the universal_name slug) and the name-bearing alternative to search_companies_and_people (the typeahead returns ids only). Page with `start` (0, 10, 20…).
+
+get_company
+(universal_name)
+sign-in
+LinkedIn: fetch a company page by its universalName (the slug in the page URL — linkedin.com/company/<universalName>). Returns compact rows for the company AND the related organisations LinkedIn ships alongside it (affiliates, similar pages): company_urn, name, universal_name (match it against the one you asked for), url, tagline, description, employee_count, employee_range_min/max, website, industry_urn.
+
+list_people_at_company
+(company_id, start?, count?)
+sign-in
+LinkedIn: list people who work at a given company, paginated — one row per person with name, headline, location, profile_url, `profile_urn`, `degree` (DISTANCE_1/2/3, OUT_OF_NETWORK, SELF) and `total` (the whole set's size, on every row). 12 per page by default; page with `start` (0, 12, 24…). Get `company_id` from search_companies_and_people (typeahead) or search_companies. To narrow by name or role within the company use search_people_at_company. profile_id feeds verify_open_profile and list_followers.
+
+search_people_at_company
+(company_id, keywords, start?, count?)
+sign-in
+LinkedIn: search for people at a specific company by keyword — a company filter plus free-text matching over names and headlines. One row per person with name, headline, location, profile_url, `profile_urn`, `degree` and `total`. 12 per page; page with `start`. Get `company_id` from search_companies_and_people or search_companies. This searches WITHIN a company; for all of LinkedIn use search_people. profile_id feeds verify_open_profile and list_followers.
+
+search_jobs_at_company
+(company_id, geo_id?)
+sign-in
+LinkedIn: list open job postings at a given company, optionally scoped to a geography — one row per posting with `title`, `job_urn` (urn:li:fsd_jobPosting:<id>; the public page is linkedin.com/jobs/view/<id>), `reposted` and `total` (all open postings, on every row). 10 per page from LinkedIn's job search; location and description are not in this response (they load with the job page, which is not mapped). Get `company_id` from search_companies_and_people or search_companies. `geo_id` defaults to 92000000 (worldwide).
+
+get_conversation_messages
+(conversation_urn)
+sign-in
+LinkedIn: read the most recent messages in one conversation thread — one row per message, newest first as LinkedIn ships them: message_urn, text, subject (InMails only), delivered_at (epoch ms), sender_urn, sender_first_name, sender_last_name, sender_headline, sender_profile_url and conversation_urn. Get `conversation_urn` from list_conversations, search_conversations or list_conversations_page. To read OLDER messages beyond this page, call get_earlier_messages with the oldest delivered_at you see here.
+
+get_earlier_messages
+(conversation_urn, before_timestamp, count?)
+sign-in
+LinkedIn: page BACKWARD through a conversation's history — the messages sent BEFORE a point in time, one row per message (same row shape as get_conversation_messages: message_urn, text, subject, delivered_at, sender fields, conversation_urn), up to `count` rows; an empty result means you are past the oldest message. To walk a whole thread: start from list_conversations' last_activity_at (or get_conversation_messages' newest delivered_at), then repeatedly call this with `before_timestamp` set to the OLDEST delivered_at you have so far until it returns nothing.
+
+send_message
+(conversation_urn, mailbox_urn, text)
+sign-in
+LinkedIn: send a message into an existing conversation thread. This is a REAL SEND — the recipient receives it immediately and it cannot be unsent through this action. Requires `conversation_urn` (an existing thread; this action cannot start a new one) and `mailbox_urn` (the member's OWN profile URN — get it from get_me, NOT list_mailboxes, which returns company-page mailbox URNs of the wrong type). Returns the created message's URN and echoed body on success.
+
+search_people
+(keywords, start?, count?)
+sign-in
+LinkedIn: search all of LinkedIn for PEOPLE by free-text keywords — the full search-results page, not the 4-row typeahead. Returns 10 per page with name, headline, location, public profile URL and `profile_urn`. Page with `start` (0, 10, 20…). This is the entry point for follower monitoring: take the `profile_urn` of the person you want and hand it to list_followers. To search within one company instead, use search_people_at_company. Each row also carries `degree`, LinkedIn's distance from the signed-in member: DISTANCE_1 (1st, a connection), DISTANCE_2, DISTANCE_3, OUT_OF_NETWORK or SELF — use it to tell connections from non-connections without a second call.
+
+list_followers
+(profile_id, start?, count?)
+sign-in
+LinkedIn: list the people who FOLLOW a given member — the input to day-over-day follower diffing (e.g. spotting which recruiters have started watching a candidate). Takes the `profile_id` of the person being watched and returns their followers 10 at a time with name, headline, location and public profile URL. Use `profile_url` as the stable key when diffing; names are not unique. Page with `start` until a page returns fewer rows than `count`. TWO CEILINGS, both real: results are limited to people within YOUR network reach (a member with 3,648 followers returned 181), and LinkedIn hard-stops at 1000 rows no matter what it reports as the total. Each row also carries `degree`, LinkedIn's distance from the signed-in member: DISTANCE_1 (1st, a connection), DISTANCE_2, DISTANCE_3, OUT_OF_NETWORK or SELF — use it to tell connections from non-connections without a second call.
+
+list_shared_connections
+(profile_id, start?, count?)
+sign-in
+LinkedIn: list your MUTUAL connections with another member — people who are 1st-degree connections of BOTH you and them, i.e. the profile's 'N mutual connections' facepile enumerated in full. Takes the other person's `profile_id` (the `ACoAA…` string, no urn prefix — from search_people's `profile_id` or get_profile) and returns 10 per page with name, headline, location, public profile URL, `profile_urn` and `degree` (always DISTANCE_1 here, since every mutual connection is one of yours). Page with `start` (0, 10, 20…). This is the INTERSECTION of two networks — distinct from list_followers (who follows them) and from their full connection list. Two ceilings, both real: results are limited to people within YOUR network reach, and LinkedIn hard-stops at 1000 rows regardless of the reported total.
+
+get_profile
+(vanity_name)
+sign-in
+LinkedIn: resolve a public profile vanity name (the '/in/<name>' slug) to the member's `ACoAA…` profile id, plus their name and headline. Use this when you start from a profile URL rather than a search — list_followers needs the profile id, and this is how you get it from a link someone pasted. Returns exactly the member whose public identifier is `vanity_name`; an empty result means LinkedIn did not resolve that slug (renamed or private), never a different person. `profile_urn` comes back as 'urn:li:fsd_profile:ACoAA…'; strip the prefix to get the id. Also returns `premium` (true when the member holds a Premium subscription). An Open Profile — a member anyone can message free of InMail credits — is a Premium-only setting, so premium=false rules it out; verify_open_profile gives the actual answer. Also: `summary` (the About text), `country_code`, `location_name` (e.g. 'London Area, United Kingdom') and `industry_urn`. For the member's current title and employer use get_profile_experience.
+
+get_profile_experience
+(vanity_name)
+sign-in
+LinkedIn: a member's work history — one row per position with title, company, company_urn, location, start_year, start_month, end_year, end_month and description, most recent first as LinkedIn ships them. A row with no end_year is a current role, so the first such row is the member's current title and employer. Takes the /in/<slug> vanity name like get_profile (same fetch, projected to positions instead of the identity row). `company_id` (numeric, from company_urn) feeds list_people_at_company, search_people_at_company and search_jobs_at_company for 'who else works there'. Use this to enrich a prospect list with current role and employer; get_profile gives the id, headline, premium flag and About text.
+
+get_profile_education
+(vanity_name)
+sign-in
+LinkedIn: a member's education — one row per entry with school_name, degree_name, field_of_study, start_year, end_year and description, most recent first as LinkedIn ships them. Takes the /in/<slug> vanity name like get_profile (same fetch, projected to education entries).
+
+verify_open_profile
+(profile_id)
+sign-in
+LinkedIn: the OPEN PROFILE check — can the signed-in member message this person WITHOUT spending an InMail credit? Reads the compose option behind the profile's Message button. One row: `compose_option_type` and `paid_inmail`, read together. PREMIUM_INMAIL = no thread exists yet, so paid_inmail decides: false = free to message (on a non-connection that is LinkedIn's Open Profile, the Premium setting that lets anyone message them free), true = one InMail credit. REPLY = a thread with this person already exists, so a message is a free reply whatever their setting (send_message on that thread; if that thread is your own unanswered InMail, LinkedIn blocks it until they reply). Verified live 2026-10-01 on ten never-messaged 2nd/3rd-degree members: five free, five paid. Takes the ACoAA… profile id. Run it over a prospect list to keep the free-to-message ones, then send_inmail; get_inmail_credits shows the balance.
+
+get_inmail_credits
+sign-in
+LinkedIn: the signed-in member's remaining InMail credits (a Premium allowance), e.g. 29. One row, `inmail_credits`. Takes no parameters. Read it before an InMail sequence; recipients with an Open Profile (verify_open_profile paid_inmail=false) do not consume credits.
+
+send_inmail
+(recipient_profile_urn, mailbox_urn, subject, text)
+sign-in
+LinkedIn: send an InMail — a message with a subject line to a member who is NOT a 1st-degree connection. Free when the recipient has an Open Profile (verify_open_profile: PREMIUM_INMAIL with paid_inmail=false); otherwise it spends one InMail credit (get_inmail_credits). REAL SEND, cannot be unsent. Free and credit-paid sends use the identical request; LinkedIn decides the charge. LinkedIn allows ONE unanswered InMail per recipient: until they reply, another send_inmail fails with HTTP 422 UNRESPONDED_INMAIL_EXISTS and a send_message into that thread fails with HTTP 422 NOT_ALLOWED_PREMIUM_INMAIL_SUBSEQUENT_REPLY (both verified 2026-10-04; nothing sent, no credit). Takes `recipient_profile_urn` (verify_open_profile's recipient_urn, or search_people / get_profile), `mailbox_urn` (your OWN, from get_me), `subject` and `text`. Returns the created message with the new thread's conversation urn. For 1st-degree connections use start_conversation.
+
+list_my_followers
+(start?, count?)
+sign-in
+LinkedIn: the signed-in member's OWN followers — the full list from LinkedIn's network manager ('Followers' page), newest first as that page sorts them by default, with `total` on every row (captured 2026-10-01: 674 followers for a member whose search-based list_followers could reach only 6). Each row: name, headline, profile_url, profile_urn, follower_count (how many people follow THEM, a reach signal) and following_back (whether you follow them). Page with `start` (0, 10, 20…). This is the input for 'who followed me recently' and for daily follower diffs on the member's own account: snapshot, then diff on profile_urn. For OTHER people's followers use list_followers (reach-limited). Takes no id: it is always the signed-in member.
+
+list_my_following
+(start?, count?)
+sign-in
+LinkedIn: the people the signed-in member FOLLOWS (the network manager's 'Following' tab), same row shape as list_my_followers: name, headline, profile_url, profile_urn, follower_count, following_back (true here), total. Page with `start`. Takes no id: it is always the signed-in member.
+
+search_conversations
+(mailbox_urn, keywords, count?)
+sign-in
+LinkedIn: SEARCH the member's conversations by a person's name or a keyword — LinkedIn's own messaging search across inbox, spam and archive — the way to find a thread that is not among the latest 20 list_conversations returns. Returns up to `count` threads with conversation_urn (for get_conversation_messages / send_message), title (group chats), last_activity_at, created_at, unread_count, read, group_chat, the participants' urns / first names / last names / headlines (aligned arrays, the member included) and `next_cursor` for the next page (search_conversations_next). Captured 2026-10-01: 'andrey' found 13 threads, 'tim' 20 with more pages. Get `mailbox_urn` from get_me.
+
+search_conversations_next
+(mailbox_urn, keywords, cursor, count?)
+sign-in
+LinkedIn: the NEXT page of search_conversations. Same keywords and mailbox, plus `cursor` = the previous page's next_cursor (it encodes the offset: base64 of '<start>&<count>', e.g. 'MjAmMjA=' is 20&20). Same row shape; stop when a page comes back empty or next_cursor is null.
+
+list_conversations_page
+(mailbox_urn, before_timestamp, count?)
+sign-in
+LinkedIn: the inbox as a PAGED list — the first page of the member's INBOX threads, newest first, with `next_cursor` for list_conversations_next. Use this instead of list_conversations when you need to walk further back than the latest ~20 (e.g. to find an old thread without knowing a keyword). Rows carry conversation_urn, title, last_activity_at, created_at, unread_count, read, group_chat, participants (aligned arrays) and the latest message's text / time / sender. `before_timestamp` is the paging anchor LinkedIn's client sends (the current time in epoch ms is fine; captured 2026-10-01 the newest threads came back regardless of its value). Get `mailbox_urn` from get_me.
+
+list_conversations_next
+(mailbox_urn, cursor, count?)
+sign-in
+LinkedIn: the NEXT page of the inbox after list_conversations_page — pass `cursor` = the previous page's next_cursor; same row shape (threads newest first, with the latest message); stop when a page is empty or next_cursor is null. Captured 2026-10-01 walking three pages of 20.
+
+get_follower_count
+(vanity_name)
+sign-in
+LinkedIn: read a member's TRUE total follower count from their profile, e.g. '3,648 followers'. This is the headline number and differs from what list_followers can enumerate: list_followers only sees followers within your own network reach (181 of that same member's 3,648). Use this action for the 'is the number moving' signal and list_followers for 'who arrived'. Returns a single row whose `followers` value is the formatted count as LinkedIn renders it, commas included.
+
+get_profile_network
+(vanity_name)
+sign-in
+LinkedIn: a member's network size in one small call. One row: `follower_count` (the true total, a number), `connection_count` (the true total, a number, null when the member hides it), `following` (whether the signed-in member follows them) and `profile_urn`. Use it for the 'is this audience growing' signal and to size a person's reach before pulling their posts. It reads the same follower number as get_follower_count from a response about 250 times smaller, so prefer it. For who the followers are use list_followers; for who actually engages use list_profile_posts, then list_post_reactions and list_post_comments.
+
+get_profile_skills
+(vanity_name)
+sign-in
+LinkedIn: the skills a member lists on their profile, one row per skill with `name`, in the order LinkedIn ships them. Takes the /in/<slug> vanity name like get_profile (same fetch, projected to skills). Use it with get_profile, get_profile_experience and get_profile_education when assembling a full picture of a person.
+
+list_profile_posts
+(profile_id, count?)
+sign-in
+LinkedIn: a member's posts, newest first, with engagement counts. One row per post: `text`, `age` (LinkedIn's relative time, e.g. '3d'), `reactions`, `comments`, `reposts`, `author`, `author_headline`, `author_url`, `header` and `activity_urn` (the post's page is https://www.linkedin.com/feed/update/<activity_urn>/). The feed includes the member's reposts of other people's posts: on those rows the author is the original poster and `header` reads '<name> reposted this'. A quote-repost keeps the member as author and fills `reshared_author` and `reshared_text`. `thread_urn` feeds list_post_reactions (who reacted) and `thread_id` feeds list_post_comments (who commented and what they said); together those give the member's engaged audience. For an exact timestamp take the number at the end of `activity_urn` and shift it right by 22 bits: that is epoch milliseconds. The first page only: `next_token` on every row is the cursor for list_profile_posts_next, which returns the next page; null means the end.
+
+list_profile_comments
+(profile_id, count?)
+sign-in
+LinkedIn: the comments a member has left on posts (their own and other people's), newest first. One row per commented post: `comment_text` (what the member wrote), `commented_at` (epoch ms), `comment_url`, `header` (e.g. '<name> commented on this' or '<name> replied to <other>'s comment on this'), then the post itself: `author`, `author_headline`, `author_url`, `text`, `reactions`, `comments`, `reposts` (its page is https://www.linkedin.com/feed/update/<thread_urn>/). This is the member's outbound voice: who they talk to, about what, and in which tone. `thread_urn` and `thread_id` feed list_post_reactions and list_post_comments for the post underneath. The first page only: `next_token` on every row is the cursor for list_profile_comments_next, which returns the next page; null means the end.
+
+list_profile_reactions
+(profile_id, count?)
+sign-in
+LinkedIn: the posts a member has reacted to, most recent reaction first. One row per reaction: `header` (e.g. '<name> likes this', '<name> celebrates this'), then the post: `author`, `author_headline`, `author_url`, `text`, `age`, `reactions`, `comments`, `reposts` (its page is https://www.linkedin.com/feed/update/<thread_urn>/). This is the clearest read of what a person pays attention to: whose posts and which topics earn their reaction. The number at the end of `reaction_activity_urn` shifted right by 22 bits is the epoch-millisecond time of the reaction itself, so a page of rows is also an activity timeline. `thread_urn` and `thread_id` feed list_post_reactions and list_post_comments. The first page only: `next_token` on every row is the cursor for list_profile_reactions_next, which returns the next page; null means the end.
+
+list_post_reactions
+(thread_urn, start?, count?)
+sign-in
+LinkedIn: who reacted to a post. One row per reactor: `name`, `headline`, `degree` (1st, 2nd or 3rd+ from the signed-in member), `reaction` (LIKE, PRAISE = Celebrate, EMPATHY = Love, INTEREST = Insightful, APPRECIATION = Support, ENTERTAINMENT = Funny), `profile_url`, `profile_urn`, and `total` (all reactions on the post) on every row. Takes the `thread_urn` from list_profile_posts, list_profile_reactions or list_profile_comments. Page with `start` in steps of `count` until `start` reaches `total`. Unlike people search there is no 1000-row cap: a 1,420-reaction post walked to its last row. Reactors are the people who actually engage with a member, usually a larger and warmer list than list_followers can reach, and counting how often one person appears across a member's posts ranks their closest audience.
+
+list_post_comments
+(thread_id, start?, count?)
+sign-in
+LinkedIn: the comments on a post and who wrote them. One row per top-level comment: `name`, `headline`, `profile_url`, `profile_id`, `degree` (DISTANCE_1, DISTANCE_2, DISTANCE_3, OUT_OF_NETWORK or SELF), `is_post_author`, `text`, `created_time` (epoch ms), `reactions` (on the comment), `reply_count`, `reply_authors` and `reply_texts` (the replies LinkedIn inlines, aligned by index), `comment_urn`, `permalink`, and `total` (top-level comments on the post) on every row. Takes the `thread_id` from list_profile_posts, list_profile_reactions or list_profile_comments. Page with `start` until it reaches `total`. Commenters are a member's most engaged audience, and the text shows what they respond to.
+
+list_profile_following
+(vanity_name, entity_type?, start?, count?)
+sign-in
+LinkedIn: who and what a member follows, a direct read of their interests. `entity_type` picks the list: INFLUENCER (people they follow), COMPANY, GROUP (groups they belong to) or SCHOOL. One row per followed entity: `name` (companies), `first_name`, `last_name` and `headline` (people), `group_name` and `description` (groups), `school_name` (schools), `vanity_name` (people) or `universal_name` (companies), `urn`, `follower_count` of that entity, and `total` on every row. Fields that do not apply to the chosen type come back null. Takes the /in/<slug> vanity name. Page with `start`.
+
+list_profile_recommendations
+(vanity_name, direction?)
+sign-in
+LinkedIn: the written recommendations on a member's profile, how other people describe working with them in their own words. `direction` received (default) returns recommendations written about the member; given returns the ones the member wrote. One row per recommendation: `text`, `relationship` (e.g. WORKED_IN_DIFFERENT_COMPANIES, MANAGED_DIRECTLY), `created` (epoch ms), the recommender (`recommender_first_name`, `recommender_last_name`, `recommender_headline`, `recommender_vanity_name`), the same four fields for the recommendee, and `total` on every row. Takes the /in/<slug> vanity name.
+
+list_profile_connections
+(profile_id, start?, count?)
+sign-in
+LinkedIn: the people a member is connected to, as far as LinkedIn shows them to the signed-in member. Observed on a 1st-degree connection whose list is visible: 998 rows for a member with 3,583 connections, because search stops at 1,000 rows whatever the true total (get_profile_network has the true total). One row per connection: `name`, `headline`, `location`, `profile_url`, `profile_urn`, `degree` (distance from the signed-in member, so DISTANCE_1 rows are shared connections) and `total`. For only the connections you share use list_shared_connections. Page with `start`.
+
+list_profile_posts_next
+(profile_id, pagination_token, count?)
+sign-in
+LinkedIn: the next page of list_profile_posts. Takes the `next_token` the previous page returned (from list_profile_posts or from this action) together with the same `profile_id`, and returns rows in the same shape plus a new `next_token`; null means the history is exhausted. Pages reach back years: a member's third page of posts went back to 2024.
+
+list_profile_comments_next
+(profile_id, pagination_token, count?)
+sign-in
+LinkedIn: the next page of list_profile_comments. Takes the `next_token` the previous page returned (from list_profile_comments or from this action) together with the same `profile_id`, and returns rows in the same shape plus a new `next_token`; null means the history is exhausted. Pages reach back years: a member's third page of posts went back to 2024.
+
+list_profile_reactions_next
+(profile_id, pagination_token, count?)
+sign-in
+LinkedIn: the next page of list_profile_reactions. Takes the `next_token` the previous page returned (from list_profile_reactions or from this action) together with the

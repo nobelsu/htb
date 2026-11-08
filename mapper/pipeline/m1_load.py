@@ -149,6 +149,7 @@ class Entry:
     redirect_url: str = ""
     resource_type: str | None = None
     raw: dict = field(default_factory=dict, repr=False)
+    blocked: bool = False  # a write's final request, stopped by the explorer before it reached the site
 
     @property
     def host(self) -> str:
@@ -288,7 +289,7 @@ def drop_reason(entry: Entry, domain: str) -> str | None:
         return "third-party host"
     if TRACKER_PATH.match(entry.path) or entry.resource_type in BEACON_RESOURCE_TYPES:
         return "analytics beacon"
-    if entry.status == 0:
+    if entry.status <= 0 and not entry.blocked:
         return "no response"
     if entry.resource_type in STATIC_RESOURCE_TYPES:
         return f"static asset ({entry.resource_type})"

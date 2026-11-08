@@ -63,12 +63,41 @@ class StepError(Exception):
     """One action could not be carried out; Claude is told and picks another."""
 
 
+# For a "picked" input: the same spot in two other items of the list the chosen item sits in, so the
+# replays choose differently and the mapper can see which part of the request is the choice.
+OTHER_ITEMS_JS = """el => {
+  const sel = window.__mapperSelectorFor;
+  let item = el;
+  const path = [];
+  while (item && item.parentElement) {
+    const same = Array.from(item.parentElement.children).filter((c) => c.tagName === item.tagName);
+    if (same.length >= 3) break;
+    path.unshift(Array.from(item.parentElement.children).indexOf(item));
+    item = item.parentElement;
+  }
+  if (!item || !item.parentElement || !sel) return [];
+  const same = Array.from(item.parentElement.children).filter((c) => c.tagName === item.tagName);
+  const i = same.indexOf(item), out = [];
+  for (let k = 1; k < same.length && out.length < 2; k++) {
+    let node = same[(i + k) % same.length];
+    for (const idx of path) node = node && node.children[idx];
+    const s = node && sel(node);
+    if (s && document.querySelectorAll(s).length === 1) out.push(s);
+  }
+  return out;
+}"""
+SCREEN_TEXT = re.compile(r'^\s*- [\w-]+(?: "((?:[^"\\]|\\.)*)")?(?: \[[^\]]*\])*(?:: (.+))?$', re.M)
+
+
 @dataclass
 class AgentRun:
     actions: list[dict] = field(default_factory=list)  # what Claude did, with the outcome of each
     marked: bool = False
     next_selector: str | None = None
     verdict: str = ""
+    picks: dict[str, dict] = field(default_factory=dict)  # input → {"at": iso time, "others": [selectors]}
+    screen: list[str] = field(default_factory=list)  # text on the final page (for reads without input)
+    urls: list[str] = field(default_factory=list)  # pages visited, to check inputs given in the address
 
 
 def accessibility_tree(page, limit: int = MAX_TREE_CHARS) -> str:
@@ -123,11 +152,6 @@ def _perform(page, tracker, act: dict, start_url: str, inputs: dict[str, str]) -
         url = urljoin(page.url, act.get("url") or "/")
         if not same_site(hostname(url), hostname(start_url)):
             raise StepError(f"{url} is not on this site")
-        if any(f in url.lower() for f in _input_forms(inputs)):
-            raise StepError(
-                "don't put the task's input in an address: type it into the page, as a person would "
-                "(the recording is replayed with other inputs, which only works for typed text)"
-            )
         page.goto(url, wait_until="load")
     elif kind == "wait":
         page.wait_for_timeout(1500)
@@ -135,10 +159,36 @@ def _perform(page, tracker, act: dict, start_url: str, inputs: dict[str, str]) -
         raise StepError(f"unknown action {kind!r}")
 
 
+def _note_pick(page, run: AgentRun, act: dict) -> None:
+    """Before clicking the chosen item: remember when, and how to click two other items instead."""
+    from mapper.bundle import iso_now
+
+    el = _find(page, act.get("role"), act.get("name"), for_click=True)
+    others = el.evaluate(OTHER_ITEMS_JS) or []
+    if len(others) < 2:
+        raise StepError(
+            f"{act.get('role')} {act.get('name')!r} is not one of several similar items in a list: "
+            "pick an item from a list with at least three of them"
+        )
+    run.picks[act["picks"]] = {"at": iso_now(), "others": others}
+
+
+def _screen_text(tree: str) -> list[str]:
+    """The names and texts shown on a page, from its accessibility tree (no field contents)."""
+    out = []
+    for m in SCREEN_TEXT.finditer(tree):
+        for text in m.groups():
+            text = (text or "").strip().strip('"')
+            if 2 <= len(text) <= 200 and text not in out and not text.startswith("/"):
+                out.append(text)
+    return out
+
+
 def _describe(act: dict) -> str:
     target = f'{act.get("role")} "{act.get("name")}"' if act.get("role") else ""
     extra = {"type": f' text "{act.get("text")}"', "press": f" key {act.get('key')}"}.get(act["action"], "")
     extra += f" url {act.get('url')}" if act["action"] == "navigate" else ""
+    extra += f" (picks {act['picks']})" if act.get("picks") else ""
     flag = " [flagged as performing the task]" if act.get("performs_task") else ""
     return f"{act['action']} {target}{extra}".strip() + flag
 
@@ -156,7 +206,12 @@ def drive(
             raise AgentFailed(f"Claude gave up: {act.get('reason', '')}", run)
         if act["action"] == "done":
             return _finish(page, run, planner, spec, history)
+        blocker = getattr(tracker, "blocker", None)
+        if act.get("performs_task") and not run.marked and blocker is not None:
+            blocker.arm()  # a write's final click: what it sends is recorded but never reaches the site
         try:
+            if act.get("picks") and act["action"] == "click":
+                _note_pick(page, run, act)
             tracker.action()
             _perform(page, tracker, act, start_url, spec.inputs)
         except StepError as e:
@@ -165,11 +220,15 @@ def drive(
             outcome = f"failed: {type(e).__name__}: {(str(e).strip().splitlines() or [''])[0][:200]}"
         else:
             outcome = "ok"
+            if act.get("performs_task") and act["action"] == "navigate":
+                tracker.extend()  # the task is this page: include what it fetches right after loading
             if act.get("performs_task") and not run.marked:
                 mark()  # the instant the triggering action is done, like a person pressing Enter
                 run.marked = True
                 outcome = "ok, goal marked"
                 tracker.wait_for_action(page, AFTER_MARK_MS)  # until the task's own requests are answered
+                if blocker is not None:
+                    blocker.disarm()
             else:
                 if act.get("performs_task"):
                     outcome = "ok, but the goal was already marked at an earlier action (not marked again)"
@@ -187,6 +246,8 @@ def drive(
                 outcome += (
                     " (this exact action has now failed twice: it will not work, do something different)"
                 )
+        if act["action"] == "navigate":
+            run.urls.append(page.url)
         run.actions.append({**act, "outcome": outcome})
         history.append(f"{len(history) + 1}. {_describe(act)} -> {outcome}")
     raise AgentFailed(f"not finished after {MAX_STEPS} actions", run)
@@ -198,10 +259,20 @@ def _finish(page, run: AgentRun, planner: Planner, spec: TaskSpec, history: list
     typed = " ".join(
         a.get("text") or "" for a in run.actions if a["action"] == "type" and a["outcome"].startswith("ok")
     )
-    missing = [k for k, v in spec.inputs.items() if v not in typed]
+    addresses = " ".join(run.urls).lower()
+    missing = [
+        k
+        for k, v in spec.inputs.items()
+        if v not in typed and not any(f in addresses for f in _input_forms({k: v}))
+    ]
+    missing += [k for k in spec.picks if k not in run.picks]
     if missing:
-        raise AgentFailed(f"never typed the input(s) {missing} exactly as given", run)
-    verdict = planner.check_result(spec, page.url, accessibility_tree(page), history)
+        raise AgentFailed(
+            f"never gave the input(s) {missing} as asked (typed, in the address or picked)", run
+        )
+    final_tree = accessibility_tree(page)
+    run.screen = _screen_text(final_tree)
+    verdict = planner.check_result(spec, page.url, final_tree, history)
     run.verdict = verdict["reason"]
     if not verdict["ok"] and verdict.get("empty"):
         raise EmptyResult(f"the site found nothing for {spec.inputs}: {verdict['reason']}", run)
