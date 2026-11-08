@@ -423,3 +423,11 @@ markers and infers the card deterministically, and the LLM only names things. We
   structure and param renamed).
 - **M6 Heal plugs into the runtime (default).** `flowmap/heal.py` implements the existing `Remapper` protocol
   (`REMAPPER=flowmap`); HealManager keeps the pre-check, validation, activation and `degraded` marking.
+- **M7 An agent can record (asked: "we should do it using like an agent"; overlap with Wei Wei's explorer is
+  fine).** `record --agent "task"` (`flowmap/agent.py`): Claude does the action once from the accessibility
+  tree, one tool call per turn; each step is saved with the role and name it used, input values become
+  placeholders, and the results it names become `results_selector` (one CSS selector found in the page).
+  Everything after recording is unchanged. Guards are code, not prompt: same site only, new tabs closed, no
+  sign-out/delete clicks, no data-changing clicks unless `--write` (which asks first on real sites), no
+  sign-in (the person signs in in the window; the recording restarts). Older page snapshots are dropped
+  from the conversation to keep it small.

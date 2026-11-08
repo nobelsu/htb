@@ -1,6 +1,6 @@
 # flowmap (mapper v2)
 
-A person records each action once. flowmap replays it with planted markers, works out the card from what the
+A person (or Claude, with `record --agent`) records each action once. flowmap replays it with planted markers, works out the card from what the
 site sent, and saves it to the registry. The LLM only names things. Healing replays the same recording.
 Decisions: `DECISIONS.md`, "Mapper v2".
 
@@ -10,6 +10,11 @@ Decisions: `DECISIONS.md`, "Mapper v2".
 # 1. Record an action once (a browser opens; do the action, close it)
 uv run python -m flowmap record https://example.com/ --action search_things \
   --input query=lamp --example query=chair --results '.result h3' --next 'a.next'
+
+# 1b. Or have Claude do it: give the task and the values to use (needs ANTHROPIC_API_KEY)
+uv run python -m flowmap record https://www.linkedin.com/ --action search_companies \
+  --agent "search companies for the query" --input query=robotics --example query=fintech \
+  --auth linkedin --headed --profile ./profiles
 
 # 2. Map the site's flows into the registry (runtime.db)
 uv run python -m flowmap map example.com
@@ -26,6 +31,12 @@ uv run python -m flowmap heal example.com search_things
 - Signed-in sites: `--auth <provider>` when recording, `--profile <dir>` when mapping (a persistent browser
   profile), or the user's sign-in from the session store when healing.
 - Writes on real sites ask before they are replayed (`--yes` skips the question).
+- `--agent "task"`: Claude does the task once in a browser, one step at a time from the page's accessibility
+  tree, and names the results and the next-page control; you don't pass `--results` or `--next`. It never
+  leaves the site, never clicks sign-out or delete controls, never clicks something that changes data unless
+  the action is `--write` (and then it asks first), and never signs in: when a page wants a login it waits for
+  you to sign in in the window (`--headed`). Use the same `--profile` for `map`, so the sign-in carries over.
+  Check the saved flow before mapping.
 - Labels use `ANTHROPIC_MODEL` when `ANTHROPIC_API_KEY` is set, otherwise rules (`--no-llm` forces rules).
 
 ## Try it on the test bookshop
@@ -42,6 +53,7 @@ uv run python -m flowmap heal bookshop.test search_books --pause 0
 | Module | Does |
 |---|---|
 | `flowmap/flows.py` | The flow format (`flows/{domain}/{action}.json`), replay, the codegen converter |
+| `flowmap/agent.py` | `record --agent`: Claude does the action once; its steps become the flow |
 | `flowmap/capture.py` | Marker and real runs in Playwright; traffic tagged by step; secrets hashed |
 | `flowmap/infer.py` | Picks the request, templates it by comparing runs, finds the output, pagination, writes |
 | `flowmap/minimise.py` | Cheapest tier and fewest headers, by replaying with the executor |

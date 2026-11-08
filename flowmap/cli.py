@@ -1,7 +1,7 @@
 """``python -m flowmap record|map|heal|show``.
 
 record   open Playwright's recorder on a page, do the action once, and save it as a flow
-         (or ``--from-script`` to convert a codegen script you already have)
+         (``--agent "task"`` has Claude do it instead; ``--from-script`` converts a codegen script)
 map      replay a site's flows, infer each action, and save the card to the registry
 heal     re-map one action now, through the runtime's healing (pre-check, validation, new version)
 show     the active card's actions and the latest heal timings
@@ -92,6 +92,69 @@ def cmd_record(args: argparse.Namespace) -> int:
         flow = flow.model_copy(update={"kind": "write"})
     path = save_flow(flow, Path(args.flows))
     print(f"Saved {path} ({len(flow.steps)} steps; inputs: {', '.join(flow.inputs) or 'none'})")
+    return 0
+
+
+async def _record_agent(args: argparse.Namespace) -> int:
+    from playwright.async_api import async_playwright
+
+    from flowmap.agent import AgentError, record_with_agent
+    from flowmap.infer import registrable
+
+    inputs = {k: v[0] for k, v in _pairs(args.input, "--input").items()}
+    domain = args.domain or registrable(urlsplit(args.url).hostname or "")
+    if args.write and not args.yes and not _is_local(args.url):
+        answer = input(f"The agent will really do this on {domain} once: {args.agent!r}. Continue? [y/N] ")
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Not recorded.", file=sys.stderr)
+            return 1
+
+    async def sign_in() -> None:
+        if not args.headed:
+            raise AgentError(f"{domain} wants a sign-in: record again with --headed --profile and sign in")
+        print(f"Sign in to {domain} in the browser window, then press Enter here.", file=sys.stderr)
+        await asyncio.to_thread(input)
+
+    async with async_playwright() as p:
+        if args.profile:
+            profile = Path(args.profile) / domain
+            profile.mkdir(parents=True, exist_ok=True)
+            context = await p.chromium.launch_persistent_context(str(profile), headless=not args.headed)
+            browser = None
+        else:
+            browser = await p.chromium.launch(headless=not args.headed)
+            context = await browser.new_context(storage_state=args.profile_state or None)
+        try:
+            page = context.pages[0] if context.pages else await context.new_page()
+            recording = await record_with_agent(
+                page,
+                url=args.url,
+                task=args.agent,
+                action=args.action,
+                inputs=inputs,
+                examples=_pairs(args.example, "--example"),
+                no_marker=set(args.no_marker or []),
+                domain=domain,
+                description=args.description,
+                auth_provider=args.auth,
+                write=args.write,
+                sign_in=sign_in,
+                on_step=lambda line: print(f"  {line}", file=sys.stderr),
+            )
+        except AgentError as e:
+            print(f"Couldn't record: {e}", file=sys.stderr)
+            return 1
+        finally:
+            await context.close()
+            if browser is not None:
+                await browser.close()
+    flow = recording.flow
+    path = save_flow(flow, Path(args.flows))
+    print(
+        f"Saved {path} ({len(flow.steps)} steps, {recording.turns} turns; "
+        f"inputs: {', '.join(flow.inputs) or 'none'}; results: {flow.results_selector or 'none'})"
+    )
+    print(f"Check the steps, then: python -m flowmap map {flow.domain} {flow.action}")
     return 0
 
 
@@ -319,6 +382,10 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--write", action="store_true", help="the action changes something (a write)")
     r.add_argument("--from-script", help="convert this codegen script instead of opening the recorder")
     r.add_argument("--profile-state", help="Playwright storage state to record signed in")
+    r.add_argument("--agent", metavar="TASK", help="have Claude do this task instead of you")
+    r.add_argument("--headed", action="store_true", help="show the agent's browser (needed to sign in)")
+    r.add_argument("--profile", help="folder for persistent browser profiles, as map --profile takes")
+    r.add_argument("--yes", action="store_true", help="don't ask before an agent does a write on a real site")
     r.add_argument("--flows", default=env("FLOWS_DIR", "./flows"))
 
     m = sub.add_parser("map", help="capture and map a site's flows into the registry")
@@ -356,6 +423,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "record":
         if not args.from_script and not args.url:
             raise SystemExit("record needs a url (or --from-script)")
+        if args.agent:
+            if args.from_script:
+                raise SystemExit("--agent and --from-script don't go together")
+            return asyncio.run(_record_agent(args))
         return cmd_record(args)
     if args.cmd == "map":
         return asyncio.run(_map(args))
