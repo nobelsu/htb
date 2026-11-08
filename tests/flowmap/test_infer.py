@@ -589,12 +589,14 @@ def test_a_selector_from_the_live_page_is_rebuilt_for_the_html() -> None:
 
 
 def test_a_held_back_tie_goes_against_background_chatter() -> None:
-    """LinkedIn's follow: the live-update subscription is held back too (it's after the click); the follow
-    itself wins the tie, and a write's stand-in response isn't checked for results."""
+    """LinkedIn's follow: the live-update subscription and a beacon with a random-token path are held back
+    too (they're after the click); the follow itself wins the tie, and a write's stand-in response isn't
+    checked for results."""
 
     def make(b: Builder, v: str, i: int, kind: str) -> None:
         body = '{"item": "' + v + '"}'
-        for path in ("/realtime/frontendSubscriptions", "/api/followingStates/" + quote(v)):
+        beacon = "/tapi2hqLqA7G0fpO"
+        for path in ("/realtime/frontendSubscriptions", beacon, "/api/followingStates/" + quote(v)):
             ex = b.add(SITE + path, method="POST", post=body, req_ctype="application/json", body={})
             ex.response_headers.append(("x-flowmap-held", "1"))
 

@@ -36,6 +36,8 @@ from runtime.extract import STREAM_ROW, css_items, html_selector, resolve_rows, 
 BACKGROUND = re.compile(
     r"realtime|subscri|presence|track|telemetry|metric|analytic|beacon|collect|/events?\b|/log\b|ping", re.I
 )
+# A path that is one random-looking token (``/tapi2hqLqA7G0fpO``): a bot-detection or tracking beacon.
+OPAQUE = re.compile(r"^/?(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{10,}/?$")
 OUTPUT_MATCH = 0.6  # share of visible values the output must account for
 MIN_CONFIDENCE = 0.5
 # Request headers the browser or the HTTP client sets itself; never part of a card.
@@ -455,6 +457,11 @@ def _submit_step(flow: Flow) -> int:
     return max(used) if used else 0
 
 
+def background(path: str) -> bool:
+    """A live update, a tracking ping or a beacon (never the action itself, when there's a choice)."""
+    return bool(BACKGROUND.search(path) or OPAQUE.match(urlsplit(path).path or path))
+
+
 def _pick(
     ctx: _Ctx,
     groups: dict[tuple[str, str, str], dict[str, Exchange]],
@@ -569,7 +576,7 @@ def _ranked(
             round(out, 2),
             marker_hits + real_hits,
             int(writes and flow.kind != "read"),
-            int(not BACKGROUND.search(sig[2])),  # on a tie, not a live update or a tracking ping
+            int(not background(sig[2])),  # on a tie, not a live update or a tracking ping
             post,
             ok,
             json_resp,
