@@ -21,6 +21,7 @@ import asyncio
 import hmac
 import json
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -90,8 +91,6 @@ def sign_in_page(
         )
 
     parts = [notice(error)]
-    if for_app:
-        parts.append(f'<p class="row strong" style="margin:0"><span class="big">{icon("link", 72)}{esc(app_name)}</span></p>')
     if signed_in_as and mode == "password":
         parts.append(
             f'<form method="post" action="{esc(action)}" class="row strong" style="margin:0">'
@@ -179,6 +178,17 @@ for (const f of document.querySelectorAll("form.disconnect")) {
 }
 setTimeout(poll, 2000);
 </script>"""
+
+
+def _app_detail(app: dict[str, Any]) -> str:
+    """How to tell connected apps apart: where they run and when they were connected."""
+    mins = int((time.time() - float(app.get("signed_in") or time.time())) // 60)
+    when = (
+        "just now" if mins < 1 else f"{mins} min ago" if mins < 60
+        else f"{mins // 60} h ago" if mins < 48 * 60 else f"{mins // 1440} days ago"
+    )
+    where = str(app.get("where") or "")
+    return f"{where} · connected {when}" if where else f"connected {when}"
 
 
 MAP_LABELS = {  # a site being set up for this user (runtime/mapping.py)
@@ -344,7 +354,8 @@ def routes(
             for s in sites
         )
         app_rows = "".join(
-            f'<div class="row"><span class="big">{icon("link", 44, label="Connected app")}{esc(a["name"])}</span>'
+            f'<div class="row"><span class="big">{icon("link", 44, label="Connected app")}{esc(a["name"])}'
+            f'<span class="mono">{esc(_app_detail(a))}</span></span>'
             + square("/account/apps/revoke", "client_id", a["client_id"], f"Disconnect {a['name']}")
             + "</div>"
             for a in apps

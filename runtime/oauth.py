@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -274,13 +275,20 @@ class OAuth:
             "SELECT t.client_id, min(t.signed_in), max(t.expires_at), c.info FROM oauth_tokens t "
             "LEFT JOIN oauth_clients c ON c.client_id = t.client_id "
             "WHERE t.user = ? AND t.kind = 'refresh' AND t.revoked = 0 AND t.expires_at > ? GROUP BY t.client_id "
-            "ORDER BY min(t.signed_in)",
+            "ORDER BY min(t.signed_in) DESC",
             (user, time.time()),
         ).fetchall()
         out = []
         for client_id, signed_in, expires, info in rows:
-            name = OAuthClientInformationFull.model_validate_json(info).client_name if info else None
-            out.append({"client_id": client_id, "name": name or "An app", "signed_in": signed_in, "expires_at": expires})
+            client = OAuthClientInformationFull.model_validate_json(info) if info else None
+            name = client.client_name if client else None
+            out.append({
+                "client_id": client_id,
+                "name": name or "An app",
+                "where": _where(client),
+                "signed_in": signed_in,
+                "expires_at": expires,
+            })
         return out
 
     def revoke_app(self, user: str, client_id: str) -> int:
@@ -314,3 +322,13 @@ class OAuth:
         if token:
             with self._lock:
                 self._conn.execute("DELETE FROM account_sessions WHERE token_hash = ?", (_hash(token),))
+
+
+def _where(client: OAuthClientInformationFull | None) -> str:
+    """Where an app runs, from the address it returns to after signing in: the website's name (claude.ai), or
+    "this computer" for an app that listens on localhost (Claude Code, the desktop app)."""
+    uris = [str(u) for u in (client.redirect_uris or [])] if client else []
+    host = urlsplit(uris[0]).hostname if uris else None
+    if not host:
+        return ""
+    return "this computer" if host in ("localhost", "127.0.0.1", "::1") else host
