@@ -428,6 +428,12 @@ def _pick(
         if chosen:
             ctx.reasons.append("confirmed by blocking it: without it the results don't appear")
             scored = chosen + [t for t in scored if t[1] != prefer and t[0] != chosen[0][0]]
+    real_ids = {r.run_id for r in ctx.runs if r.kind == "real"}
+    in_every_real = [t for t in scored if real_ids <= set(t[2])]
+    if in_every_real and in_every_real[0] is not scored[0]:
+        # The top one isn't there in every real run (a widget that loads now and then): the best that is.
+        ctx.reasons.append(f"{scored[0][1][2]} wasn't in every real run; the next best that is was used")
+        scored = in_every_real + [t for t in scored if t not in in_every_real]
     best = scored[0]
     if len(scored) > 1 and scored[1][0] == best[0]:
         raise InferError(
@@ -861,12 +867,17 @@ def _template_request(
 
 
 def _set_path(doc: Any, path: tuple[Any, ...], value: Any) -> Any:
+    """``doc`` with ``value`` at ``path``; a path this run's body doesn't have (the body's shape differs
+    between runs, as Amazon's does) is left alone rather than crashing the map."""
     if not path:
         return value
     node = doc
-    for seg in path[:-1]:
-        node = node[seg]
-    node[path[-1]] = value
+    try:
+        for seg in path[:-1]:
+            node = node[seg]
+        node[path[-1]] = value
+    except (KeyError, IndexError, TypeError):
+        pass
     return doc
 
 

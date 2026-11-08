@@ -227,6 +227,7 @@ async def test_browser_tier_goes_through_the_proxy(
     assert signed and all((s.username, s.password) == (spec.username, SECRET) for s in signed)
 
 
+@pytest.mark.xdist_group("docker")  # login-browser containers share a port range
 async def test_login_browser_goes_through_the_proxy(proxy: FakeProxy, site_url: str, neko_image: None) -> None:
     from runtime.neko.manager import NekoConfig, NekoManager
 

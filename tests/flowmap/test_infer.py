@@ -600,3 +600,24 @@ def test_a_held_back_tie_goes_against_background_chatter() -> None:
 
     out = infer(flow(kind="write"), runs_with(make))  # results_selector ".r" set: not checked for a write
     assert "/api/followingStates/" in out.steps[-1]["request"]["url"] and out.kind == "write"
+
+
+def test_a_body_whose_shape_differs_between_runs_does_not_crash() -> None:
+    """Amazon: a JSON body with an extra branch in some runs only: the map goes on (KeyError before)."""
+    from flowmap.infer import _set_path
+
+    assert _set_path({"a": {"b": 1}}, ("a", "b"), "{{params.q}}") == {"a": {"b": "{{params.q}}"}}
+    assert _set_path({"a": {}}, ("entities", "x"), "{{params.q}}") == {"a": {}}
+    assert _set_path({"a": [1]}, ("a", 5), "{{params.q}}") == {"a": [1]}
+
+
+def test_a_request_missing_from_some_real_runs_gives_way() -> None:
+    """A widget that loaded in one real run with the results in it loses to the search that's in every run."""
+
+    def make(b: Builder, v: str, i: int, kind: str) -> None:
+        b.add(SITE + "/api/search?q=" + quote(v), body=results(names(v, kind)))
+        if kind == "real" and i == 0:
+            b.add(SITE + "/api/widget?q=" + quote(v), body=results(names(v, kind), total=99))
+
+    out = infer(flow(), runs_with(make))
+    assert out.steps[-1]["request"]["url"].endswith("/api/search")

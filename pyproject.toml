@@ -43,7 +43,7 @@ packages = ["schema", "runtime", "mapper", "flowmap"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 # Tests run in parallel (pytest-xdist): about 80 s instead of 5 min. Use -n0 to run in one process.
-addopts = "-n auto"
+addopts = "-n auto --dist loadgroup"  # tests marked xdist_group("docker") share one worker
 asyncio_default_fixture_loop_scope = "function"
 # mapper tests import their helpers (fixture_site, synthetic) by bare name
 pythonpath = ["tests/mapper"]

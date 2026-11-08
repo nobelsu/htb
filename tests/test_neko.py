@@ -24,6 +24,8 @@ from tests.conftest import LiveServer
 from tests.fixture_site.app import LOGIN_PASSWORD, LOGIN_USER, state
 from tests.test_gateway import API_KEY, act, connect, envelope
 
+pytestmark = pytest.mark.xdist_group("docker")  # login-browser containers share a port range
+
 DOMAIN = "fixture.test"
 IMAGE = NekoConfig().image
 
