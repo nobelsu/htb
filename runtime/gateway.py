@@ -1,5 +1,5 @@
-"""MCP server: a fixed set of generic tools (find_actions, run_action, sign-in, heal) over every active card,
-served over Streamable HTTP with Bearer-key auth.
+"""MCP server: a fixed set of generic tools (find_actions, run_action, sign-in, heal, map) over every active
+card, served over Streamable HTTP with Bearer-key auth.
 
 Run:  uv run python -m runtime.gateway --load tests/fixture_site.json
 """
@@ -42,6 +42,7 @@ from runtime.neko.manager import NekoConfig, NekoManager
 from runtime.proxy import ProxyConfig
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
+from runtime.mapping import MapConfig, Mapper, MapManager
 from runtime.keys import ENV_KEY_USER, KeyStore
 from runtime.oauth import OAuth
 from runtime.mapper_remapper import MapperRemapper
@@ -128,6 +129,47 @@ HEAL_STATUS_TOOL = types.Tool(
     },
 )
 
+REQUEST_MAP_TOOL = types.Tool(
+    name="request_map",
+    description="Ask for a website to be set up, when find_actions has nothing for a site the user needs. "
+    "Give the site, what the action should do (task), a snake_case name for it (action) and the values "
+    "you'd use for its inputs (e.g. {\"query\": \"robotics\"}). An agent does the task once on the site "
+    "and turns it into an action; that takes a few minutes, so tell the user and follow it with "
+    "map_status. Only for sites with no actions yet, and reads only for now (searching, looking things up).",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "site": {"type": "string", "description": "the site's address, e.g. https://www.example.com/search"},
+            "task": {"type": "string", "description": "what the action does, e.g. 'search books by keyword'"},
+            "action": {"type": "string", "description": "a snake_case name, e.g. search_books"},
+            "inputs": {
+                "type": "object",
+                "description": "input name -> the value to use while setting it up, "
+                "e.g. {\"query\": \"harbour\"}",
+                "additionalProperties": {"type": ["string", "number", "boolean"]},
+            },
+        },
+        "required": ["site", "task", "action"],
+        "additionalProperties": False,
+    },
+)
+
+MAP_STATUS_TOOL = types.Tool(
+    name="map_status",
+    description="Status of a site being set up (request_map's job_id). Waits up to wait_seconds (default 25, "
+    "max 45) and returns as soon as it finishes. When the status is 'succeeded', use find_actions on the site.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "job_id": {"type": "string", "description": "job_id from request_map"},
+            "wait_seconds": {"type": "number", "minimum": 0, "maximum": 45},
+        },
+        "required": ["job_id"],
+        "additionalProperties": False,
+    },
+    annotations=types.ToolAnnotations(read_only_hint=True),
+)
+
 
 def _domain_tool(
     name: str,
@@ -188,10 +230,12 @@ class Gateway:
         connections: ConnectionManager | None = None,
         pool: BrowserPool | None = None,
         keepalive_s: float = 0.0,
+        maps: MapManager | None = None,
     ) -> None:
         self.registry = registry
         self.executor = executor
         self.healer = healer
+        self.maps = maps
         self.connections = connections
         self.pool = pool
         self.keepalive_s = keepalive_s
@@ -243,6 +287,8 @@ class Gateway:
         tools = [FIND_ACTIONS_TOOL, RUN_ACTION_TOOL]
         if self.healer is not None:
             tools.append(HEAL_STATUS_TOOL)
+        if self.maps is not None:
+            tools.extend([REQUEST_MAP_TOOL, MAP_STATUS_TOOL])
         if self.connections is not None:
             tools.extend(CONNECTION_TOOLS.values())
         return types.ListToolsResult(tools=tools)
@@ -254,6 +300,8 @@ class Gateway:
             return await self._connection_tool(params.name, dict(params.arguments or {}), ctx, params)
         if params.name == HEAL_STATUS_TOOL.name and self.healer is not None:
             return self._heal_status(dict(params.arguments or {}))
+        if params.name in (REQUEST_MAP_TOOL.name, MAP_STATUS_TOOL.name) and self.maps is not None:
+            return await self._map_tool(params.name, dict(params.arguments or {}), caller(ctx))
         if params.name == FIND_ACTIONS_TOOL.name:
             return self._find_actions(dict(params.arguments or {}))
         if params.name == RUN_ACTION_TOOL.name:
@@ -312,6 +360,31 @@ class Gateway:
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=json.dumps(status))], structured_content=status
         )
+
+    async def _map_tool(self, name: str, args: dict[str, Any], user: str) -> types.CallToolResult:
+        assert self.maps is not None
+        if name == REQUEST_MAP_TOOL.name:
+            site, task, action = args.get("site"), args.get("task"), args.get("action")
+            inputs = args.get("inputs")
+            if not all(isinstance(v, str) for v in (site, task, action)):
+                return _error_result("site, task and action (strings) are required")
+            if inputs is not None and not isinstance(inputs, dict):
+                return _error_result("inputs must be an object")
+            out = await self.maps.request(user, str(site), str(task), str(action), inputs)
+        else:
+            job_id, wait = args.get("job_id"), args.get("wait_seconds", 25)
+            if not isinstance(job_id, str):
+                return _error_result("job_id (string) is required")
+            wait_s = float(wait) if isinstance(wait, (int, float)) and not isinstance(wait, bool) else 25.0
+            found = await self.maps.status(job_id, user, wait_s)
+            if found is None:
+                return _error_result(f"no map job {job_id!r}")
+            out = found
+        if "error" in out:
+            return _error_result(str(out["error"]))
+        if out.get("status") == "succeeded":
+            self.refresh_registry()
+        return _json_result(out)
 
     async def _connection_tool(
         self, name: str, args: dict[str, Any], ctx: Any = None, params: types.CallToolRequestParams | None = None
@@ -399,6 +472,8 @@ class Gateway:
             if self.healer is not None:
                 tg.start_soon(self.healer.run_forever)
                 tg.start_soon(self.healer.health_checks_forever)
+            if self.maps is not None:
+                tg.start_soon(self.maps.run_forever)
             if self.pool is not None:
                 tg.start_soon(self.pool.reap_forever)
             if self.connections is not None:
@@ -467,6 +542,7 @@ class Gateway:
                 key_user=lambda key: resolve(key.encode()) if key else None,
                 connections=connections,
                 sessions=connections.store if connections is not None else None,
+                maps=self.maps,
                 signup_code=signup_code,
                 public_url=lambda: public,
             )
@@ -674,6 +750,26 @@ def load_remapper(
     return remapper
 
 
+def load_mapper(spec: str | None, executor: Executor, proxies: ProxyConfig | None = None) -> Mapper | None:
+    """`flowmap` -> flowmap's agent recorder and mapper (FLOWS_DIR, default flows/); `module.path:Name` -> an
+    instance of Name, called with the executor. Map jobs need ANTHROPIC_API_KEY (the agent is Claude)."""
+    if not spec:
+        return None
+    if spec == "flowmap":
+        from flowmap.server import FlowMapper
+
+        flows_dir = os.environ.get("FLOWS_DIR", "flows")
+        log.info("map jobs: flowmap (flows in %s)", flows_dir)
+        return FlowMapper(
+            executor, flows_dir, proxies=proxies, channel=os.environ.get("BROWSER_CHANNEL", "chrome")
+        )
+    module_name, _, attr = spec.partition(":")
+    obj = getattr(importlib.import_module(module_name), attr)
+    mapper: Mapper = obj(executor) if isinstance(obj, type) else obj
+    log.info("map jobs: %s", spec)
+    return mapper
+
+
 class _DropWebSocketLines(logging.Filter):
     """uvicorn logs each WebSocket handshake with its full URL (login tokens, Neko session tokens)."""
 
@@ -752,10 +848,21 @@ def main() -> None:
     remapper = load_remapper(
         os.environ.get("REMAPPER"), sessions, os.environ.get("CAPTURES_DIR", "./captures"), proxies
     )
-    healer = HealManager(registry, StateStore(db_path), executor, remapper, config)
+    state = StateStore(db_path)
+    healer = HealManager(registry, state, executor, remapper, config)
+    mapper = load_mapper(os.environ.get("MAPPER"), executor, proxies)
+    maps = (
+        MapManager(
+            registry, state, executor, mapper, healer,
+            MapConfig(allow_local=os.environ.get("MAP_ALLOW_LOCAL", "0") == "1"),
+        )
+        if mapper is not None
+        else None
+    )
+    log.info("map jobs: %s", "on" if maps else "off (set MAPPER=flowmap to turn them on)")
     gateway = Gateway(
         registry, executor, healer=healer, connections=connections, pool=pool,
-        keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")),
+        keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")), maps=maps,
     )
     signup_code = os.environ.get("SIGNUP_CODE", "")
     app = gateway.asgi_app(

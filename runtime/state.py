@@ -1,4 +1,5 @@
-"""Runtime learnings and healing records: `action_state`, `heal_jobs`, `heal_candidates`, `heal_events`.
+"""Runtime learnings, healing and mapping records: `action_state`, `heal_jobs`, `heal_candidates`,
+`heal_events`, `map_jobs`.
 
 Lives in the same SQLite file as the registry (separate connection, WAL mode).
 """
@@ -57,11 +58,30 @@ CREATE TABLE IF NOT EXISTS heal_events (
     at       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS heal_events_job ON heal_events (job_id);
+CREATE TABLE IF NOT EXISTS map_jobs (
+    id           TEXT PRIMARY KEY,
+    domain       TEXT NOT NULL,
+    url          TEXT NOT NULL,             -- where the agent starts
+    task         TEXT NOT NULL,             -- what the action does, in the requester's words
+    action       TEXT NOT NULL,             -- the action's snake_case name
+    inputs       TEXT NOT NULL,             -- JSON {name: the value to use}
+    user         TEXT NOT NULL,             -- who asked; their sign-in is used (DECISIONS M8)
+    status       TEXT NOT NULL,             -- queued | running | succeeded | failed | needs_sign_in
+    progress     TEXT,                      -- the latest step, while running
+    result       TEXT,                      -- JSON details
+    new_version  INTEGER,
+    created_at   TEXT NOT NULL,
+    started_at   TEXT,
+    finished_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS map_jobs_domain ON map_jobs (domain, status);
+CREATE INDEX IF NOT EXISTS map_jobs_user ON map_jobs (user, created_at);
 """
 
 JobStatus = Literal["queued", "running", "succeeded", "needs_review", "failed", "cancelled"]
 Trigger = Literal["page_changed", "empty_spike", "health_check"]
 OPEN_STATUSES = ("queued", "running")
+MapStatus = Literal["queued", "running", "succeeded", "failed", "needs_sign_in"]
 
 
 @dataclass(frozen=True)
@@ -97,6 +117,45 @@ class HealJob:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
         }
+
+
+@dataclass(frozen=True)
+class MapJob:
+    id: str
+    domain: str
+    url: str
+    task: str
+    action: str
+    inputs: dict[str, str]
+    user: str
+    status: MapStatus
+    progress: str | None
+    result: dict[str, Any] | None
+    new_version: int | None
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
+
+    @property
+    def open(self) -> bool:
+        return self.status in OPEN_STATUSES
+
+    def to_json(self, *, owner: bool = True) -> dict[str, Any]:
+        """``owner=False``: what another user waiting on the same site may see (no task, inputs or log)."""
+        out: dict[str, Any] = {
+            "job_id": self.id,
+            "domain": self.domain,
+            "status": self.status,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "new_version": self.new_version,
+        }
+        if owner:
+            out.update(
+                {"action": self.action, "task": self.task, "progress": self.progress, "result": self.result}
+            )
+        return out
 
 
 class StateStore:
@@ -284,6 +343,96 @@ class StateStore:
             }
             for r in rows
         ]
+
+
+    # ---- map_jobs ----------------------------------------------------------
+
+    def create_map_job(
+        self, domain: str, url: str, task: str, action: str, inputs: dict[str, str], user: str
+    ) -> MapJob:
+        job_id = "m_" + secrets.token_hex(6)
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO map_jobs (id, domain, url, task, action, inputs, user, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
+                (job_id, domain, url, task, action, json.dumps(inputs), user, _now()),
+            )
+        job = self.get_map_job(job_id)
+        assert job is not None
+        return job
+
+    def get_map_job(self, job_id: str) -> MapJob | None:
+        row = self._conn.execute("SELECT * FROM map_jobs WHERE id = ?", (job_id,)).fetchone()
+        return _row_to_map_job(row) if row else None
+
+    def open_map_job_for(self, domain: str) -> MapJob | None:
+        row = self._conn.execute(
+            "SELECT * FROM map_jobs WHERE domain = ? AND status IN ('queued', 'running') "
+            "ORDER BY created_at LIMIT 1",
+            (domain,),
+        ).fetchone()
+        return _row_to_map_job(row) if row else None
+
+    def map_jobs_for(self, user: str, limit: int = 10) -> list[MapJob]:
+        rows = self._conn.execute(
+            "SELECT * FROM map_jobs WHERE user = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (user, limit),
+        ).fetchall()
+        return [_row_to_map_job(r) for r in rows]
+
+    def next_map_job(self) -> MapJob | None:
+        row = self._conn.execute(
+            "SELECT * FROM map_jobs WHERE status = 'queued' ORDER BY created_at, rowid LIMIT 1"
+        ).fetchone()
+        return _row_to_map_job(row) if row else None
+
+    def start_map_job(self, job_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE map_jobs SET status = 'running', started_at = ? WHERE id = ? AND status = 'queued'",
+                (_now(), job_id),
+            )
+            return cur.rowcount == 1
+
+    def map_progress(self, job_id: str, line: str) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE map_jobs SET progress = ? WHERE id = ?", (line[:300], job_id))
+
+    def finish_map_job(
+        self, job_id: str, status: MapStatus, result: dict[str, Any], new_version: int | None = None
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE map_jobs SET status = ?, result = ?, new_version = ?, finished_at = ? WHERE id = ?",
+                (status, json.dumps(result), new_version, _now(), job_id),
+            )
+
+    def fail_orphaned_map_jobs(self) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE map_jobs SET status = 'failed', result = ?, finished_at = ? WHERE status = 'running'",
+                (json.dumps({"error": "the server restarted while the site was being mapped"}), _now()),
+            )
+            return cur.rowcount
+
+
+def _row_to_map_job(row: sqlite3.Row) -> MapJob:
+    return MapJob(
+        id=row["id"],
+        domain=row["domain"],
+        url=row["url"],
+        task=row["task"],
+        action=row["action"],
+        inputs=json.loads(row["inputs"]),
+        user=row["user"],
+        status=row["status"],
+        progress=row["progress"],
+        result=json.loads(row["result"]) if row["result"] else None,
+        new_version=row["new_version"],
+        created_at=row["created_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+    )
 
 
 def _row_to_job(row: sqlite3.Row) -> HealJob:

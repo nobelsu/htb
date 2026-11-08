@@ -1,0 +1,322 @@
+"""Map jobs (DECISIONS M8): any signed-up user can ask for a site to be mapped, and the gateway maps it.
+
+Only when the site has no card yet; when it has one and an action is broken, the request starts the heal
+instead. Jobs run inside the gateway process, one at a time, apart from heal jobs. The mapper plugs in through
+`Mapper` (flowmap's is `flowmap.server.FlowMapper`); the runtime checks the card it returns (validation, then
+every read example run through the executor) before saving it as the site's first version.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import ipaddress
+import logging
+import re
+import socket
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+from urllib.parse import urlsplit
+
+from runtime.executor import Executor
+from runtime.healing import HealManager, example_passes
+from runtime.registry import Registry
+from runtime.state import MapJob, StateStore
+from schema import Card, validate_card
+
+log = logging.getLogger("runtime.mapping")
+
+ACTION_NAME = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
+MAX_TASK = 500
+MAX_INPUTS = 8
+MAX_WAIT_S = 45.0
+
+
+class MapError(Exception):
+    """Mapping failed. ``log`` holds the steps taken, for the requester."""
+
+    def __init__(self, message: str, log_lines: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.log = log_lines or []
+
+
+class SignInNeeded(MapError):
+    """The site wants a sign-in before the task can be done."""
+
+
+@dataclass(frozen=True)
+class MapRequest:
+    job_id: str
+    domain: str
+    url: str
+    task: str
+    action: str
+    inputs: dict[str, str]
+    user: str
+
+
+@dataclass
+class MapOutcome:
+    card: dict[str, Any]
+    report: dict[str, Any] = field(default_factory=dict)
+    log: list[str] = field(default_factory=list)
+
+
+class Mapper(Protocol):
+    """Implemented by the mapper: map one action of a site that has no card, starting at ``request.url``.
+
+    Return the site's new card. Raise `SignInNeeded` when the site wants a sign-in, `MapError` otherwise.
+    ``progress`` takes a short line per step, shown to the requester while the job runs."""
+
+    def domain_for(self, host: str) -> str: ...
+
+    async def map_site(self, request: MapRequest, progress: Callable[[str], None]) -> MapOutcome: ...
+
+
+@dataclass
+class MapConfig:
+    allow_local: bool = False  # map sites on this machine or a private network (tests and demos only)
+    poll_s: float = 0.5
+    retry_after_s: int = 30
+
+
+class MapManager:
+    def __init__(
+        self,
+        registry: Registry,
+        state: StateStore,
+        executor: Executor,
+        mapper: Mapper,
+        healer: HealManager | None = None,
+        config: MapConfig | None = None,
+    ) -> None:
+        self.registry = registry
+        self.state = state
+        self.executor = executor
+        self.mapper = mapper
+        self.healer = healer
+        self.config = config or MapConfig()
+        self._wake = asyncio.Event()
+
+    # ---- requests ----------------------------------------------------------
+
+    async def request(
+        self, user: str, site: str, task: str, action: str, inputs: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Queue a map job, or say why not (``{"error": ...}``)."""
+        url = site.strip()
+        if "://" not in url:
+            url = "https://" + url
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+        if parts.scheme not in ("http", "https") or not host:
+            return {"error": f"not a website: {site!r}"}
+        if not self.config.allow_local and await _private(host):
+            return {"error": f"{host} is on a private network; only public websites can be mapped"}
+        task = " ".join(task.split())
+        if not task or len(task) > MAX_TASK:
+            return {"error": f"task must say what the action does, in at most {MAX_TASK} characters"}
+        if not ACTION_NAME.match(action):
+            return {"error": "action must be a short snake_case name, e.g. search_companies"}
+        values: dict[str, str] = {}
+        for name, value in (inputs or {}).items():
+            if not ACTION_NAME.match(name) or isinstance(value, (dict, list)) or value is None:
+                return {"error": 'inputs must map snake_case names to the values to use, e.g. {"query": "x"}'}
+            values[name] = str(value).lower() if isinstance(value, bool) else str(value)
+        if len(values) > MAX_INPUTS:
+            return {"error": f"at most {MAX_INPUTS} inputs"}
+
+        domain = self.mapper.domain_for(host)
+        stored = self.registry.get(domain)
+        if stored is not None:
+            return self._existing(user, stored.card)
+        open_job = self.state.open_map_job_for(domain)
+        if open_job is not None:
+            return self._status(open_job, user)
+        start = f"{parts.scheme}://{parts.netloc}{parts.path or '/'}" + (
+            f"?{parts.query}" if parts.query else ""
+        )
+        job = self.state.create_map_job(domain, start, task, action, values, user)
+        log.info("queued map %s for %s (%s) by %s", job.id, domain, action, user)
+        self._wake.set()
+        return self._status(job, user)
+
+    def _existing(self, user: str, card: Card) -> dict[str, Any]:
+        """The site is mapped already. A broken action is healed instead (and the heal's status returned)."""
+        domain = card.domain
+        broken = [a.name for a in card.actions if self.state.is_degraded(domain, a.name)]
+        healing = [a.name for a in card.actions if self.state.open_job_for(domain, a.name) is not None]
+        if self.healer is not None and (healing or broken):
+            name = (healing or broken)[0]
+            heal = self.healer.page_changed(domain, name, "a map was asked for while it is broken", user)
+            if heal is not None:
+                return {
+                    "status": "healing",
+                    "domain": domain,
+                    "heal": heal.model_dump(mode="json"),
+                    "user_message": f"Part of {domain} stopped working and is being repaired.",
+                    "hint": "check heal_status(heal.job_id); once it succeeds, use find_actions as usual",
+                }
+        return {
+            "status": "exists",
+            "domain": domain,
+            "actions": [a.name for a in card.actions],
+            "user_message": f"{domain} is already set up.",
+            "hint": f"use find_actions(site={domain!r}). Adding actions to a site that is already mapped "
+            "isn't supported yet.",
+        }
+
+    # ---- status ------------------------------------------------------------
+
+    async def status(self, job_id: str, user: str, wait_s: float = 0.0) -> dict[str, Any] | None:
+        """The job's status; with ``wait_s``, hold until it finishes (or the time is up)."""
+        started = time.monotonic()
+        wait_s = max(0.0, min(wait_s, MAX_WAIT_S))
+        while True:
+            job = self.state.get_map_job(job_id)
+            if job is None:
+                return None
+            if not job.open or time.monotonic() - started >= wait_s:
+                return self._status(job, user)
+            await asyncio.sleep(min(self.config.poll_s, 1.0))
+
+    def jobs_for(self, user: str) -> list[dict[str, Any]]:
+        return [j.to_json() for j in self.state.map_jobs_for(user)]
+
+    def _status(self, job: MapJob, user: str) -> dict[str, Any]:
+        owner = job.user == user
+        out = job.to_json(owner=owner)
+        error = (job.result or {}).get("error")
+        if job.open:
+            ahead = "" if job.status == "running" else " It's in the queue."
+            out["user_message"] = f"Setting up {job.domain}; this takes a few minutes.{ahead}"
+            out["retry_after_s"] = self.config.retry_after_s
+            out["hint"] = "call map_status(job_id, wait_seconds=45) until the status is succeeded"
+        elif job.status == "succeeded":
+            out["user_message"] = f"{job.domain} is ready."
+            out["hint"] = f"use find_actions(site={job.domain!r}), then run_action"
+        elif job.status == "needs_sign_in":
+            out["user_message"] = (
+                f"{job.domain} needs you to be signed in, and setting up a new site behind a sign-in isn't "
+                "available yet."
+            )
+        else:
+            out["user_message"] = f"Setting up {job.domain} didn't work" + (
+                f": {error}" if owner and error else "."
+            )
+        if not owner:
+            out["note"] = "someone else asked for this site first; it becomes usable for everyone once mapped"
+        return out
+
+    # ---- the worker ----------------------------------------------------------
+
+    async def run_forever(self) -> None:
+        """One map job at a time, apart from heal jobs."""
+        orphans = self.state.fail_orphaned_map_jobs()
+        if orphans:
+            log.warning("marked %d interrupted map jobs as failed", orphans)
+        while True:
+            ran = await self.run_pending()
+            if not ran:
+                self._wake.clear()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._wake.wait(), timeout=self.config.poll_s)
+
+    async def run_pending(self) -> bool:
+        job = self.state.next_map_job()
+        if job is None or not self.state.start_map_job(job.id):
+            return False
+        try:
+            await self.run_job(job)
+        except Exception as e:
+            log.exception("map %s crashed", job.id)
+            self.state.finish_map_job(job.id, "failed", {"error": f"internal error ({type(e).__name__})"})
+        return True
+
+    async def drain(self) -> None:
+        while await self.run_pending():
+            pass
+
+    async def run_job(self, job: MapJob) -> None:
+        if self.registry.get(job.domain) is not None:
+            self.state.finish_map_job(job.id, "failed", {"error": f"{job.domain} was mapped in the meantime"})
+            return
+        started = time.monotonic()
+        request = MapRequest(job.id, job.domain, job.url, job.task, job.action, dict(job.inputs), job.user)
+        try:
+            outcome = await self.mapper.map_site(request, lambda line: self.state.map_progress(job.id, line))
+        except SignInNeeded as e:
+            self.state.finish_map_job(job.id, "needs_sign_in", {"error": str(e), "log": e.log[-20:]})
+            log.info("map %s needs a sign-in: %s", job.id, e)
+            return
+        except MapError as e:
+            self.state.finish_map_job(job.id, "failed", {"error": str(e), "log": e.log[-20:]})
+            log.info("map %s failed: %s", job.id, e)
+            return
+        ms = int((time.monotonic() - started) * 1000)
+        report = validate_card(outcome.card)
+        if not report.ok or report.card is None:
+            self.state.finish_map_job(
+                job.id,
+                "failed",
+                {"error": "the mapped card isn't valid", "errors": report.errors[:20], "ms": ms},
+            )
+            return
+        card = report.card
+        if card.domain != job.domain:
+            self.state.finish_map_job(job.id, "failed", {"error": f"the mapped card is for {card.domain}"})
+            return
+        problems = await self._check_examples(card, job.user)
+        if problems:
+            self.state.finish_map_job(
+                job.id,
+                "failed",
+                {"error": "the mapped actions don't work yet", "examples": problems, "ms": ms},
+            )
+            return
+        if self.registry.get(job.domain) is not None:
+            self.state.finish_map_job(job.id, "failed", {"error": f"{job.domain} was mapped in the meantime"})
+            return
+        version = self.registry.save(card, note=f"map {job.id}: {', '.join(a.name for a in card.actions)}")
+        result = {"actions": [a.name for a in card.actions], "ms": ms, "report": outcome.report}
+        self.state.finish_map_job(job.id, "succeeded", result, new_version=version)
+        log.info("map %s succeeded: %s version %d in %d ms", job.id, job.domain, version, ms)
+
+    async def _check_examples(self, card: Card, user: str) -> dict[str, str]:
+        """Every read action's examples, run through the executor as agents will call them."""
+        problems: dict[str, str] = {}
+        for action in card.actions:
+            if action.kind != "read":
+                continue
+            for i, example in enumerate(action.examples):
+                env = await self.executor.run_internal(card, 0, action.name, dict(example.params), user)
+                if not example_passes(env, example.min_items):
+                    got = len(env.data or [])
+                    problems[action.name] = f"examples[{i}] gave {env.status.value} with {got} items"
+                    break
+        return problems
+
+
+async def _private(host: str) -> bool:
+    """A name or address on this machine or a private network (what the server's browser must not visit for
+    someone else). Names are resolved, so a public-looking name that points inside counts too."""
+    host = host.strip("[]")
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa")):
+        return True
+    try:
+        return not ipaddress.ip_address(host).is_global
+    except ValueError:
+        pass
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return False  # doesn't resolve: the browser will say so
+    for info in infos:
+        try:
+            if not ipaddress.ip_address(info[4][0]).is_global:
+                return True
+        except ValueError:
+            continue
+    return False

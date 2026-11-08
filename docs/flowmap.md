@@ -44,6 +44,20 @@ uv run python -m flowmap heal example.com search_things
   Check the saved flow before mapping.
 - Labels use `ANTHROPIC_MODEL` when `ANTHROPIC_API_KEY` is set, otherwise rules (`--no-llm` forces rules).
 
+## Map jobs in the gateway
+
+With `MAPPER=flowmap` (and `ANTHROPIC_API_KEY`), agents get two more tools. `request_map(site, task, action,
+inputs)` asks for a site with no card to be set up; the gateway does `record --agent` and `map` itself, one job
+at a time, and saves the card once its examples work through the executor. `map_status(job_id)` waits for the
+result. A site that already has a card isn't mapped again: if an action is broken, the request starts its heal.
+Reads only for now, and sites that need a sign-in stop with `needs_sign_in` (signing in to a site that has no
+card yet isn't built). Raw captures go to a temporary folder deleted when the job ends; the flow is kept in
+`FLOWS_DIR` for heal. Addresses on this machine or a private network are refused unless `MAP_ALLOW_LOCAL=1`.
+
+```bash
+MAPPER=flowmap MAP_ALLOW_LOCAL=1 uv run python -m runtime.gateway   # then request_map http://127.0.0.1:8910/
+```
+
 ## Try it on the test bookshop
 
 ```bash
@@ -66,3 +80,4 @@ uv run python -m flowmap heal bookshop.test search_books --pause 0
 | `flowmap/label.py` | Names and descriptions (the LLM's only job), enforced in code |
 | `flowmap/assemble.py` | Card, validation, replay of a fresh example, `registry.save()` |
 | `flowmap/heal.py` | The runtime's `Remapper`: re-captures and re-infers only the broken action |
+| `flowmap/server.py` | The runtime's `Mapper`: a map job (agent recording, capture, map) inside the gateway |

@@ -199,6 +199,15 @@ setTimeout(poll, 2000);
 </script>"""
 
 
+MAP_LABELS = {  # a site being set up for this user (runtime/mapping.py)
+    "queued": "Queued",
+    "running": "Setting up",
+    "succeeded": "Ready",
+    "failed": "Didn't work",
+    "needs_sign_in": "Needs sign-in",
+}
+
+
 def routes(
     *,
     oauth: OAuth,
@@ -208,6 +217,7 @@ def routes(
     sessions: EncryptedSessionStore | None,
     signup_code: str,
     public_url: Callable[[], str],
+    maps: Any = None,
 ) -> list[BaseRoute]:
     limiter = AttemptLimiter()
     sign_in_cookie = session_cookie(oauth, public_url)
@@ -357,7 +367,13 @@ def routes(
             + "</div>"
             for a in apps
         )
-        has_rows = bool(site_rows or app_rows)
+        map_rows = "".join(
+            f'<div class="row"><span class="big">{esc(j["domain"])}</span>'
+            f'<span class="pill{" pulse" if j["status"] in ("queued", "running") else ""}">'
+            f'{MAP_LABELS.get(j["status"], j["status"])}</span></div>'
+            for j in (maps.jobs_for(user)[:5] if maps is not None else [])
+        )
+        has_rows = bool(site_rows or app_rows or map_rows)
         empty = (
             f'<p class="empty" id="empty" data-has-rows="{1 if has_rows else 0}"'
             f'{" hidden" if has_rows or pending else ""}>Nothing yet</p>'
@@ -380,7 +396,7 @@ def routes(
         body = (
             notice(message) + new_key_rows
             + f'<div id="waiting" data-seen="{esc(json.dumps([p["url"] for p in pending]))}">{waiting_rows}</div>'
-            + site_rows + app_rows + empty
+            + map_rows + site_rows + app_rows + empty
             + f'<div class="tiles">{"".join(tiles)}</div>'
         )
         sign_out = (

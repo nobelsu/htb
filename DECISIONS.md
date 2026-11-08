@@ -463,3 +463,13 @@ markers and infers the card deterministically, and the LLM only names things. We
     with a user's stored sign-in, its device identity and proxy; capture, `record --agent`, `map` and `heal`
     take `--user`. `Remapper.remap` gained `user=`: HealManager passes whoever's call found the break (it used
     to heal with the `default` user's sign-in).
+  - Step 2 built: map jobs (`runtime/mapping.py`, `map_jobs` table, `flowmap/server.py`, `MAPPER=flowmap`).
+    Agents call `request_map(site, task, action, inputs)` and `map_status(job_id, wait_seconds)`; the account
+    page lists the user's last five. The requesting agent names the action and gives the input values (no
+    planning call). The runtime validates the mapped card and runs every read example through the executor
+    before saving version 1, as heal does; the mapper never saves. A second request for a site being mapped
+    joins the same job and sees only its status (not the first user's task, values or log). Reads only.
+    Not built: signing in to a site that has no card (Connect needs the card's `connect_providers` and
+    `session_check`, which flowmap doesn't infer yet), so such jobs end `needs_sign_in`. Addresses on this
+    machine or a private network are refused (names are resolved first) unless `MAP_ALLOW_LOCAL=1`; redirects
+    during the browser's first visit aren't checked.
