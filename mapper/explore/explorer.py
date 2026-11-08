@@ -49,6 +49,7 @@ UNSAFE_LINK = re.compile(
     r"log\s*-?out|sign\s*-?out|log\s*off|delete|remove|deactivate|unsubscribe|close account", re.I
 )
 SCREEN_FILE = "screen.json"  # the text on the live run's final page (finds reads that take no input)
+SENSITIVE_AREA = re.compile(r"admin|settings|billing|premium|checkout|campaignmanager|payment|ads", re.I)
 RUN_LABELS = {
     "m1": "replaying it with a made-up word (or another picked item)",
     "m2": "replaying it with a second made-up word (or another picked item)",
@@ -126,7 +127,9 @@ def survey(page, tracker, start_url: str, extra_pages: int = 4) -> tuple[str, li
         except Exception:  # a page that won't load is just skipped
             continue
         snap = page_snapshot(page)
-        _say(f"looking at {urlsplit(snap['url']).path}")
+        path = urlsplit(snap["url"]).path
+        flag = " (admin/billing/settings area: look only)" if SENSITIVE_AREA.search(path) else ""
+        _say(f"looking at {path}{flag}")
         visited.append(snap["url"])
         texts.append(f"== Page {urlsplit(snap['url']).path} ==\n{as_text(snap)}")
     return "\n\n".join(texts), visited
@@ -270,7 +273,12 @@ def replay_start(steps: list[dict], start_url: str) -> tuple[str, list[dict]]:
     """Replays start where the live run began working: the page loads before its first click, key or
     typing were only passed through, so they are skipped and the last of them is the start page."""
     url, i = start_url, 0
-    while i < len(steps) and steps[i]["type"] in ("navigate", "goto") and "{{" not in steps[i]["url"]:
+
+    def passed_through(k: int) -> bool:  # a page load that is the task itself (marked right after) stays
+        nxt = steps[k + 1]["type"] if k + 1 < len(steps) else None
+        return steps[k]["type"] in ("navigate", "goto") and "{{" not in steps[k]["url"] and nxt != "mark"
+
+    while i < len(steps) and passed_through(i):
         url, i = urljoin(start_url, steps[i]["url"]), i + 1
     return url, steps[i:]
 
@@ -320,7 +328,8 @@ def replay_runs(
     runs: dict[str, dict] = {}
     for choice, name in enumerate(names):
         script = _swap_picks(steps, run, _actions(task_dir / live), choice) if run.picks else steps
-        runs[name] = {"markers": {k: new_marker() for k in spec.inputs}, "script": script}
+        markers = {k: (spec.alternatives.get(k) or [new_marker()] * 2)[choice] for k in spec.inputs}
+        runs[name] = {"markers": markers, "script": script}
     if run.next_selector and live == "real":
         page2 = [*steps, {"type": "click", "selector": run.next_selector}, {"type": "mark"}]
         runs["page2"] = {"real_inputs": dict(spec.inputs), "script": page2}

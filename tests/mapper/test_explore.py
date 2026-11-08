@@ -490,7 +490,14 @@ LISTED_PLAN = [
         "kind": "read",
         "start_path": "/",
         "paginates": False,
-        "inputs": [{"name": "universal_name", "given": "address", "example": "northwind-labs"}],
+        "inputs": [
+            {
+                "name": "universal_name",
+                "given": "address",
+                "example": "northwind-labs",
+                "alternatives": ["granite-labs", "copperleaf-labs"],  # real pages: no made-up 404s
+            }
+        ],
     },
     {"name": "list_conversations", "kind": "read", "start_path": "/", "paginates": False, "inputs": []},
     {
@@ -600,6 +607,10 @@ def test_a_task_list_is_explored_and_mapped(chromium, site, logged_in, tmp_path)
         for r in ("real", "m1", "m2")
     }
     assert all(m["inputs_via"] == {"conversation_urn": "picked"} for m in meta.values())
+
+    for run, slug in (("m1", "granite-labs"), ("m2", "copperleaf-labs")):
+        m = json.loads((result.domain_dir / "get_company" / run / "meta.json").read_text())
+        assert m["markers"] == {"universal_name": slug}
 
     mapped = map_domain(result.domain_dir, live=True)
     assert mapped.validation.ok, mapped.validation.errors

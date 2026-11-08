@@ -212,7 +212,11 @@ def _run_step(
     elif kind in ("navigate", "goto"):
         url = substitute(str(step["url"]), {k: quote(v, safe="") for k, v in params.items()})
         tracker.action()
-        page.goto(urljoin(start_url, url), wait_until="load")
+        try:
+            page.goto(urljoin(start_url, url), wait_until="load")
+        except Exception as e:  # a made-up address answering 404 is an empty result, not a failure
+            if "ERR_HTTP_RESPONSE_CODE_FAILURE" not in str(e):
+                raise
         if marks_next:
             tracker.extend()  # the task is this page: include what it fetches right after loading
         else:

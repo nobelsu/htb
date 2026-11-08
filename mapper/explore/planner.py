@@ -32,6 +32,9 @@ class TaskSpec:
     # how each listed input is given in the browser: typed | address | picked | other (supplied by the
     # site itself, like the member's own id, or paging); picked ones are chosen by clicking an item
     via: dict[str, str] = field(default_factory=dict)
+    # address inputs: two other real values the replays use instead of made-up words (a made-up
+    # /company/<word>/ is a 404 that sites like LinkedIn treat as bot traffic)
+    alternatives: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def picks(self) -> list[str]:
@@ -131,8 +134,9 @@ LISTED_SCHEMA = {
                                 "name": {"type": "string"},
                                 "given": {"type": "string", "enum": GIVEN},
                                 "example": _NULLABLE_STR,
+                                "alternatives": {"type": "array", "items": {"type": "string"}},
                             },
-                            "required": ["name", "given", "example"],
+                            "required": ["name", "given", "example", "alternatives"],
                             "additionalProperties": False,
                         },
                     },
@@ -262,6 +266,8 @@ class Planner:
             "- example: for typed and address inputs, a value that certainly exists on this site (a "
             "well-known company or public figure, or the member's own profile when the action is about "
             "them). Null for picked and other inputs.\n"
+            "- alternatives: for address inputs only, two OTHER real values that exist just as surely (e.g. "
+            "two other big companies); the recording is repeated with them. Empty for other inputs.\n"
             "Keep every action and its name exactly.\n\n"
             f"Actions:\n{blocks}\n\nThe site, as the logged-in member sees it:\n{site[:30000]}"
         )
@@ -272,15 +278,21 @@ class Planner:
             t = by_name.get(task.name)
             if t is None:
                 raise PlanError(f"the plan left out {task.name!r}")
-            via, inputs = {}, {}
+            via, inputs, alternatives = {}, {}, {}
             for i in t["inputs"]:
                 via[i["name"]] = i["given"]
                 if i["given"] in ("typed", "address"):
                     if not i.get("example"):
                         raise PlanError(f"{task.name}: no example for {i['given']} input {i['name']!r}")
                     inputs[i["name"]] = i["example"]
+                if i["given"] == "address" and len(i.get("alternatives") or []) >= 2:
+                    alternatives[i["name"]] = list(i["alternatives"][:2])
             path = t["start_path"] if t["start_path"].startswith("/") else "/" + t["start_path"]
-            specs.append(TaskSpec(task.name, task.description, t["kind"], path, inputs, t["paginates"], via))
+            specs.append(
+                TaskSpec(
+                    task.name, task.description, t["kind"], path, inputs, t["paginates"], via, alternatives
+                )
+            )
         return specs
 
     # --- 2. the next action, for the step-by-step driver ----------------------------------------
@@ -299,7 +311,10 @@ class Planner:
             elif way == "picked":
                 given.append(f"{k}: pick one item from a list on the page by clicking it (set picks={k!r})")
         values = "; ".join(given)
-        rules = "Stay on this site. Never log out, delete anything or change settings."
+        rules = (
+            "Stay on this site. Never log out, delete anything or change settings. Admin, billing, ads "
+            "and settings pages may come up: be aware of them and never change anything there."
+        )
         if task.kind == "read":
             rules += " This task only looks things up: do not follow, connect, post, send, save or buy."
         else:

@@ -136,8 +136,12 @@ def _task_goal(runs: dict[str, Bundle], kind: str) -> tuple[Goal, str, list[str]
             if not m1.values:
                 raise
         if found is not None:
-            entry = found.entry if live is m1 else counterpart(m1, found.entry, live.values)
-            entry = entry or similar_entry(m1, found.entry)
+            entry = None
+            for cand in [found.entry, *found.candidates]:  # best match first that m1 has too
+                entry = cand if live is m1 else counterpart(m1, cand, live.values) or similar_entry(m1, cand)
+                if entry is not None:
+                    found.entry = cand
+                    break
             if entry is not None:
                 goal = Goal(entry, found.reason, [entry], False, None, pick_mark(m1, 0))
                 return goal, "the text on the page", screen
@@ -297,7 +301,14 @@ def map_domain(
 ) -> DomainResult:
     llm = llm or LLM()
     captures_dir = Path(captures_dir)
-    tasks = [map_task(d, llm) for d in task_dirs(captures_dir, task)]
+    tasks, skipped = [], []
+    for d in task_dirs(captures_dir, task):  # one task that can't be mapped must not sink the others
+        try:
+            tasks.append(map_task(d, llm))
+        except (GoalNotFound, MapError) as e:
+            skipped.append(f"{Path(d).name}: not mapped ({e})")
+    if not tasks:
+        raise MapError("; ".join(skipped) or f"{captures_dir}: no tasks")
     first = tasks[0]
     domain = first.runs["m1"].meta["domain"]
     base_url = first.goal.entry.base_url
@@ -305,6 +316,7 @@ def map_domain(
         if tr.goal.entry.base_url != base_url:
             tr.warnings.append(f"goal is on {tr.goal.entry.base_url}, card base_url is {base_url}")
     card, notes = assemble(domain, base_url, [t.mapped for t in tasks])
+    notes = [*skipped, *notes]
 
     cookies: dict[str, str] = {}
     headers: list[tuple[str, str]] = []
