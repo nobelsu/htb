@@ -175,11 +175,12 @@ class FlowMapper:
     ) -> tuple[str, str, str] | None:
         """The blocking test: replay the task with each likely request blocked; the one whose absence makes
         the results disappear is where they come from (a tracking ping or a live update isn't). Only when
-        there's a choice to make, and only for reads that showed results. A document (the page itself) is
-        tested last: blocking it empties any page."""
+        there's a choice to make, and only for reads that showed results. The page itself (a document) is
+        never tested, since blocking it empties any page, and never chosen by elimination: if no request
+        proves to be the source, scoring decides (None)."""
         if flow.results_selector is None or not any(r.kind == "real" and r.visible for r in runs):
             return None
-        tops = candidates(flow, runs)
+        tops = candidates(flow, runs, limit=8)
         if len(tops) < 2:
             return None
         values = [v for v in flow.example_values(0).values() if v]
@@ -189,11 +190,7 @@ class FlowMapper:
             for ex in r.exchanges
             if ex.resource_type == "document"
         }
-        ordered = [t for t in tops if t not in documents] + [t for t in tops if t in documents]
-        for sig in ordered:
-            if sig in documents:
-                step(f"none of the others carries the results: it's the page itself ({sig[2]})")
-                return sig
+        for sig in [t for t in tops if t not in documents][:BLOCK_TESTS]:
             step(f"blocking {sig[0]} {sig[2]} to see whether the results still appear")
             try:
                 shown = await visible_without(flow, _matching(sig, values), setup=setup)
@@ -484,6 +481,9 @@ class FlowMapper:
             if via or mapped:
                 return []  # nothing for this page or these results: the explore goes on
             raise MapError(str(e), lines) from e
+
+
+BLOCK_TESTS = 5  # requests blocked in turn at most, per action
 
 
 def _matching(sig: tuple[str, str, str], values: list[str]) -> Callable[[str, str], bool]:

@@ -32,6 +32,10 @@ from flowmap.flows import Flow, Goto, Select, placeholders, render
 from flowmap.holdback import HELD_HEADER
 from runtime.extract import css_items, html_selector
 
+# Endpoints that sound like the page's background chatter, not an action: only ever a tie-breaker.
+BACKGROUND = re.compile(
+    r"realtime|subscri|presence|track|telemetry|metric|analytic|beacon|collect|/events?\b|/log\b|ping", re.I
+)
 OUTPUT_MATCH = 0.6  # share of visible values the output must account for
 MIN_CONFIDENCE = 0.5
 # Request headers the browser or the HTTP client sets itself; never part of a card.
@@ -311,7 +315,7 @@ def infer(flow: Flow, runs: list[Run], prefer: tuple[str, str, str] | None = Non
         fields, field_samples = _fields(items, ("text",))
         output = {"from": f"steps.{main_id}.items", "fields": fields}
         ctx.reasons.append("the page renders its results on the server: they're read from its HTML")
-    elif kind == "read" or flow.results_selector is not None:
+    elif kind == "read":  # a write was held back: its only response is the stand-in, nothing to read
         found = _output(ctx, main)
         if found is not None:
             from_expr, container, fields, field_samples, page_size_items = found
@@ -430,7 +434,7 @@ def _pick(
             "two requests fit equally well",
             [f"{s[1][0]} {s[1][1]}{s[1][2]}" for s in scored[:2]],
         )
-    if best[0][3] == 0:
+    if best[0][4] == 0:  # post: sent after the inputs were entered
         ctx.doubt("the chosen request was sent before the inputs were entered", 0.2)
     missing = [r.run_id for r in ctx.runs if r.run_id not in best[2]]
     if any(r.kind == "real" for r in ctx.runs if r.run_id in missing):
@@ -521,6 +525,7 @@ def _ranked(
             round(out, 2),
             marker_hits + real_hits,
             int(writes and flow.kind != "read"),
+            int(not BACKGROUND.search(sig[2])),  # on a tie, not a live update or a tracking ping
             post,
             ok,
             json_resp,

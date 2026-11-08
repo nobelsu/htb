@@ -346,7 +346,7 @@ async def test_the_blocking_test_keeps_the_request_whose_absence_empties_the_pag
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A tracking ping ranked first still leaves the results there when blocked; the search, blocked, empties
-    them: the search is the source. The page itself (a document) is the source only if nothing else is."""
+    them: the search is the source. The page itself (a document) is never chosen by elimination."""
     from flowmap import server
     from flowmap.capture import Exchange, Run
 
@@ -386,13 +386,14 @@ async def test_the_blocking_test_keeps_the_request_whose_absence_empties_the_pag
     monkeypatch.setattr(server, "visible_without", without)
     mapper = FlowMapper(Executor(InMemorySessionStore(), Confirmer("s")), tmp_path)
 
-    monkeypatch.setattr(server, "candidates", lambda f, r: [page, ping, search])
+    monkeypatch.setattr(server, "candidates", lambda f, r, **kw: [page, ping, search])
     assert await mapper._confirm_source(flow, [run], None, lambda line: None) == search  # type: ignore[arg-type]
-    assert blocked == [ping, search]  # the page itself last, and never needed
+    assert blocked == [ping, search]  # the page itself is never blocked
 
-    monkeypatch.setattr(server, "candidates", lambda f, r: [page, ping])
+    # Nothing proves to be the source: no choice (scoring decides), never the page by elimination.
+    monkeypatch.setattr(server, "candidates", lambda f, r, **kw: [page, ping])
     blocked.clear()
-    assert await mapper._confirm_source(flow, [run], None, lambda line: None) == page  # type: ignore[arg-type]
+    assert await mapper._confirm_source(flow, [run], None, lambda line: None) is None  # type: ignore[arg-type]
 
 
 @pytest.mark.browser

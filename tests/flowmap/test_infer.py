@@ -586,3 +586,17 @@ def test_a_selector_from_the_live_page_is_rebuilt_for_the_html() -> None:
     items = step["extract"]["items"]
     assert items["type"] == "css" and items["expr"] == "li.hit a.name"
     assert any("rebuilt" in r for r in out.reasons)
+
+
+def test_a_held_back_tie_goes_against_background_chatter() -> None:
+    """LinkedIn's follow: the live-update subscription is held back too (it's after the click); the follow
+    itself wins the tie, and a write's stand-in response isn't checked for results."""
+
+    def make(b: Builder, v: str, i: int, kind: str) -> None:
+        body = '{"item": "' + v + '"}'
+        for path in ("/realtime/frontendSubscriptions", "/api/followingStates/" + quote(v)):
+            ex = b.add(SITE + path, method="POST", post=body, req_ctype="application/json", body={})
+            ex.response_headers.append(("x-flowmap-held", "1"))
+
+    out = infer(flow(kind="write"), runs_with(make))  # results_selector ".r" set: not checked for a write
+    assert "/api/followingStates/" in out.steps[-1]["request"]["url"] and out.kind == "write"
