@@ -301,6 +301,15 @@ def task_dirs(captures_dir: Path, task: str | None = None) -> list[Path]:
     return dirs
 
 
+def _explore_start(captures_dir: Path) -> str | None:
+    """The page the explorer started from (logged in, e.g. a feed): a page that sends a logged-out visitor
+    to sign in, so a better sign-in link than whichever page a task happened to start on."""
+    try:
+        return json.loads((captures_dir / "explore.json").read_text()).get("start_url")
+    except (OSError, ValueError):
+        return None
+
+
 def map_domain(
     captures_dir: str | Path,
     *,
@@ -325,7 +334,7 @@ def map_domain(
     for tr in tasks[1:]:
         if tr.goal.entry.base_url != base_url:
             tr.warnings.append(f"goal is on {tr.goal.entry.base_url}, card base_url is {base_url}")
-    card, notes = assemble(domain, base_url, [t.mapped for t in tasks])
+    card, notes = assemble(domain, base_url, [t.mapped for t in tasks], login_url=_explore_start(captures_dir))
     notes = [*skipped, *notes]
 
     cookies: dict[str, str] = {}
@@ -340,6 +349,12 @@ def map_domain(
     if live:
         session = dict(first.runs["m1"].state_cookies)
         validation.live = live_validate(card, executor or RuntimeExecutor(), session)
+        for r in validation.live:  # blocked on every tier below the browser: start in the browser
+            if r.status == "BLOCKED" and "tiers tried" in r.message:
+                action = next(a for a in card["actions"] if a["name"] == r.action)
+                action["tier"] = "browser"
+                r.status, r.message = "SKIPPED", f"blocked without a browser ({r.message}): tier set to 'browser'"
+                notes.append(f"{r.action}: the site blocks it without a real browser; tier set to 'browser'")
     every_entry = [
         e for tr in tasks for b in tr.runs.values() for e in (*b.entries, *(d for d, _ in b.dropped))
     ]

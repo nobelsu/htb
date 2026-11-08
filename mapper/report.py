@@ -276,7 +276,7 @@ def render(result: DomainResult) -> str:
         out.append("Live runs through the executor:")
         for r in v.live:
             out.append(
-                f"- {'✅' if r.ok else '❌'} `{r.action}({r.params})` → {r.status}, "
+                f"- {'⏭' if r.status == 'SKIPPED' else '✅' if r.ok else '❌'} `{r.action}({r.params})` → {r.status}, "
                 f"{r.items} item(s) {r.message}"
             )
     elif result.live_requested:

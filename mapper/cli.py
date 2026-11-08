@@ -100,6 +100,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="the actions to map, as a task list (default: mapper/explore/tasks/<domain>.txt if it exists)",
     )
     ex.add_argument("--headed", action="store_true", help="show the browser")
+    ex.add_argument(
+        "--resurvey", action="store_true", help="redo the look-around even if a recent one is saved"
+    )
     ex.add_argument("--parallel", type=int, default=4, help="tasks explored at the same time (default 4)")
     ex.add_argument(
         "--max-browsers", type=int, default=8, help="most browsers open at once, in total (default 8)"

@@ -43,6 +43,8 @@ from mapper.explore.tasklist import load_task_list, task_list_for
 from mapper.llm import LLM
 
 EXPLORE_FILE = "explore.json"
+SURVEY_FILE = "survey.json"  # the look-around, kept so later runs (one task, a retry) skip it
+SURVEY_MAX_AGE_S = 7 * 24 * 3600
 # The explorer's own Claude calls (pick tasks, each action, the final check); the mapper's steps keep theirs.
 EXPLORER_MODEL, EXPLORER_EFFORT = "claude-opus-5-5", "high"
 UNSAFE_LINK = re.compile(
@@ -371,6 +373,17 @@ def check_task(task_dir: Path, kind: str) -> str | None:
     return None
 
 
+def _cached_survey(domain_dir: Path, start_url: str) -> tuple[str, list[str]] | None:
+    path = domain_dir / SURVEY_FILE
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if data.get("start_url") != start_url or time.time() - path.stat().st_mtime > SURVEY_MAX_AGE_S:
+        return None
+    return data["site"], data["pages"]
+
+
 def explore(
     start_url: str,
     *,
@@ -386,6 +399,7 @@ def explore(
     extra_pages: int = 15,
     parallel: int = 4,
     max_browsers: int = 8,
+    resurvey: bool = False,
 ) -> ExploreResult:
     from playwright.sync_api import sync_playwright
 
@@ -397,18 +411,27 @@ def explore(
     domain_dir = out / registrable_domain(hostname(start_url))
     cap = Capture(start_url, state, out, headless, step_timeout_ms, max_browsers)
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=headless)
-        context = browser.new_context(storage_state=str(state) if state else None)
-        try:
-            context.add_init_script(_logger_js())
-            tracker = driver.NetworkTracker(context)
-            page = context.new_page()
-            page.set_default_timeout(step_timeout_ms)
-            site, pages = survey(page, tracker, start_url, extra_pages)
-        finally:
-            context.close()
-            browser.close()
+    cached = _cached_survey(domain_dir, start_url) if not resurvey else None
+    if cached:
+        site, pages = cached
+        _say(f"reusing the look-around of {len(pages)} page(s) from {domain_dir / SURVEY_FILE} (--resurvey redoes it)")
+    else:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=headless)
+            context = browser.new_context(storage_state=str(state) if state else None)
+            try:
+                context.add_init_script(_logger_js())
+                tracker = driver.NetworkTracker(context)
+                page = context.new_page()
+                page.set_default_timeout(step_timeout_ms)
+                site, pages = survey(page, tracker, start_url, extra_pages)
+            finally:
+                context.close()
+                browser.close()
+        domain_dir.mkdir(parents=True, exist_ok=True)
+        (domain_dir / SURVEY_FILE).write_text(
+            json.dumps({"start_url": start_url, "surveyed_at": iso_now(), "site": site, "pages": pages}) + "\n"
+        )
 
     listed = load_task_list(tasks_file) if tasks_file else None
     if listed is None and (bundled := task_list_for(registrable_domain(hostname(start_url)))):
@@ -482,6 +505,7 @@ def main(args: argparse.Namespace) -> int:
             headless=not args.headed,
             parallel=args.parallel,
             max_browsers=args.max_browsers,
+            resurvey=getattr(args, "resurvey", False),
         )
     except PlanError as e:
         print(f"mapper explore: {e}", file=sys.stderr)

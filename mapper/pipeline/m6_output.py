@@ -34,6 +34,9 @@ def expect_for(plan: StepPlan) -> dict:
     entry = plan.draft.entry
     status = [entry.status] if 200 <= entry.status < 400 else [200]
     content_type = {"json": "json", "html": "html", "text": "text"}.get(entry.response_kind, "any")
+    mime = entry.response_mime.split(";", 1)[0].strip().lower()
+    if content_type == "json" and not (mime == "application/json" or mime.endswith("+json")):
+        content_type = "any"  # JSON under a vendor type (application/vnd.x+json+2.1): don't insist on it
     paths: list[str] = []
     doc = entry.response_json
     for ex in plan.extract.values():
