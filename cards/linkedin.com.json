@@ -9,7 +9,7 @@
   ],
   "changed_signals": [],
   "provenance": {
-    "mapped_at": "2026-11-08T09:34:16.411Z",
+    "mapped_at": "2026-11-08T09:47:22.913Z",
     "source": "network_capture",
     "mapper_version": "0.1.0"
   },
@@ -52,7 +52,7 @@
   "actions": [
     {
       "name": "approve_invitation",
-      "description": "Accepts a pending LinkedIn connection invitation, which immediately makes the sender a 1st-degree connection and notifies them. This changes state on the user's account, so the user must explicitly approve it before you call it; get all inputs from list_invitations, read immediately beforehand.",
+      "description": "Accepts a pending LinkedIn connection invitation, immediately making the sender a 1st-degree connection and notifying them. This changes state on the user's account, so the user must explicitly approve it before you call it; get invitation_id, validation_token and profile_id from list_invitations read right beforehand.",
       "kind": "write",
       "spends": false,
       "idempotent": false,
@@ -66,12 +66,12 @@
         "validation_token": {
           "type": "string",
           "required": true,
-          "description": "Single-use validation token for this invitation, taken from a list_invitations call made immediately beforehand; it cannot be reused."
+          "description": "Single-use validation token for this invitation from a fresh list_invitations call; re-fetch the list if it has already been used or is stale."
         },
         "profile_id": {
           "type": "string",
           "required": true,
-          "description": "Identifier of the profile of the person who sent the invitation, taken from the same list_invitations result."
+          "description": "Identifier of the inviting person's LinkedIn profile, as returned by list_invitations for this invitation."
         }
       },
       "steps": [
@@ -1059,7 +1059,7 @@
     },
     {
       "name": "get_company",
-      "description": "Fetch a LinkedIn company page by its universalName (the slug in linkedin.com/company/<universalName>), returning compact rows for the company plus related organisations such as affiliates and similar pages, with fields like company_urn, name, universal_name, url, tagline, description, employee counts, website, and industry_urn. Read-only and safe to retry; match the returned universal_name against the one requested to identify the target company.",
+      "description": "Fetch a LinkedIn company page by its universalName (the slug in linkedin.com/company/<universalName>), returning compact rows for the company plus related organisations such as affiliates and similar pages, with fields like company_urn, name, universal_name, url, tagline, description, employee_count, employee range, website, and industry_urn. This is a read-only operation and is safe to retry; match the returned universal_name against the one requested to identify the target company row.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -1068,7 +1068,7 @@
         "universal_name": {
           "type": "string",
           "required": true,
-          "description": "The company's universalName slug from its LinkedIn page URL (linkedin.com/company/<universalName>), e.g. \"microsoft\".",
+          "description": "The company's universalName: the slug in its LinkedIn page URL (linkedin.com/company/<universalName>), e.g. \"microsoft\".",
           "example": "microsoft"
         }
       },
@@ -1117,8 +1117,210 @@
       ]
     },
     {
+      "name": "get_conversation_messages",
+      "description": "Read the most recent messages in a single LinkedIn conversation thread, returned newest first with text, subject (InMails only), delivery time, and sender details. This is read-only and safe to retry; for older messages, call get_earlier_messages with the oldest delivered_at returned.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "conversation_urn": {
+          "type": "string",
+          "required": true,
+          "description": "Full URN of the conversation thread to read, e.g. urn:li:msg_conversation:(urn:li:fsd_profile:ACoAAE...,2-YTgx...). Obtain it from list_conversations, search_conversations or list_conversations_page.",
+          "example": "urn:li:msg_conversation:(urn:li:fsd_profile:ACoAAErYbl4BG54iOcsGpoc8xIbUr7v9Zg6hJ7A,2-YTgxZDMxNzEtNzk3Ny00OTQ1LTliODEtNGM4OGRjM2MwNTUzXzIwMA==)"
+        }
+      },
+      "steps": [
+        {
+          "id": "messenger_messages",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/voyagerMessagingGraphQL/graphql",
+            "query": {
+              "queryId": "messengerMessages.5846eeb71c981f11e0134cb6626cc314",
+              "variables": "(conversationUrn:{{params.conversation_urn | escape_restli}})"
+            },
+            "headers": {
+              "accept": "application/graphql",
+              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "x-li-lang": "en_US",
+              "x-li-page-instance": "urn:li:page:d_flagship3_messaging_conversation_detail;biCIrvxuQwa9SjzkUsYLVA==",
+              "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
+              "x-restli-protocol-version": "2.0.0"
+            },
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": [
+              "$.data"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.data"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.messenger_messages.items",
+        "fields": {
+          "messenger_messages_by_sync_token_elements_subject": "$.messengerMessagesBySyncToken.elements[0].subject",
+          "messenger_messages_by_sync_token_elements_body_text": "$.messengerMessagesBySyncToken.elements[0].body.text",
+          "messenger_messages_by_sync_token_elements_backend_urn": "$.messengerMessagesBySyncToken.elements[0].backendUrn",
+          "messenger_messages_by_sync_token_elements_delivered_at": "$.messengerMessagesBySyncToken.elements[0].deliveredAt",
+          "messenger_messages_by_sync_token_elements_entity_urn": "$.messengerMessagesBySyncToken.elements[0].entityUrn",
+          "messenger_messages_by_sync_token_elements_sender_host_identity_urn": "$.messengerMessagesBySyncToken.elements[0].sender.hostIdentityUrn",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_profile_url": "$.messengerMessagesBySyncToken.elements[0].sender.participantType.member.profileUrl",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_first_name_text": "$.messengerMessagesBySyncToken.elements[0].sender.participantType.member.firstName.text",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_last_name_text": "$.messengerMessagesBySyncToken.elements[0].sender.participantType.member.lastName.text",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_headline_text": "$.messengerMessagesBySyncToken.elements[0].sender.participantType.member.headline.text",
+          "messenger_messages_by_sync_token_elements_backend_conversation_urn": "$.messengerMessagesBySyncToken.elements[0].backendConversationUrn",
+          "messenger_messages_by_sync_token_elements_conversation_entity_urn": "$.messengerMessagesBySyncToken.elements[0].conversation.entityUrn",
+          "messenger_messages_by_sync_token_elements_subject_2": "$.messengerMessagesBySyncToken.elements[1].subject",
+          "messenger_messages_by_sync_token_elements_body_text_2": "$.messengerMessagesBySyncToken.elements[1].body.text",
+          "messenger_messages_by_sync_token_elements_backend_urn_2": "$.messengerMessagesBySyncToken.elements[1].backendUrn",
+          "messenger_messages_by_sync_token_elements_delivered_at_2": "$.messengerMessagesBySyncToken.elements[1].deliveredAt",
+          "messenger_messages_by_sync_token_elements_entity_urn_2": "$.messengerMessagesBySyncToken.elements[1].entityUrn",
+          "messenger_messages_by_sync_token_elements_sender_host_identity_urn_2": "$.messengerMessagesBySyncToken.elements[1].sender.hostIdentityUrn",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_profile_url_2": "$.messengerMessagesBySyncToken.elements[1].sender.participantType.member.profileUrl",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_first_name_text_2": "$.messengerMessagesBySyncToken.elements[1].sender.participantType.member.firstName.text",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_last_name_text_2": "$.messengerMessagesBySyncToken.elements[1].sender.participantType.member.lastName.text",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_headline_text_2": "$.messengerMessagesBySyncToken.elements[1].sender.participantType.member.headline.text",
+          "messenger_messages_by_sync_token_elements_backend_conversation_urn_2": "$.messengerMessagesBySyncToken.elements[1].backendConversationUrn",
+          "messenger_messages_by_sync_token_elements_conversation_entity_urn_2": "$.messengerMessagesBySyncToken.elements[1].conversation.entityUrn",
+          "messenger_messages_by_sync_token_elements_subject_3": "$.messengerMessagesBySyncToken.elements[2].subject",
+          "messenger_messages_by_sync_token_elements_body_text_3": "$.messengerMessagesBySyncToken.elements[2].body.text",
+          "messenger_messages_by_sync_token_elements_backend_urn_3": "$.messengerMessagesBySyncToken.elements[2].backendUrn",
+          "messenger_messages_by_sync_token_elements_delivered_at_3": "$.messengerMessagesBySyncToken.elements[2].deliveredAt",
+          "messenger_messages_by_sync_token_elements_entity_urn_3": "$.messengerMessagesBySyncToken.elements[2].entityUrn",
+          "messenger_messages_by_sync_token_elements_sender_host_identity_urn_3": "$.messengerMessagesBySyncToken.elements[2].sender.hostIdentityUrn"
+        },
+        "limit": 1,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "conversation_urn": "urn:li:msg_conversation:(urn:li:fsd_profile:ACoAAErYbl4BG54iOcsGpoc8xIbUr7v9Zg6hJ7A,2-YTgxZDMxNzEtNzk3Ny00OTQ1LTliODEtNGM4OGRjM2MwNTUzXzIwMA==)"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "browser"
+    },
+    {
+      "name": "get_earlier_messages",
+      "description": "LinkedIn: page backward through a conversation's history, returning up to `count` messages sent before a given timestamp (one row per message, same shape as get_conversation_messages); an empty result means you have passed the oldest message. Repeat with before_timestamp set to the oldest delivered_at seen so far to walk a whole thread. Read-only and safe to retry.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "conversation_urn": {
+          "type": "string",
+          "required": true,
+          "description": "URN of the conversation to read, e.g. urn:li:msg_conversation:(urn:li:fsd_profile:ACoAAErYbl4B...,2-YTgxZDMx...); obtain it from list_conversations.",
+          "example": "urn:li:msg_conversation:(urn:li:fsd_profile:ACoAAErYbl4BG54iOcsGpoc8xIbUr7v9Zg6hJ7A,2-YTgxZDMxNzEtNzk3Ny00OTQ1LTliODEtNGM4OGRjM2MwNTUzXzIwMA==)"
+        }
+      },
+      "steps": [
+        {
+          "id": "messenger_messages",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/voyagerMessagingGraphQL/graphql",
+            "query": {
+              "queryId": "messengerMessages.5846eeb71c981f11e0134cb6626cc314",
+              "variables": "(conversationUrn:{{params.conversation_urn | escape_restli}})"
+            },
+            "headers": {
+              "accept": "application/graphql",
+              "csrf-token": "{{session.cookies.JSESSIONID}}",
+              "x-li-lang": "en_US",
+              "x-li-page-instance": "urn:li:page:d_flagship3_messaging_conversation_detail;T75aNk57To+wHQZ0ed3+mw==",
+              "x-li-track": "{\"clientVersion\":\"1.13.47699\",\"mpVersion\":\"1.13.47699\",\"osName\":\"web\",\"timezoneOffset\":0,\"timezone\":\"Europe/London\",\"deviceFormFactor\":\"DESKTOP\",\"mpName\":\"voyager-web\",\"displayDensity\":1,\"displayWidth\":1280,\"displayHeight\":720}",
+              "x-restli-protocol-version": "2.0.0"
+            },
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": [
+              "$.data"
+            ]
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.data"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.messenger_messages.items",
+        "fields": {
+          "messenger_messages_by_sync_token_elements_subject": "$.messengerMessagesBySyncToken.elements[0].subject",
+          "messenger_messages_by_sync_token_elements_body_text": "$.messengerMessagesBySyncToken.elements[0].body.text",
+          "messenger_messages_by_sync_token_elements_backend_urn": "$.messengerMessagesBySyncToken.elements[0].backendUrn",
+          "messenger_messages_by_sync_token_elements_delivered_at": "$.messengerMessagesBySyncToken.elements[0].deliveredAt",
+          "messenger_messages_by_sync_token_elements_entity_urn": "$.messengerMessagesBySyncToken.elements[0].entityUrn",
+          "messenger_messages_by_sync_token_elements_sender_host_identity_urn": "$.messengerMessagesBySyncToken.elements[0].sender.hostIdentityUrn",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_profile_url": "$.messengerMessagesBySyncToken.elements[0].sender.participantType.member.profileUrl",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_first_name_text": "$.messengerMessagesBySyncToken.elements[0].sender.participantType.member.firstName.text",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_last_name_text": "$.messengerMessagesBySyncToken.elements[0].sender.participantType.member.lastName.text",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_headline_text": "$.messengerMessagesBySyncToken.elements[0].sender.participantType.member.headline.text",
+          "messenger_messages_by_sync_token_elements_sender_backend_urn": "$.messengerMessagesBySyncToken.elements[0].sender.backendUrn",
+          "messenger_messages_by_sync_token_elements_backend_conversation_urn": "$.messengerMessagesBySyncToken.elements[0].backendConversationUrn",
+          "messenger_messages_by_sync_token_elements_conversation_entity_urn": "$.messengerMessagesBySyncToken.elements[0].conversation.entityUrn",
+          "messenger_messages_by_sync_token_elements_subject_2": "$.messengerMessagesBySyncToken.elements[1].subject",
+          "messenger_messages_by_sync_token_elements_body_text_2": "$.messengerMessagesBySyncToken.elements[1].body.text",
+          "messenger_messages_by_sync_token_elements_backend_urn_2": "$.messengerMessagesBySyncToken.elements[1].backendUrn",
+          "messenger_messages_by_sync_token_elements_delivered_at_2": "$.messengerMessagesBySyncToken.elements[1].deliveredAt",
+          "messenger_messages_by_sync_token_elements_entity_urn_2": "$.messengerMessagesBySyncToken.elements[1].entityUrn",
+          "messenger_messages_by_sync_token_elements_sender_host_identity_urn_2": "$.messengerMessagesBySyncToken.elements[1].sender.hostIdentityUrn",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_profile_url_2": "$.messengerMessagesBySyncToken.elements[1].sender.participantType.member.profileUrl",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_first_name_text_2": "$.messengerMessagesBySyncToken.elements[1].sender.participantType.member.firstName.text",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_last_name_text_2": "$.messengerMessagesBySyncToken.elements[1].sender.participantType.member.lastName.text",
+          "messenger_messages_by_sync_token_elements_sender_participant_type_member_headline_text_2": "$.messengerMessagesBySyncToken.elements[1].sender.participantType.member.headline.text",
+          "messenger_messages_by_sync_token_elements_sender_backend_urn_2": "$.messengerMessagesBySyncToken.elements[1].sender.backendUrn",
+          "messenger_messages_by_sync_token_elements_backend_conversation_urn_2": "$.messengerMessagesBySyncToken.elements[1].backendConversationUrn",
+          "messenger_messages_by_sync_token_elements_conversation_entity_urn_2": "$.messengerMessagesBySyncToken.elements[1].conversation.entityUrn",
+          "messenger_messages_by_sync_token_elements_subject_3": "$.messengerMessagesBySyncToken.elements[2].subject",
+          "messenger_messages_by_sync_token_elements_body_text_3": "$.messengerMessagesBySyncToken.elements[2].body.text",
+          "messenger_messages_by_sync_token_elements_backend_urn_3": "$.messengerMessagesBySyncToken.elements[2].backendUrn",
+          "messenger_messages_by_sync_token_elements_delivered_at_3": "$.messengerMessagesBySyncToken.elements[2].deliveredAt"
+        },
+        "limit": 1,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {
+            "conversation_urn": "urn:li:msg_conversation:(urn:li:fsd_profile:ACoAAErYbl4BG54iOcsGpoc8xIbUr7v9Zg6hJ7A,2-YTgxZDMxNzEtNzk3Ny00OTQ1LTliODEtNGM4OGRjM2MwNTUzXzIwMA==)"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "browser"
+    },
+    {
       "name": "get_me",
-      "description": "Identifies the signed-in LinkedIn member, returning their own profile_urn (the mailbox_urn that list_conversations and send_message require), member_urn, first_name, last_name, public_identifier (the /in/ slug), occupation, and premium status. Call this first for any messaging task; it is read-only, takes no parameters, and is safe to retry.",
+      "description": "Identifies the signed-in LinkedIn member, returning their profile_urn (the 'urn:li:fsd_profile:<id>' to pass as mailbox_urn to list_conversations and send_message), member_urn, first_name, last_name, public_identifier (the /in/ slug), occupation, and premium status. Call this first for any messaging task; it is read-only, takes no parameters, and is safe to retry.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -1182,7 +1384,7 @@
     },
     {
       "name": "get_profile",
-      "description": "Resolves a LinkedIn public profile vanity name (the '/in/<name>' slug) to the member's profile URN (strip 'urn:li:fsd_profile:' to get the ACoAA\u2026 id needed by list_followers), name, headline, premium flag, summary, country code, location and industry URN. An empty result means the slug did not resolve (renamed or private), never a different person. Read-only and safe to retry.",
+      "description": "Resolves a LinkedIn public profile vanity name (the '/in/<name>' slug) to the member's profile URN (strip 'urn:li:fsd_profile:' to get the ACoAA\u2026 id needed by list_followers), name, headline, premium flag, summary, country code, location and industry URN. Returns only the exact member for that slug, or an empty result if it did not resolve; read-only and safe to retry.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -1191,7 +1393,7 @@
         "vanity_name": {
           "type": "string",
           "required": true,
-          "description": "The public identifier from the profile URL's '/in/<name>' path, without slashes or domain, e.g. 'williamhgates'.",
+          "description": "The public identifier from a LinkedIn profile URL, i.e. the slug after '/in/' without slashes (e.g. 'williamhgates').",
           "example": "williamhgates"
         }
       },
@@ -1241,7 +1443,7 @@
     },
     {
       "name": "get_profile_education",
-      "description": "Fetches a LinkedIn member's education history as one row per entry (school_name, degree_name, field_of_study, start_year, end_year, description), most recent first as LinkedIn returns them. This is a read-only operation with no side effects and is safe to retry.",
+      "description": "Fetches a LinkedIn member's education history, returning one row per entry with school_name, degree_name, field_of_study, start_year, end_year and description, most recent first. This is a read-only operation that changes nothing and is safe to retry.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -1250,7 +1452,7 @@
         "vanity_name": {
           "type": "string",
           "required": true,
-          "description": "The member's LinkedIn vanity name, i.e. the slug after /in/ in their profile URL (for example, \"williamhgates\"). Same identifier used by get_profile.",
+          "description": "The member's LinkedIn vanity name, the slug after /in/ in their profile URL (e.g. 'williamhgates'), same as used by get_profile.",
           "example": "williamhgates"
         }
       },
@@ -1300,7 +1502,7 @@
     },
     {
       "name": "get_profile_experience",
-      "description": "Fetch a LinkedIn member's work history as one row per position (title, company, company_urn, location, start/end year and month, description), most recent first; a row with no end_year is a current role. Read-only and safe to retry.",
+      "description": "Fetches a LinkedIn member's work history as one row per position (title, company, company_urn, location, start/end year and month, description), most recent first; a row with no end_year is a current role. Read-only and safe to retry.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -1309,7 +1511,7 @@
         "vanity_name": {
           "type": "string",
           "required": true,
-          "description": "The member's LinkedIn vanity name, i.e. the slug after /in/ in their profile URL (e.g. \"williamhgates\"), the same identifier get_profile takes.",
+          "description": "The member's LinkedIn vanity name, i.e. the <slug> in /in/<slug>, such as 'williamhgates'.",
           "example": "williamhgates"
         }
       },
@@ -1359,7 +1561,7 @@
     },
     {
       "name": "list_conversations",
-      "description": "List the LinkedIn member's most recent ~20 message threads (inbox), newest first, with conversation_urn, unread counts, participants and the latest message preview; use it as the entry point for reading or replying to messages. This is read-only and safe to retry; for older threads or name/keyword lookups use search_conversations or the paging tools.",
+      "description": "Lists the LinkedIn member's most recent ~20 message threads (inbox), newest first, with unread counts, participants and the latest message in each; use it as the entry point for reading or replying to messages, and use search_conversations to find a thread by name or keyword, or list_conversations_page then list_conversations_next to go further back. Read-only and safe to retry.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -1447,26 +1649,26 @@
           "messenger_conversations_by_sync_token_elements_read": "$.messengerConversationsBySyncToken.elements[0].read",
           "messenger_conversations_by_sync_token_elements_group_chat": "$.messengerConversationsBySyncToken.elements[0].groupChat",
           "messenger_conversations_by_sync_token_elements_title": "$.messengerConversationsBySyncToken.elements[0].title",
-          "messenger_conversations_by_sync_token_elements_conversation_url": "$.messengerConversationsBySyncToken.elements[0].conversationUrl",
           "messenger_conversations_by_sync_token_elements_categories": "$.messengerConversationsBySyncToken.elements[0].categories[0]",
           "messenger_conversations_by_sync_token_elements_state": "$.messengerConversationsBySyncToken.elements[0].state",
-          "messenger_conversations_by_sync_token_elements_notification_status": "$.messengerConversationsBySyncToken.elements[0].notificationStatus",
-          "messenger_conversations_by_sync_token_elements_conversation_participants_host_identity_urn": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[0].hostIdentityUrn",
+          "messenger_conversations_by_sync_token_elements_conversation_url": "$.messengerConversationsBySyncToken.elements[0].conversationUrl",
           "messenger_conversations_by_sync_token_elements_conversation_participants_entity_urn": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[0].entityUrn",
-          "messenger_conversations_by_sync_token_elements_conversation_participants_backend_urn": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[0].backendUrn",
+          "messenger_conversations_by_sync_token_elements_conversation_participants_host_identity_urn": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[0].hostIdentityUrn",
           "messenger_conversations_by_sync_token_elements_conversation_participants_participant_type_member_first_name_text": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[0].participantType.member.firstName.text",
           "messenger_conversations_by_sync_token_elements_conversation_participants_participant_type_member_last_name_text": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[0].participantType.member.lastName.text",
           "messenger_conversations_by_sync_token_elements_conversation_participants_participant_type_member_headline_text": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[0].participantType.member.headline.text",
           "messenger_conversations_by_sync_token_elements_conversation_participants_participant_type_member_profile_url": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[0].participantType.member.profileUrl",
-          "messenger_conversations_by_sync_token_elements_conversation_participants_host_identity_urn_2": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[1].hostIdentityUrn",
           "messenger_conversations_by_sync_token_elements_conversation_participants_entity_urn_2": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[1].entityUrn",
-          "messenger_conversations_by_sync_token_elements_conversation_participants_backend_urn_2": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[1].backendUrn",
+          "messenger_conversations_by_sync_token_elements_conversation_participants_host_identity_urn_2": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[1].hostIdentityUrn",
           "messenger_conversations_by_sync_token_elements_conversation_participants_participant_type_member_first_name_text_2": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[1].participantType.member.firstName.text",
           "messenger_conversations_by_sync_token_elements_conversation_participants_participant_type_member_last_name_text_2": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[1].participantType.member.lastName.text",
           "messenger_conversations_by_sync_token_elements_conversation_participants_participant_type_member_headline_text_2": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[1].participantType.member.headline.text",
           "messenger_conversations_by_sync_token_elements_conversation_participants_participant_type_member_profile_url_2": "$.messengerConversationsBySyncToken.elements[0].conversationParticipants[1].participantType.member.profileUrl",
           "messenger_conversations_by_sync_token_elements_messages_elements_body_text": "$.messengerConversationsBySyncToken.elements[0].messages.elements[0].body.text",
-          "messenger_conversations_by_sync_token_elements_messages_elements_delivered_at": "$.messengerConversationsBySyncToken.elements[0].messages.elements[0].deliveredAt"
+          "messenger_conversations_by_sync_token_elements_messages_elements_delivered_at": "$.messengerConversationsBySyncToken.elements[0].messages.elements[0].deliveredAt",
+          "messenger_conversations_by_sync_token_elements_messages_elements_entity_urn": "$.messengerConversationsBySyncToken.elements[0].messages.elements[0].entityUrn",
+          "messenger_conversations_by_sync_token_elements_messages_elements_sender_host_identity_urn": "$.messengerConversationsBySyncToken.elements[0].messages.elements[0].sender.hostIdentityUrn",
+          "messenger_conversations_by_sync_token_elements_messages_elements_sender_entity_urn": "$.messengerConversationsBySyncToken.elements[0].messages.elements[0].sender.entityUrn"
         },
         "limit": 1,
         "next_params": null
@@ -1481,7 +1683,7 @@
     },
     {
       "name": "list_invitations",
-      "description": "Lists the member's pending received LinkedIn connection invitations, returning one row per invitation with invitation_id, validation_token, invitation_type (GenericInvitationType_CONNECTION for a person, GenericInvitationType_ORGANIZATION for a company page, which has no profile_id) and profile_id for person invites. This is read-only and safe to retry; call it immediately before approve_invitation or reject_invitation, since both the id and the single-use token are required and old tokens should not be reused.",
+      "description": "Lists the member's pending received LinkedIn connection invitations, returning one row per invitation with invitation_id, validation_token, invitation_type (GenericInvitationType_CONNECTION for a person, GenericInvitationType_ORGANIZATION for a company page, which has no profile_id) and profile_id for person invites. This is read-only and safe to retry; call it immediately before approve_invitation or reject_invitation because the id and single-use token are both required and old tokens should not be reused.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -1530,7 +1732,7 @@
     },
     {
       "name": "list_mailboxes",
-      "description": "Lists the LinkedIn company-page mailboxes the signed-in member administers, returning one row per page mailbox with mailbox_urn (urn:li:fsd_pageMailbox:<id>), company_urn (the owning urn:li:fsd_company:<id>) and messaging_enabled. It excludes the member's personal inbox, and a pageMailbox urn cannot be used as the urn:li:fsd_profile:\u2026 that send_message expects. Read-only, cheap, and safe to retry.",
+      "description": "Lists the LinkedIn company-page mailboxes the signed-in member administers, returning one row per page mailbox with its mailbox_urn (urn:li:fsd_pageMailbox:<id>), company_urn (the owning urn:li:fsd_company:<id>) and messaging_enabled flag. Read-only, safe to retry, and cheap to call; it does not include the member's personal inbox, and a pageMailbox urn cannot be used where send_message expects a urn:li:fsd_profile:\u2026 personal mailbox_urn.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -1595,7 +1797,7 @@
     },
     {
       "name": "list_people_at_company",
-      "description": "Lists people who work at a given LinkedIn company, paginated at 12 per page by default, returning one row per person with name, headline, location, profile_url, profile_urn, degree (DISTANCE_1/2/3, OUT_OF_NETWORK, SELF) and total (the full result set size, repeated on every row). This is a read-only operation with no side effects and is safe to retry; to filter by name or role within the company, use search_people_at_company instead.",
+      "description": "Lists people who work at a given LinkedIn company, paginated at 12 per page by default, returning one row per person with name, headline, location, profile_url, profile_urn, degree (DISTANCE_1/2/3, OUT_OF_NETWORK, SELF) and total (the full result set size, repeated on every row). Read-only and safe to retry; to filter by name or role within the company use search_people_at_company instead.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -1646,7 +1848,7 @@
     },
     {
       "name": "list_shared_connections",
-      "description": "Lists LinkedIn mutual connections (people who are 1st-degree connections of both you and another member) for a given profile, 10 per page, with name, headline, location, public profile URL, profile_urn and degree. Read-only and safe to retry; results are capped at 1000 rows and limited to your network reach, and this differs from list_followers or the member's full connection list.",
+      "description": "Lists LinkedIn mutual connections (1st-degree connections of both you and another member), 10 per page, with name, headline, location, public profile URL, profile_urn and degree. Read-only and safe to retry; capped at 1000 rows and limited to people within your network reach.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -1700,7 +1902,7 @@
     },
     {
       "name": "reject_invitation",
-      "description": "Declines a pending LinkedIn connection invitation by sending the same ignore action as the UI's dismiss button, removing it from the member's pending list without notifying the sender. This changes state on the user's LinkedIn account immediately and cannot be undone, so the user must approve it before you call it; call list_invitations right before to obtain fresh inputs.",
+      "description": "Declines a pending LinkedIn connection invitation by sending the same ignore action as the UI's dismiss button; this changes state on the user's LinkedIn account immediately and the sender is not notified. The user must approve this action before it is called, and the inputs must come from a list_invitations call made immediately beforehand.",
       "kind": "write",
       "spends": false,
       "idempotent": false,
@@ -1709,17 +1911,17 @@
         "invitation_id": {
           "type": "string",
           "required": true,
-          "description": "ID of the pending invitation to decline, taken from the list_invitations result you just read."
+          "description": "Identifier of the pending invitation to decline, taken from the list_invitations result."
         },
         "validation_token": {
           "type": "string",
           "required": true,
-          "description": "Single-use validation token for this invitation, from the list_invitations result read immediately beforehand. Re-list invitations to get a new one if it has been used or is stale."
+          "description": "Single-use validation token for this invitation from the list_invitations result read immediately beforehand; it cannot be reused, so re-list if it fails."
         },
         "profile_id": {
           "type": "string",
           "required": true,
-          "description": "LinkedIn profile ID of the invitation's sender, as returned by list_invitations for that invitation."
+          "description": "Identifier of the inviting member's profile, taken from the same list_invitations entry as the invitation."
         }
       },
       "steps": [
@@ -2502,7 +2704,7 @@
     },
     {
       "name": "search_companies",
-      "description": "Search LinkedIn for companies by name or keyword, returning 10 results per page with name, industry, city, follower count, company page URL, and numeric company id. Use it to resolve a company name to the universal_name slug that get_company needs. Read-only and safe to retry.",
+      "description": "Search LinkedIn for companies by name or keyword (Companies tab of search results, 10 per page). Returns each match's name, industry, city, followers, company page URL, numeric company id and logo paths; use it to resolve a company before calling get_company. Read-only and safe to retry.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -3506,8 +3708,8 @@
           "company_id": "$[3].children[3].children[3].triggers[0].action.actions[0].value.requestedArguments.payload.companyId",
           "company_url": "$[3].children[3].children[3].triggers[0].action.actions[1].value.content.url.urlValue.url",
           "name": "$[3].children[3].children[3].children[0][3].children[0][3].children[0]",
-          "organization_type": "$[3].children[3].children[3].children[0][3].children[1][3].children[1][3]['aria-label']",
-          "logo_url_base": "$[3].children[3].children[3].children[1][3].children[0][3].children[3].children[0][3].renderPayload.rootUrl",
+          "organization_badge": "$[3].children[3].children[3].children[0][3].children[1][3].children[1][3]['aria-label']",
+          "logo_url_prefix": "$[3].children[3].children[3].children[1][3].children[0][3].children[3].children[0][3].renderPayload.rootUrl",
           "logo_100_path": "$[3].children[3].children[3].children[1][3].children[0][3].children[3].children[0][3].renderPayload.imageRenditions[0].suffixUrl",
           "logo_200_path": "$[3].children[3].children[3].children[1][3].children[0][3].children[3].children[0][3].renderPayload.imageRenditions[1].suffixUrl",
           "logo_400_path": "$[3].children[3].children[3].children[1][3].children[0][3].children[3].children[0][3].renderPayload.imageRenditions[2].suffixUrl",
@@ -3531,7 +3733,7 @@
     },
     {
       "name": "search_companies_and_people",
-      "description": "Read-only, safe-to-retry LinkedIn typeahead that returns a few quick people, company, and search-phrase suggestions for a typed query. Use it to resolve a company name to its numeric company id (strip 'urn:li:company:' from tracking_urn) for people/job search tools; it does not return the universalName slug that get_company needs (use search_companies for that) and is not for full result sets.",
+      "description": "Fast LinkedIn typeahead that resolves a person or company name to suggestions, including the numeric company id (from tracking_urn) used by other company tools; it does not return the universalName slug (use search_companies for that). Read-only and safe to retry, it returns only a few results by design.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -3657,11 +3859,10 @@
       "output": {
         "from": "steps.server_request.items",
         "fields": {
-          "result_count": "$[3].imageId",
           "logo_url_base": "$[3].renderPayload.rootUrl",
-          "logo_100_path": "$[3].renderPayload.imageRenditions[0].suffixUrl",
-          "logo_200_path": "$[3].renderPayload.imageRenditions[1].suffixUrl",
-          "logo_400_path": "$[3].renderPayload.imageRenditions[2].suffixUrl"
+          "logo_url_100": "$[3].renderPayload.imageRenditions[0].suffixUrl",
+          "logo_url_200": "$[3].renderPayload.imageRenditions[1].suffixUrl",
+          "logo_url_400": "$[3].renderPayload.imageRenditions[2].suffixUrl"
         },
         "limit": 7,
         "next_params": null
@@ -3677,7 +3878,7 @@
     },
     {
       "name": "search_jobs_at_company",
-      "description": "Lists open LinkedIn job postings at a given company within a required country or city geography, returning 10 postings per page with title, job_urn, reposted flag and the total count of open postings (location and description are not included). Read-only and safe to retry.",
+      "description": "List open LinkedIn job postings at a given company within a required country or city geography, returning one row per posting (title, job_urn, reposted flag, and total open postings) at 10 per page. This is a read-only operation and is safe to retry.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -3686,13 +3887,13 @@
         "company_id": {
           "type": "string",
           "required": true,
-          "description": "LinkedIn numeric company ID, obtained from search_companies_and_people or search_companies (e.g. 1035).",
+          "description": "LinkedIn numeric company ID, obtained from search_companies_and_people or search_companies (e.g. \"1035\").",
           "example": "1035"
         },
         "geo_id": {
           "type": "string",
           "required": true,
-          "description": "Required LinkedIn geography ID for a country or city (e.g. 103644278 = United States, 101165590 = United Kingdom). There is no worldwide option; an omitted or unsupported value silently falls back to the member's own country.",
+          "description": "Required LinkedIn geography ID for a country or city (e.g. \"103644278\" for United States, \"101165590\" for United Kingdom). There is no worldwide option; if omitted or invalid, LinkedIn silently falls back to the member's own country.",
           "example": "103644278"
         }
       },
@@ -4029,7 +4230,7 @@
         "fields": {
           "total": "$[3].buttonProps.icon[3].imageId",
           "title": "$[3].buttonProps['aria-label']",
-          "dismissal_state": "$[3].triggers[0].action.actions[0].value.state.value.stringValue",
+          "posting_state": "$[3].triggers[0].action.actions[0].value.state.value.stringValue",
           "job_id": "$[3].triggers[0].action.actions[2].value.requestedArguments.payload.jobId"
         },
         "limit": 25,
@@ -4049,7 +4250,7 @@
     },
     {
       "name": "search_people",
-      "description": "Search all of LinkedIn for people by free-text keywords using the full search-results page (not the 4-row typeahead). Returns 10 results per page with name, headline, location, profile URL, profile_urn and connection degree (DISTANCE_1/2/3, OUT_OF_NETWORK, SELF); pass a result's profile_urn to list_followers, or use search_people_at_company to search within one company. Read-only and safe to retry.",
+      "description": "Search all of LinkedIn for people by free-text keywords, returning full search-results pages of 10 with name, headline, location, public profile URL, profile_urn and network degree (DISTANCE_1/2/3, OUT_OF_NETWORK, SELF). Use the profile_urn with list_followers for follower monitoring, or search_people_at_company to search within one company. Read-only and safe to retry.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -4058,7 +4259,7 @@
         "keywords": {
           "type": "string",
           "required": true,
-          "description": "Free-text search terms, such as a person's name, job title or employer (e.g. \"Satya Nadella\").",
+          "description": "Free-text search terms for the people you want to find, such as a name, job title or skill (e.g. \"Satya Nadella\").",
           "example": "Satya Nadella"
         }
       },
@@ -5117,7 +5318,7 @@
       "output": {
         "from": "steps.people_2.items",
         "fields": {
-          "profile_image_alt_text": "$[3].children[0][3].a11yText",
+          "image_alt_text": "$[3].children[0][3].a11yText",
           "profile_url": "$[3].children[1][3].children[0][3].children[3].textProps.children[0][3].action.actions[1].value.content.url.urlValue.url",
           "name": "$[3].children[1][3].children[0][3].children[3].textProps.children[0][3].children[0]",
           "headline": "$[3].children[1][3].children[1][3].textProps.children[0]",
@@ -5139,7 +5340,7 @@
     },
     {
       "name": "search_people_at_company",
-      "description": "Search LinkedIn for people at a specific company using a company filter plus free-text keyword matching over names and headlines. Returns 12 people per page (name, headline, location, profile_url, profile_urn, degree, total), paged with `start`. This is read-only and safe to retry.",
+      "description": "Search LinkedIn for people at a specific company using a company filter plus free-text keywords matched against names and headlines, returning one row per person (name, headline, location, profile_url, profile_urn, degree, total) at 12 per page. This is read-only and safe to retry; to search all of LinkedIn use search_people instead.",
       "kind": "read",
       "spends": false,
       "idempotent": true,
@@ -5154,7 +5355,7 @@
         "keywords": {
           "type": "string",
           "required": true,
-          "description": "Free-text query matched against people's names and headlines, e.g. \"engineer\".",
+          "description": "Free-text keywords matched against people's names and headlines, e.g. \"engineer\".",
           "example": "engineer"
         }
       },
@@ -6512,7 +6713,10 @@
       "output": {
         "from": "steps.people_3.items",
         "fields": {
-          "search_results_component": "$[1].component[3].children[3].children[1][3].children[1][0][0][3].screenHash"
+          "search_results_component": "$[1].component[3].children[3].children[1][3].children[1][0][0][3].screenHash",
+          "result_index": "$[1].component[3].children[3].children[1][3].children[1][0][0][3].modelStates[5].value.intValue",
+          "page_size_or_count": "$[1].component[3].children[3].children[1][3].children[1][0][0][3].modelStates[9].value.intValue",
+          "total": "$[1].component[3].children[3].children[1][3].children[1][0][0][3].modelStates[21].value.colorValue.content.identifier"
         },
         "limit": 1,
         "next_params": null
@@ -6531,7 +6735,7 @@
     },
     {
       "name": "send_connection_request",
-      "description": "Sends a LinkedIn connection invitation (without a note) to another member. This changes state on the user's account: the recipient is notified immediately and it counts against the weekly invite quota, so the user must approve it before you call it. Returns the new invitation urn; to respond to invitations received, use list_invitations with approve_invitation or reject_invitation instead.",
+      "description": "Sends a LinkedIn connection invitation (no note attached) to another member. This changes state on the user's account: the recipient is notified immediately and it counts against the weekly invite quota, so the user must approve it before you call it. Returns the new invitation urn; to respond to invitations received, use list_invitations with approve_invitation or reject_invitation instead.",
       "kind": "write",
       "spends": false,
       "idempotent": false,
@@ -6540,32 +6744,32 @@
         "profile_urn": {
           "type": "string",
           "required": true,
-          "description": "The recipient's LinkedIn profile urn, obtained from search_people_at_company. Identifies who receives the invitation."
+          "description": "The recipient's LinkedIn profile urn, obtained from search_people_at_company. This identifies who receives the invitation."
         },
         "member_id": {
           "type": "string",
           "required": true,
-          "description": "The recipient's LinkedIn member ID, if available from the profile data. Optional supporting identifier."
+          "description": "Optional LinkedIn member ID of the recipient, if known from the same search result as the profile urn."
         },
         "first_name": {
           "type": "string",
           "required": true,
-          "description": "The recipient's first name, as shown on their profile. Optional."
+          "description": "Optional first name of the recipient, as shown on their profile."
         },
         "last_name": {
           "type": "string",
           "required": true,
-          "description": "The recipient's last name, as shown on their profile. Optional."
+          "description": "Optional last name of the recipient, as shown on their profile."
         },
         "vanity_name": {
           "type": "string",
           "required": true,
-          "description": "The recipient's public profile vanity name (the custom part of their LinkedIn URL). Optional."
+          "description": "Optional vanity name from the recipient's profile URL (the part after /in/)."
         },
         "profile_picture_payload": {
           "type": "string",
           "required": true,
-          "description": "The recipient's profile picture data as returned with their profile details. Optional; pass through unchanged if available."
+          "description": "Optional profile picture data for the recipient, as returned by the search result. Not needed to identify the person."
         }
       },
       "steps": [
@@ -6827,7 +7031,7 @@
     },
     {
       "name": "send_message",
-      "description": "Sends a real LinkedIn message into an existing conversation thread on the user's account; the recipient receives it immediately and it cannot be unsent. This changes account state, so the user must approve it before you call it. It cannot start a new thread, and it returns the created message's URN and echoed body.",
+      "description": "Sends a real LinkedIn message into an existing conversation thread on the user's account; it is delivered to the recipient immediately and cannot be unsent. This changes account state, so the user must approve it before you call it. It cannot start a new thread, and it returns the created message's URN and echoed body.",
       "kind": "write",
       "spends": false,
       "idempotent": false,
@@ -6836,12 +7040,12 @@
         "text": {
           "type": "string",
           "required": true,
-          "description": "The body of the message to send, exactly as the recipient should see it."
+          "description": "The message body to send to the recipient, exactly as it should appear. Confirm the wording with the user before sending."
         },
         "conversation_urn": {
           "type": "string",
           "required": true,
-          "description": "URN of the existing conversation thread to send the message into. A new thread cannot be created with this action."
+          "description": "URN of the existing LinkedIn conversation thread to send the message into. A new thread cannot be created with this tool."
         }
       },
       "steps": [

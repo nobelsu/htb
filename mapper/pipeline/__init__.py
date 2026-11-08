@@ -75,6 +75,18 @@ def _matching_goal(bundle: Bundle | None, like: Goal, like_bundle: Bundle, kind:
     return Goal(entry, "same endpoint as m1's goal") if entry is not None else None
 
 
+def _after_pick(bundle: Bundle, entry):
+    """A page opens on a default item first (the newest conversation) and loads the clicked one next,
+    with the same call: the action is the last such call before the goal mark."""
+    marks = bundle.goal_marks
+    same = [
+        e
+        for e in bundle.entries
+        if operation_key(e) == operation_key(entry) and (not marks or e.started <= marks[-1])
+    ]
+    return same[-1] if same else entry
+
+
 def _summary(e) -> str:
     """One candidate for the LLM tie-break: what it is and what came back (shape and size)."""
     if e.response_kind == "stream":
@@ -225,6 +237,11 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
         warnings.append(f"goal tie between {len(goal.candidates)} endpoints, picked by {picked_by}")
     m2_goal = _matching_goal(m2, goal, m1, kind)
     real_goal = _matching_goal(real, goal, m1, kind)
+    if kind == "read" and _picks(m1):  # the call for the item clicked, not the page's first load
+        goal.entry = _after_pick(m1, goal.entry)
+        for g, b in ((m2_goal, m2), (real_goal, real)):
+            if g is not None and b is not None:
+                g.entry = _after_pick(b, g.entry)
 
     listed = list((m1.meta.get("inputs_via") or {}).keys())
 
