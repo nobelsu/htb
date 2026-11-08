@@ -85,7 +85,20 @@ def content_kind(mime: str | None, body: str | None = None) -> str:
     kind = _mime_kind(mime, body)
     if kind in ("other", "text") and is_row_stream(body):
         return "stream"
+    if kind in ("other", "text") and _is_json(body):
+        return "json"  # JSON under another label (application/graphql, text/plain)
     return kind
+
+
+def _is_json(body: str | None) -> bool:
+    text = (body or "").lstrip()
+    if not text.startswith(("{", "[")):
+        return False
+    try:
+        json.loads(text)
+    except ValueError:
+        return False
+    return True
 
 
 def _mime_kind(mime: str | None, body: str | None) -> str:

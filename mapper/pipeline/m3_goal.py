@@ -84,6 +84,7 @@ class Goal:
     tie: bool = False
     typed_at: datetime | None = None
     mark: datetime | None = None
+    shown: list[Entry] = field(default_factory=list)  # the candidates as the live run recorded them
 
 
 class GoalNotFound(LookupError):
@@ -194,7 +195,11 @@ def find_write_goal(bundle: Bundle, mark_index: int = 0) -> Goal:
     return Goal(chosen, reason, pool, _distinct_endpoints(pool, {}) > 1, None, mark)
 
 
-MAX_SCREEN_CANDIDATES = 10  # with small data answers holding the page's text, for the LLM to weigh
+MAX_SCREEN_CANDIDATES = 14  # with small data answers holding the page's text, for the LLM to weigh
+NAV_SLACK = timedelta(seconds=2)
+SMALL = 50_000  # bytes: a "who am I" answer is small; big ones are pages, feeds and app settings
+MIN_AT_ACTION = 5_000  # bytes: a data answer fetched at the action smaller than this is a setting or flag
+MIN_SCREEN_SHARE = 1 / 10  # less than this of what the page showed: the answer was not recorded
 SCREEN_GRACE = timedelta(seconds=3)  # a page that performs the task fetches its data right after loading
 
 
@@ -240,17 +245,47 @@ def find_screen_goal(
         raise GoalNotFound(f"{bundle.run}: no answer holds the text the page showed")
     best = max(score[id(e)] for e in scored)
     data = [e for e in scored if e.response_kind in ("json", "stream")]
+    first = scored
     if data and max(score[id(e)] for e in data) * 2 >= best:
-        scored = data
-    top = max(score[id(e)] for e in scored)
-    window = sorted((e for e in scored if score[id(e)] == top), key=lambda e: e.started)
+        first = data  # a data answer goes first; the pages stay candidates (app settings look like data)
+    top = max(score[id(e)] for e in first)
+    window = sorted((e for e in first if score[id(e)] == top), key=lambda e: e.started)
     held = len(holds[id(window[0])])
     reason = f"its answer holds {held} of the {len(texts)} texts the page showed"
-    candidates = sorted(scored, key=lambda e: -score[id(e)])[:5]
-    if not values:  # nothing typed: the data may have loaded before the task (who am I, on every page)
-        dense = [e for e in seen if e.response_kind in ("json", "stream") and score[id(e)] > 0]
-        dense.sort(key=lambda e: -score[id(e)] / max(1, len(e.response_body)))
-        candidates += dense
+    ranked = sorted(scored, key=lambda e: -score[id(e)])
+    candidates = [window[0], *[e for e in ranked if e is not window[0]][:5]]
+    at_action = []
+    if mark is not None:  # data fetched right at the task's action, even if it words things differently
+        # (first and last name apart, while the page shows "Ada Lovelace"); small answers are settings
+        at_action = [
+            e
+            for e in seen
+            if e.response_kind in ("json", "stream")
+            and len(e.response_body or "") >= MIN_AT_ACTION
+            and mark - NAV_SLACK <= e.started <= mark + SCREEN_GRACE
+        ]
+        at_action = sorted(at_action, key=lambda e: -len(e.response_body or ""))[:3]  # results are big
+    if held < len(texts) * MIN_SCREEN_SHARE:
+        raise GoalNotFound(
+            f"{bundle.run}: no recorded answer holds the page's result (best: {held} of {len(texts)} "
+            "texts); the recording missed it, explore the task again"
+        )
+    # no input at all (who am I): the data may have loaded before the task, on every page
+    if not values and not bundle.meta.get("inputs_via"):
+        dense = [
+            e
+            for e in seen
+            if e.response_kind in ("json", "stream") and score[id(e)] > 0 and len(e.response_body) < SMALL
+        ]
+        dense.sort(key=lambda e: (-score[id(e)], len(e.response_body)))  # rare text first, not menu labels
+        taken = {operation_key(c) for c in candidates}
+        fresh = []
+        for e in dense:  # each loads on every page: once per endpoint, and not one already listed
+            if operation_key(e) not in taken:
+                taken.add(operation_key(e))
+                fresh.append(e)
+        candidates += fresh[:5]
+    candidates += at_action
     unique, ops = [], set()
     for e in candidates:  # each operation once
         if operation_key(e) not in ops and len(unique) < MAX_SCREEN_CANDIDATES:

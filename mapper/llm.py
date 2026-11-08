@@ -104,10 +104,12 @@ class LLM:
             )
         else:
             prompt = (
-                f"A person performed the task {task!r} on a website; it takes no input.{about} These "
-                "answers all hold what the page then showed. Which request should an agent call to get "
-                "that data? Prefer a data answer (JSON) that holds the fields named above over a page "
-                f"or a big component answer that only happens to show them.\n{listing}"
+                f"A person performed the task {task!r} on a website.{about} These answers all hold some "
+                "of what the page then showed. Which request should an agent call to get that data? "
+                "Prefer the answer made for this result (a data answer holding the fields named above, "
+                "or the result page itself) over app settings or configuration, navigation menus, and "
+                "prefetches of other pages, which only happen to repeat some of the text.\n"
+                f"{listing}"
             )
         data = self.ask_json("goal tie-break", prompt, schema, max_tokens=1000)
         if data is None or not 0 <= int(data.get("index", -1)) < len(candidates):

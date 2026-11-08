@@ -21,6 +21,7 @@ from mapper.pipeline.m3_goal import (
     find_goal,
     find_read_goal,
     find_screen_goal,
+    operation_key,
     similar_entry,
 )
 from mapper.pipeline.m3_goal import _pick_mark as pick_mark
@@ -79,13 +80,47 @@ def _summary(e) -> str:
     if e.response_kind == "stream":
         answer = f"streamed answer, {len(e.response_rows or [])} data rows"
     elif isinstance(e.response_json, dict):
-        answer = str(sorted(e.response_json))
+        answer = str(sorted(e.response_json)) + _field_names(e.response_json)
     elif e.response_kind == "html":
         answer = "HTML page"
     else:
         answer = type(e.response_json).__name__
     query = "&".join(sorted(k.split("=")[0] for k in e.raw_query.split("&") if k))
-    return f"{e.method} {e.path}?{query} → {answer}, {len(e.response_body or '') // 1000} kB"
+    ops = ", ".join(v for _, v in operation_key(e)[3])  # one /graphql path serves many reads: name it
+    named = f" (operation {ops})" if ops else ""
+    return f"{e.method} {e.path}?{query}{named} → {answer}, {len(e.response_body or '') // 1000} kB"
+
+
+def _field_names(doc, limit: int = 25) -> str:
+    """The field names inside a JSON answer, most frequent first: what the data is about
+    (firstName, publicIdentifier) beyond its top-level wrapper."""
+    from collections import Counter
+
+    seen: Counter = Counter()
+    stack = [doc]
+    while stack and sum(seen.values()) < 20_000:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if not k.startswith(("$", "*", "_")):
+                    seen[k] += 1
+                stack.append(v)
+        elif isinstance(node, list):
+            stack.extend(node[:50])
+    names = [k for k, _ in seen.most_common(limit)]
+    return f" with fields {', '.join(names)}" if names else ""
+
+
+def _held(e, screen: list[str]) -> str:
+    """For an answer recognised by the page's text: how much of it, with examples, so the LLM can tell
+    the result from a menu or app settings that repeat a few labels."""
+    if not screen:
+        return ""
+    texts = [t for t in dict.fromkeys(screen) if len(t) >= 3]
+    body = e.response_body or ""
+    held = [t for t in texts if t in body or json.dumps(t)[1:-1] in body]
+    sample = "; ".join(t[:40] for t in sorted(held, key=len, reverse=True)[:6])
+    return f"; holds {len(held)} of the {len(texts)} texts on the page" + (f", e.g. {sample}" if held else "")
 
 
 def _pagination(page2: Bundle, goal: Goal, m1: Bundle, real_goal: Goal | None):
@@ -138,15 +173,18 @@ def _task_goal(runs: dict[str, Bundle], kind: str) -> tuple[Goal, str, list[str]
             if not m1.values:
                 raise
         if found is not None:
-            in_m1 = []  # the candidates m1 has too, best match first
+            in_m1, shown = [], []  # the candidates m1 has too (best match first), and the live ones
             for cand in [found.entry, *found.candidates]:
                 e = cand if live is m1 else counterpart(m1, cand, live.values) or similar_entry(m1, cand)
                 if e is not None and all(e is not x for x in in_m1):
                     in_m1.append(e)
+                    shown.append(cand)
             if in_m1:
-                # nothing typed to follow: the LLM weighs the best match against small data answers
-                tie = not live.values and len(in_m1) > 1
-                goal = Goal(in_m1[0], found.reason, in_m1, tie, None, pick_mark(m1, 0))
+                # page text overlaps menus, app settings and prefetches of other pages too: the LLM
+                # picks among the best matches with the action's description, judging the live run's
+                # answers (a replay's copy may be cut short)
+                tie = len(in_m1) > 1
+                goal = Goal(in_m1[0], found.reason, in_m1, tie, None, pick_mark(m1, 0), shown)
                 return goal, "the text on the page", screen
     return find_goal(m1, kind), "earliest (no LLM)", screen
 
@@ -176,9 +214,9 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     if goal.tie:
         idx = llm.pick_goal(
             task,
-            [_summary(c) for c in goal.candidates],
+            [_summary(c) + _held(c, screen) for c in (goal.shown or goal.candidates)],
             description=m1.meta.get("task_description", ""),
-            typed=bool(m1.values),
+            typed=bool(m1.values) and picked_by != "the text on the page",
         )
         if idx is not None:
             if goal.candidates[idx] is not goal.entry:
@@ -291,7 +329,9 @@ class DomainResult:
 
 
 def task_dirs(captures_dir: Path, task: str | None = None) -> list[Path]:
-    dirs = sorted(d for d in captures_dir.iterdir() if d.is_dir() and (d / "m1" / "meta.json").exists())
+    dirs = sorted(  # "<task>.bad" / "<task>.failed": set aside, not mapped
+        d for d in captures_dir.iterdir() if d.is_dir() and "." not in d.name and (d / "m1" / "meta.json").exists()
+    )
     if task is not None:
         dirs = [d for d in dirs if d.name == task]
         if not dirs:
