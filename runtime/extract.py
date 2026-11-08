@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -58,6 +59,84 @@ def css_items(html: str, selector: str) -> list[dict[str, Any]]:
         href = link.attributes.get("href") if link is not None else None
         out.append({"text": " ".join((node.text(separator=" ") or "").split()), "href": href})
     return out
+
+
+_GOOD_CLASS = re.compile(r"^[A-Za-z][\w-]{1,40}$")
+_BAD_CLASS = re.compile(r"\d{3,}|^css-|^sc-|^_")
+
+
+def html_selector(html: str, texts: list[str], need: float = 0.7) -> str | None:
+    """One CSS selector for the elements of ``html`` that show ``texts`` (the deepest element whose text is,
+    or starts with, each; lifted to its link), covering at least ``need`` of them with the fewest matches.
+    The same rules the recorder uses in the browser, applied to the HTML a plain request gets: a site's
+    scripts can restructure the page after it loads, so a selector from the live page may miss here."""
+    from selectolax.lexbor import LexborHTMLParser
+
+    doc = LexborHTMLParser(html)
+    for junk in doc.css("script, style, noscript, template"):
+        junk.decompose()
+    if doc.body is None:
+        return None
+    nodes = [n for n in doc.body.traverse() if n.tag and not n.tag.startswith("-")]
+
+    def norm(text: str | None) -> str:
+        return " ".join((text or "").split())
+
+    found = []
+    for t in texts[:10]:
+        want = norm(t)
+        if not want:
+            continue
+        best = None
+        for n in nodes:
+            if norm(n.text()) == want:
+                best = n  # the deepest one
+        if best is None and len(want) >= 4:
+            for n in nodes:
+                if norm(n.text()).startswith(want):
+                    best = n
+        if best is None:
+            continue
+        link: Any = best
+        while link is not None and link.tag != "a":
+            link = link.parent
+        if link is not None and link.attributes.get("href") and norm(link.text()).startswith(want):
+            best = link
+        found.append(best)
+    if not found:
+        return None
+
+    def simple(n: Any) -> str:
+        classes = [c for c in (n.attributes.get("class") or "").split() if _GOOD_CLASS.match(c)]
+        return n.tag + "".join("." + c for c in [c for c in classes if not _BAD_CLASS.search(c)][:2])
+
+    candidates: set[str] = set()
+    for n in found:
+        own = simple(n)
+        candidates.add(own)
+        a = n.parent
+        for _ in range(4):
+            if a is None or a.tag in ("body", "html"):
+                break
+            anc = simple(a)
+            if "." in anc:
+                candidates.add(f"{anc} {own}")
+            a = a.parent
+    ids = {n.mem_id for n in found}
+    least = len(found) if len(found) <= 2 else math.ceil(len(found) * need)
+    best_sel: tuple[int, int, int, str] | None = None  # (-covered, matches, -length, selector)
+    for sel in candidates:
+        try:
+            matches = doc.css(sel)
+        except Exception:
+            continue
+        covered = sum(1 for m in matches if m.mem_id in ids)
+        if covered < least:
+            continue
+        key = (-covered, len(matches), -len(sel), sel)
+        if best_sel is None or key < best_sel:
+            best_sel = key
+    return best_sel[3] if best_sel else None
 
 
 def run_extract(ex: Extract, view: ResponseView) -> list[Any]:

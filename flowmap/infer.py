@@ -30,7 +30,7 @@ from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlsplit
 from flowmap.capture import SECRET, Exchange, Run
 from flowmap.flows import Flow, Goto, Select, placeholders, render
 from flowmap.holdback import HELD_HEADER
-from runtime.extract import css_items
+from runtime.extract import css_items, html_selector
 
 OUTPUT_MATCH = 0.6  # share of visible values the output must account for
 MIN_CONFIDENCE = 0.5
@@ -501,8 +501,13 @@ def _ranked(
         for r in real:
             ex = by_run.get(r.run_id)
             if ex is not None and r.visible:
-                if content_kind(ex) == "html" and isinstance(flow.results_selector, str):
-                    out += _html_score(ex.body, flow.results_selector, r.visible)
+                if content_kind(ex) == "html" and flow.results_selector is not None:
+                    live = flow.results_selector if isinstance(flow.results_selector, str) else None
+                    share = _html_score(ex.body, live, r.visible) if live else 0.0
+                    if share < OUTPUT_MATCH:  # the live page's selector may not fit the HTML: build one
+                        rebuilt = html_selector(ex.body or "", r.visible)
+                        share = max(share, _html_score(ex.body, rebuilt, r.visible) if rebuilt else 0.0)
+                    out += share
                 else:
                     out += _output_score(_json(ex.body), r.visible)
         exs = list(by_run.values())
@@ -545,17 +550,26 @@ def _html_score(body: str | None, selector: str, visible: list[str]) -> float:
 
 
 def _html_output(ctx: _Ctx, main: dict[str, Exchange]) -> tuple[str, list[dict[str, Any]]]:
-    """The results read from the page's HTML with the recorder's selector, checked against every real run."""
-    selector = ctx.flow.results_selector
-    if not isinstance(selector, str) or not selector:
+    """The results read from the page's HTML, checked against every real run. The recorder's selector comes
+    from the live page; a site's scripts can restructure the page after it loads, so when that selector
+    finds too little in the HTML, one is built from the HTML itself (the same rules)."""
+    real = [r for r in ctx.runs if r.kind == "real" and r.visible]
+    selector = ctx.flow.results_selector if isinstance(ctx.flow.results_selector, str) else None
+    misses = selector is None or any(
+        _html_score(main[r.run_id].body, selector, r.visible) < OUTPUT_MATCH for r in real
+    )
+    if selector is None or misses:
+        rebuilt = html_selector(main[real[0].run_id].body or "", real[0].visible) if real else None
+        if rebuilt is not None and rebuilt != selector:
+            ctx.reasons.append(f"the selector was rebuilt from the page's HTML ({rebuilt!r})")
+            selector = rebuilt
+    if not selector:
         raise InferError(
-            "the page renders its results on the server, and the recording has no CSS results selector",
-            ["record again and name the results, so their selector is known"],
+            "the page renders its results on the server, and no selector finds them in its HTML",
+            ["record again and point at the results, so their selector is known"],
         )
     first: list[dict[str, Any]] = []
-    for r in ctx.runs:
-        if r.kind != "real" or not r.visible:
-            continue
+    for r in real:
         share = _html_score(main[r.run_id].body, selector, r.visible)
         if share < OUTPUT_MATCH:
             raise InferError(

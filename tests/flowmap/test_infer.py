@@ -278,8 +278,10 @@ def test_a_page_rendered_on_the_server_is_read_with_css() -> None:
     step = out.steps[-1]
     assert step["extract"]["items"] == {"from": "body", "type": "css", "expr": ".r"}
     assert step["expect"]["content_type"] == "html" and out.output["from"] == f"steps.{step['id']}.items"
-    with pytest.raises(InferError, match="no CSS results selector"):  # a locator, not CSS: can't read HTML
-        infer(flow(results_selector=[LocatorCall(method="get_by_role", args=["listitem"])]), runs_with(make))
+    # A locator (not CSS) from the recording: a selector is built from the HTML instead.
+    locator = [LocatorCall(method="get_by_role", args=["listitem"])]
+    by_role = infer(flow(results_selector=locator), runs_with(make))
+    assert by_role.steps[-1]["extract"]["items"] == {"from": "body", "type": "css", "expr": "li"}
 
 
 def test_nothing_carries_the_input() -> None:
@@ -566,3 +568,21 @@ def test_an_always_empty_answer_is_not_a_read() -> None:
 
     with pytest.raises(InferError, match="no request carries"):
         infer(flow(), runs_with(make))
+
+
+def test_a_selector_from_the_live_page_is_rebuilt_for_the_html() -> None:
+    """The site's scripts restructure the page after it loads (LinkedIn's profiles): the recorder's selector
+    from the live page finds nothing in the HTML a plain request gets, so one is built from that HTML."""
+
+    def make(b: Builder, v: str, i: int, kind: str) -> None:
+        rows = "".join(
+            f'<li class="hit"><a class="name" href="/p/{n}">{n}</a> <span>Premium</span></li>'
+            for n in names(v, kind)
+        )
+        b.add(SITE + "/search?q=" + quote(v), rtype="document", ctype="text/html", body=f"<ul>{rows}</ul>")
+
+    out = infer(flow(results_selector="div.live-card a.live-title"), runs_with(make))
+    step = out.steps[-1]
+    items = step["extract"]["items"]
+    assert items["type"] == "css" and items["expr"] == "li.hit a.name"
+    assert any("rebuilt" in r for r in out.reasons)

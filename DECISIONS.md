@@ -562,3 +562,8 @@ markers and infers the card deterministically, and the LLM only names things. We
     replayed with each of the top three blocked in turn; the one whose absence empties the results is the
     source (flowmap/server.py `_confirm_source`, capture `visible_without`). The page itself is tested last,
     since blocking it empties any page. Writes still use the held-back request.
+  - The live page isn't the HTML (2026-11-08, from LinkedIn's profiles): a site's scripts can restructure
+    the page after it loads, so the recorder's selector (from the live page) can find nothing in the HTML a
+    plain request gets, though the data is there. When it finds too little, a selector is built from the
+    HTML itself with the same rules (`runtime/extract.py html_selector`), for scoring candidates and for the
+    card. Data kept only inside scripts (no elements) is still not read.
