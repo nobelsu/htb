@@ -37,13 +37,18 @@ class Remapper(Protocol):
 
     Return the whole proposed card (a `Card` or its JSON dict). Unchanged actions should be returned as-is;
     the runtime decides, action by action, what goes into the new version. Raise `RemapError` on failure.
+    `user` is whose call found the break: re-capture with their sign-in.
     """
 
-    async def remap(self, card: Card, actions: list[str], reason: str) -> Card | dict[str, Any]: ...
+    async def remap(
+        self, card: Card, actions: list[str], reason: str, user: str | None = None
+    ) -> Card | dict[str, Any]: ...
 
 
 class NoRemapper:
-    async def remap(self, card: Card, actions: list[str], reason: str) -> Card | dict[str, Any]:
+    async def remap(
+        self, card: Card, actions: list[str], reason: str, user: str | None = None
+    ) -> Card | dict[str, Any]:
         raise RemapError("no remapper is configured")
 
 
@@ -181,13 +186,29 @@ class HealManager:
             log.info("heal %s cancelled: %s", job.id, verdict)
             return
 
-        # 2. Re-map.
+        # 2. Re-map. Events with timings go to heal_events (DECISIONS M4).
+        started = time.monotonic()
+        self.state.add_event(job.id, job.domain, "remap_start", {"actions": broken, "reason": job.reason})
         try:
-            proposed = await self.remapper.remap(card, broken, job.reason)
+            proposed = await self.remapper.remap(card, broken, job.reason, user=job.user)
         except RemapError as e:
+            ms = int((time.monotonic() - started) * 1000)
+            failed = {"actions": broken, "ms": ms, "error": str(e)}
+            self.state.add_event(job.id, job.domain, "remap_failed", failed)
             self._degrade(job, broken, f"re-map failed: {e}")
             self.state.finish_job(job.id, "failed", {"error": f"re-map failed: {e}", "degraded": broken})
             return
+        details = getattr(self.remapper, "last_details", None)
+        self.state.add_event(
+            job.id,
+            job.domain,
+            "remap_done",
+            {
+                "actions": broken,
+                "ms": int((time.monotonic() - started) * 1000),
+                **({"details": details} if isinstance(details, dict) else {}),
+            },
+        )
         raw = proposed.to_json_dict() if isinstance(proposed, Card) else proposed
         report = validate_card(raw)
         if not report.ok or report.card is None:
@@ -203,6 +224,17 @@ class HealManager:
 
         # 3. Build the new version action by action, validating against examples.
         await self._activate(job, card, version, new, broken)
+        finished = self.state.get_job(job.id)
+        self.state.add_event(
+            job.id,
+            job.domain,
+            "heal_done",
+            {
+                "status": finished.status if finished else "unknown",
+                "ms": int((time.monotonic() - started) * 1000),
+                "new_version": finished.new_version if finished else None,
+            },
+        )
 
     async def _precheck(self, card: Card, version: int, broken: list[str], user: str) -> dict[str, Any] | None:
         providers = {

@@ -11,7 +11,10 @@ FILTER_NAMES = frozenset({"urlencode", "strip_quotes", "int", "offset", "escape_
 _OFFSET_RE = re.compile(r"offset:(\d+)")
 SIGNAL_RE = re.compile(r"^(status:\d{3}|redirect:/\S*|body_contains:.+)$")
 
-Namespace = Literal["base_url", "params", "session", "steps"]
+Namespace = Literal["base_url", "params", "session", "steps", "gen"]
+# Values made fresh for every call (CARD_SPEC "Placeholders"): a random UUID, 32 random hex characters, the
+# time in milliseconds.
+GEN_NAMES = frozenset({"uuid", "hex", "now_ms"})
 
 
 class PlaceholderError(ValueError):
@@ -65,6 +68,10 @@ def parse_placeholder(inner: str, raw: str | None = None) -> Placeholder:
         if len(segs) != 2 or segs[0] != "cookies" or not segs[1]:
             raise PlaceholderError(f"bad session ref {ref!r} (expected session.cookies.NAME)")
         return Placeholder(raw, "session", segs, filters)
+    if ns == "gen":
+        if len(segs) != 1 or segs[0] not in GEN_NAMES:
+            raise PlaceholderError(f"bad gen ref {ref!r} (expected gen.{'|'.join(sorted(GEN_NAMES))})")
+        return Placeholder(raw, "gen", segs, filters)
     if ns == "steps":
         if len(segs) != 2 or not all(segs):
             raise PlaceholderError(f"bad steps ref {ref!r} (expected steps.ID.KEY)")

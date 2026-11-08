@@ -154,8 +154,12 @@ async def test_precheck_session_check_for_login_actions(
 class Broken:
     def __init__(self, change: Any = None, error: str | None = None) -> None:
         self.change, self.error = change, error
+        self.users: list[str | None] = []
 
-    async def remap(self, card: Card, actions: list[str], reason: str) -> dict[str, Any]:
+    async def remap(
+        self, card: Card, actions: list[str], reason: str, user: str | None = None
+    ) -> dict[str, Any]:
+        self.users.append(user)
         if self.error:
             raise RemapError(self.error)
         data = card.to_json_dict()
@@ -192,11 +196,13 @@ async def test_healed_read_failing_examples_keeps_old(
     def point_to_v3(data: dict[str, Any]) -> None:
         action_of(data, "get_item")["steps"][0]["request"]["url"] = "{{base_url}}/api/v3/items/{{params.id | urlencode}}"
 
-    healer = manager(registry, state, executor, remapper=Broken(point_to_v3))
+    remapper = Broken(point_to_v3)
+    healer = manager(registry, state, executor, remapper=remapper)
     httpx.post(f"{site_url}/_admin/break")
     heal = healer.page_changed(DOMAIN, "get_item", "test", "default")
     assert heal is not None
     await healer.drain()
+    assert remapper.users == ["default"]  # the remapper re-captures with the sign-in of whoever hit the break
     status = healer.heal_status(heal.job_id)
     assert status is not None and status["status"] == "failed"
     assert "get_item" in status["result"]["kept_old"] and status["result"]["degraded"] == ["get_item"]

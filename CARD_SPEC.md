@@ -60,6 +60,7 @@ Syntax: `{{namespace.path}}`, `{{namespace.path | filter}}`, `{{x | filter1 | fi
 | `params.X` | Agent input, after defaults are applied |
 | `session.cookies.X` | Current cookie value (see Cookies) |
 | `steps.ID.X` | Value extracted by an earlier step (must be a single value, see Extraction) |
+| `gen.uuid`, `gen.hex`, `gen.now_ms` | A value made fresh for each call: a random UUID v4, 32 random hex characters, the current time in milliseconds (an integer). Added 2026-11-08, see below |
 
 Filters (a fixed set, nothing else allowed):
 
@@ -70,6 +71,13 @@ Filters (a fixed set, nothing else allowed):
 | `int` | Converts to an integer |
 | `offset:N` | 1-based page to result offset: `(value - 1) * N` |
 | `escape_restli` | Percent-encodes `% ( ) , : '` and spaces, for LinkedIn's Rest.li syntax |
+
+**Values made fresh for each call (`gen`)** are for what a page makes up anew for every request:
+idempotency keys, nonces, client request ids, timestamps. The mapper writes `{{gen.uuid}}` (or `hex`,
+`now_ms`) where a captured value was such a value, instead of turning it into a param or copying a recorded one.
+One value per name per call: every `{{gen.uuid}}` in one call (every step, header and body, and its retries)
+has the same value, and the next call gets a new one. Filters apply as usual. Added to v0.4 on 2026-11-08,
+backward compatible: cards without `gen` are unchanged.
 
 Rules:
 1. Resolve placeholders with a small custom resolver. **Never a template engine.**
@@ -88,7 +96,8 @@ Rules:
 | `type` | Fields | Notes |
 |---|---|---|
 | `jsonpath` | `expr` = JSONPath | `jsonpath_ng.ext.parse` (supports filters like `[?(@.type=="company")]`) |
-| `regex` | `expr` = regex, optional `parse: "json"`, optional `then` = JSONPath | Every match's capture group 1 (like `re.findall`). With `parse: "json"`, each is parsed as JSON; `then` picks from each, and the results are flattened into one list |
+| `regex` | `expr` = regex, optional `parse: "json"`, optional `resolve: "rows"`, optional `then` = JSONPath | Every match's capture group 1 (like `re.findall`). With `parse: "json"`, each is parsed as JSON; `then` picks from each, and the results are flattened into one list. `resolve: "rows"`: see Streamed rows below |
+| `css` | `expr` = CSS selector | HTML pages only (`from: body`); each match is `{text, href}` (below) |
 
 - `extract.from` is `body`, `headers` or `cookies`.
 - **Every extract produces a list of matches.**
@@ -97,7 +106,20 @@ Rules:
 - **`expect.paths` should check structure, not content:** use `$.elements`, not `$.elements[0].id`. A missing item is `EMPTY`, a missing structure is `PAGE_CHANGED`.
 - `expect.paths` are always JSONPath, and each must have at least one match.
 - `output.fields` paths are evaluated relative to each item. **A field with no match is `null`**, not an error.
-- CSS selectors: later.
+- **`css`** (added 2026-11-08, for pages that render their results on the server): `expr` is a CSS selector,
+  `from` must be `body` (an HTML page), no `parse`/`then`. Each matching element becomes
+  `{"text": its text with whitespace collapsed, "href": its own href, else its first link's, else null}`, so
+  `output.fields` read them as `$.text` and `$.href`. A selector that matches nothing gives an empty list.
+- **Streamed rows** (`resolve: "rows"`; needs `type: "regex"`, `parse: "json"`, `from: "body"`): for answers made of
+  data rows, one `<hex id>:<payload>` per line (the React Server Components format, often labelled
+  `application/octet-stream`; LinkedIn's web app, Next.js App Router sites). One result is often spread over
+  several rows that point to each other, so before `then` each parsed match has its pointers filled in:
+  - `"$<id>"`, `"$L<id>"` or `"$@<id>"` becomes the value of row `<id>`.
+  - `"$<id>:<k1>:<k2>…"` becomes the value at that key path inside row `<id>`; on a React element
+    `["$", type, key, props]`, the key `props` means its 4th item.
+  - A pointer to a row that is missing or not JSON (e.g. an `I` module row) stays as it is. A row is never
+    filled in inside itself (cycles stop), and at most 5000 pointers are filled in per match.
+  - Text that really starts with `$` is written `$$…` in this format, so it is never taken for a pointer.
 
 Examples:
 ```json

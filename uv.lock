@@ -237,12 +237,38 @@ wheels = [
 ]
 
 [[package]]
+name = "cython"
+version = "3.0.11"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/4d/b720d6000f4ca77f030bd70f12550820f0766b568e43f11af7f7ad9061aa/cython-3.0.11.tar.gz", hash = "sha256:7146dd2af8682b4ca61331851e6aebce9fe5158e75300343f80c07ca80b1faff", size = 2755544, upload-time = "2024-08-05T15:03:02.254Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/50/fbb23239efe2183e4eaf76689270d6f5b3bbcf9be9ad1eb97cc34349e6fc/Cython-3.0.11-cp312-cp312-macosx_10_9_x86_64.whl", hash = "sha256:11996c40c32abf843ba652a6d53cb15944c88d91f91fc4e6f0028f5df8a8f8a1", size = 3141274, upload-time = "2024-08-05T15:04:20.821Z" },
+    { url = "https://files.pythonhosted.org/packages/87/e5/76379edb21fd5bb9e2aaa1d305492bc35bba96dfb51f5d96867d9863b6df/Cython-3.0.11-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:63f2c892e9f9c1698ecfee78205541623eb31cd3a1b682668be7ac12de94aa8e", size = 3340904, upload-time = "2024-08-05T15:04:24.314Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/ef/44af6aded89444dc45f4466ff207a05d3376c641cf1146c03fd14c55ae64/Cython-3.0.11-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8b14c24f1dc4c4c9d997cca8d1b7fb01187a218aab932328247dcf5694a10102", size = 3514052, upload-time = "2024-08-05T15:04:28.001Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/d5/ef8c7b6aa7a83c508f5c3bf0dfb9eb0a2a9be910c0b1f205f842128269c3/Cython-3.0.11-cp312-cp312-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:c8eed5c015685106db15dd103fd040948ddca9197b1dd02222711815ea782a27", size = 3573721, upload-time = "2024-08-05T15:04:30.973Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/4a/58d6c208563504a35febff94904bb291b368a8b0f28a5e0593c770967caa/Cython-3.0.11-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:780f89c95b8aec1e403005b3bf2f0a2afa060b3eba168c86830f079339adad89", size = 3393594, upload-time = "2024-08-05T15:04:33.57Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/92/a60a400be286dc661609da9db903680bba1423362000b689cf8ef0aec811/Cython-3.0.11-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:a690f2ff460682ea985e8d38ec541be97e0977fa0544aadc21efc116ff8d7579", size = 3601319, upload-time = "2024-08-05T15:04:36.585Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/11/f02fc24d1a071b93e1d07497b0a528687b1f93bb4945c635119480fab3c0/Cython-3.0.11-cp312-cp312-win32.whl", hash = "sha256:2252b5aa57621848e310fe7fa6f7dce5f73aa452884a183d201a8bcebfa05a00", size = 2608335, upload-time = "2024-08-05T15:04:40.312Z" },
+    { url = "https://files.pythonhosted.org/packages/35/00/78ffea3a0ab176267a25ff049518b2582db7ac265bbf27944243d1a81ce2/Cython-3.0.11-cp312-cp312-win_amd64.whl", hash = "sha256:da394654c6da15c1d37f0b7ec5afd325c69a15ceafee2afba14b67a5df8a82c8", size = 2792586, upload-time = "2024-08-05T15:04:43.83Z" },
+    { url = "https://files.pythonhosted.org/packages/43/39/bdbec9142bc46605b54d674bf158a78b191c2b75be527c6dcf3e6dfe90b8/Cython-3.0.11-py2.py3-none-any.whl", hash = "sha256:0e25f6425ad4a700d7f77cd468da9161e63658837d1bc34861a9861a4ef6346d", size = 1171267, upload-time = "2024-08-05T15:02:57.729Z" },
+]
+
+[[package]]
 name = "docstring-parser"
 version = "0.18.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz", hash = "sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015", size = 29341, upload-time = "2026-04-14T04:09:19.867Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/5f/ed01f9a3cdffbd5a008556fc7b2a08ddb1cc6ace7effa7340604b1d16699/docstring_parser-0.18.0-py3-none-any.whl", hash = "sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b", size = 22484, upload-time = "2026-04-14T04:09:18.638Z" },
+]
+
+[[package]]
+name = "execnet"
+version = "2.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/89/780e11f9588d9e7128a3f87788354c7946a9cbb1401ad38a48c4db9a4f07/execnet-2.1.2.tar.gz", hash = "sha256:63d83bfdd9a23e35b9c6a3261412324f964c2ec8dcd8d3c6916ee9373e0befcd", size = 166622, upload-time = "2025-11-12T09:56:37.75Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/84/02fc1827e8cdded4aa65baef11296a9bbe595c474f0d6d758af082d849fd/execnet-2.1.2-py3-none-any.whl", hash = "sha256:67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec", size = 40708, upload-time = "2025-11-12T09:56:36.333Z" },
 ]
 
 [[package]]
@@ -287,62 +313,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1", size = 101250, upload-time = "2025-04-24T03:35:25.427Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
-]
-
-[[package]]
-name = "htb-runtime"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "cryptography" },
-    { name = "curl-cffi" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "jsonpath-ng" },
-    { name = "mcp" },
-    { name = "playwright" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "uvicorn" },
-    { name = "websockets" },
-]
-
-[package.optional-dependencies]
-llm = [
-    { name = "anthropic" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", marker = "extra == 'llm'", specifier = "==2.6.0" },
-    { name = "cryptography", specifier = ">=46" },
-    { name = "curl-cffi", specifier = ">=0.17,<0.18" },
-    { name = "fastapi", specifier = ">=0.162" },
-    { name = "httpx", specifier = ">=0.28,<0.29" },
-    { name = "jsonpath-ng", specifier = ">=1.16,<2" },
-    { name = "mcp", specifier = "==2.3.0" },
-    { name = "playwright", specifier = "==1.64.1" },
-    { name = "pydantic", specifier = ">=2.14,<3" },
-    { name = "python-dotenv", specifier = ">=1.2" },
-    { name = "uvicorn", specifier = ">=0.54" },
-    { name = "websockets", specifier = ">=15" },
-]
-provides-extras = ["llm"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=2.4.1" },
-    { name = "pytest", specifier = ">=9.2" },
-    { name = "pytest-asyncio", specifier = ">=1.4" },
-    { name = "ruff", specifier = "==0.17.4" },
 ]
 
 [[package]]
@@ -761,6 +731,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-xdist"
+version = "3.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "execnet" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/b4/439b179d1ff526791eb921115fca8e44e596a13efeda518b9d845a619450/pytest_xdist-3.8.0.tar.gz", hash = "sha256:7e578125ec9bc6050861aa93f2d59f1d8d085595d6551c2c90b6f4fad8d3a9f1", size = 88069, upload-time = "2025-07-01T13:30:59.346Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/31/d4e37e9e550c2b92a9cbc2e4d0b7420a27224968580b5a447f420847c975/pytest_xdist-3.8.0-py3-none-any.whl", hash = "sha256:202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88", size = 46396, upload-time = "2025-07-01T13:30:56.632Z" },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.2.4"
 source = { registry = "https://pypi.org/simple" }
@@ -863,12 +846,89 @@ wheels = [
 ]
 
 [[package]]
+name = "selectolax"
+version = "0.3.30"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cython" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e7/17/9e9bb8fbf653689d57055d44700eec783e966b5ace00458c9acba587b736/selectolax-0.3.30.tar.gz", hash = "sha256:2a1790ae1d88adfe54845627de62390301107cad331f63e2020f90ffe5a56a4a", size = 4694305, upload-time = "2025-06-15T23:39:54.184Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b1/4d/dd0ff9c14742e972cec0d71574bc5a07d46691c96dd5fc33e1daa9b15b84/selectolax-0.3.30-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:da2f28d183c8c34324480c51debdf9407bb035d6eb4a88fda2a62d5f792d44d5", size = 2099124, upload-time = "2025-06-15T23:39:21.032Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/54/4419a2d22734dcbf4a11b2f01c1ff6a32b0a0d4c20323c9672892e562825/selectolax-0.3.30-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:6a6dfee6a6dff81a10709d8ce9be264cf12be1e7fd743dc24f8d5948b21db07d", size = 2090452, upload-time = "2025-06-15T23:39:22.899Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/bb/729bb4360ff629917f52e9a8a4a928986848c9dfde2f850b0b307c4f86c9/selectolax-0.3.30-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:951293a1cd1f01042157858dcbc3d430488200a7390d58a12b108750b6ba152a", size = 5873129, upload-time = "2025-06-15T23:39:24.407Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/9b/6d4acbc5f7f51c890df694ff40cc468970d4667c18e1b427b5fe7045c125/selectolax-0.3.30-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:aac7b1401d98db999d671a4019320ed2015a51ec293a376049d0e286447983c8", size = 5951041, upload-time = "2025-06-15T23:39:26.053Z" },
+    { url = "https://files.pythonhosted.org/packages/87/e0/ec0391626eda0925fd616e41d845dd9f782db9d44f9fc1f4b8f37e3cf1b2/selectolax-0.3.30-cp312-cp312-win_amd64.whl", hash = "sha256:ce1c9e26cd3df57962eae9df20bf6285fbbf3bd9489a5bd4811af9f499f9e71b", size = 1796836, upload-time = "2025-06-15T23:39:28.363Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/5c/036bf13525e4473a6c4095557ed3cb40e0c0c762dd35246db2175f440bb5/selectolax-0.3.30-cp312-cp312-win_arm64.whl", hash = "sha256:adc4a1445619150835de9277039fb874ac341c77e5ea27b68a57f12fa4d028f0", size = 1742599, upload-time = "2025-06-15T23:39:29.868Z" },
+]
+
+[[package]]
 name = "sniffio"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz", hash = "sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc", size = 20372, upload-time = "2024-02-25T23:20:04.057Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl", hash = "sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2", size = 10235, upload-time = "2024-02-25T23:20:01.196Z" },
+]
+
+[[package]]
+name = "spider"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "cryptography" },
+    { name = "curl-cffi" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "jsonpath-ng" },
+    { name = "mcp" },
+    { name = "playwright" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "selectolax" },
+    { name = "uvicorn" },
+    { name = "websockets" },
+]
+
+[package.optional-dependencies]
+llm = [
+    { name = "anthropic" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anthropic", marker = "extra == 'llm'", specifier = "==2.6.0" },
+    { name = "cryptography", specifier = ">=46" },
+    { name = "curl-cffi", specifier = ">=0.17,<0.18" },
+    { name = "fastapi", specifier = ">=0.162" },
+    { name = "httpx", specifier = ">=0.28,<0.29" },
+    { name = "jsonpath-ng", specifier = ">=1.16,<2" },
+    { name = "mcp", specifier = "==2.3.0" },
+    { name = "playwright", specifier = "==1.64.1" },
+    { name = "pydantic", specifier = ">=2.14,<3" },
+    { name = "python-dotenv", specifier = ">=1.2" },
+    { name = "selectolax", specifier = "==0.3.30" },
+    { name = "uvicorn", specifier = ">=0.54" },
+    { name = "websockets", specifier = ">=15" },
+]
+provides-extras = ["llm"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=2.4.1" },
+    { name = "pytest", specifier = ">=9.2" },
+    { name = "pytest-asyncio", specifier = ">=1.4" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "ruff", specifier = "==0.17.4" },
 ]
 
 [[package]]

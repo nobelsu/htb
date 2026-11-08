@@ -3,7 +3,7 @@ drawn in the Spine design (runtime/ui.py).
 
 GET/POST /oauth/login?request=...   sign in for an app (OAuth): password, API key, or a new account
 GET/POST /account/login             sign in to the account page (same three ways)
-GET      /account                   waiting sign-ins (live), sites, connected apps, connector, key, password, alerts
+GET      /account                   waiting sign-ins (live), sites, connected apps, connector, key, password
 GET      /account/status            the live part, as JSON
 POST     /account/disconnect        sign out of a site
 POST     /account/key               a new API key (the old one stops working)
@@ -21,6 +21,7 @@ import asyncio
 import hmac
 import json
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -37,7 +38,7 @@ from runtime.signup_page import AttemptLimiter, copy_row
 from runtime.ui import COPY_SCRIPT, HEADERS, bar_button, bar_link, esc, field, hidden, icon, notice, page
 
 log = logging.getLogger("runtime.account")
-COOKIE = "htb_account"
+COOKIE = "spider_account"
 MAX_BODY = 4096
 MODES = ("password", "key", "signup")
 
@@ -90,8 +91,6 @@ def sign_in_page(
         )
 
     parts = [notice(error)]
-    if for_app:
-        parts.append(f'<p class="row strong" style="margin:0"><span class="big">{icon("link", 72)}{esc(app_name)}</span></p>')
     if signed_in_as and mode == "password":
         parts.append(
             f'<form method="post" action="{esc(action)}" class="row strong" style="margin:0">'
@@ -104,7 +103,7 @@ def sign_in_page(
         bar = bar_button("Sign in and connect" if for_app else "Sign in")
     elif mode == "signup":
         fields = (
-            field("code", "invite code", "password")
+            field("code", "invite code", code=True)
             + field("name", "username", autocomplete="username")
             + field("email", "email", "email", autocomplete="email")
             + field("password", "password", "password", autocomplete="new-password")
@@ -153,13 +152,7 @@ function render(pending) {
   }));
   const empty = document.getElementById("empty");
   if (empty) empty.hidden = pending.length > 0 || empty.dataset.hasRows === "1";
-  for (const p of pending) {
-    if (!seen.has(p.url) && "Notification" in window && Notification.permission === "granted") {
-      const n = new Notification("Sign in to " + p.domain, {body: "Your agent is waiting."});
-      n.onclick = () => window.open(p.url, "_blank");
-    }
-    seen.add(p.url);
-  }
+  for (const p of pending) seen.add(p.url);
 }
 async function poll() {
   try {
@@ -169,18 +162,6 @@ async function poll() {
   } catch (e) {}
   setTimeout(poll, 2000);
 }
-const alerts = document.getElementById("alerts");
-function showAlerts() {
-  if (!alerts) return;
-  const p = "Notification" in window ? Notification.permission : "denied";
-  alerts.classList.toggle("on", p === "granted");
-  alerts.querySelector("span").textContent = p === "granted" ? "Alerts on" : p === "denied" ? "Alerts blocked" : "Alerts off";
-}
-if (alerts) alerts.addEventListener("click", async () => {
-  if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission();
-  showAlerts();
-});
-showAlerts();
 // Disconnect: strike the name through, fold the row away, then send it.
 for (const f of document.querySelectorAll("form.disconnect")) {
   f.addEventListener("submit", (e) => {
@@ -199,6 +180,48 @@ setTimeout(poll, 2000);
 </script>"""
 
 
+def _ago(ts: float) -> str:
+    mins = int((time.time() - ts) // 60)
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins} min ago"
+    return f"{mins // 60} h ago" if mins < 48 * 60 else f"{mins // 1440} days ago"
+
+
+def _app_detail(app: dict[str, Any]) -> str:
+    """How to tell connected apps apart: where they run and when they were connected."""
+    when = _ago(float(app.get("signed_in") or time.time()))
+    where = str(app.get("where") or "")
+    return f"{where} · connected {when}" if where else f"connected {when}"
+
+
+def _job_detail(job: dict[str, Any]) -> str:
+    """What a setup tried and when: "search companies · 2 h ago", "explore · just now"."""
+    what = str(job.get("action") or "").replace("_", " ") or "explore"
+    stamp = job.get("finished_at") or job.get("created_at") or ""
+    try:
+        from datetime import datetime
+
+        when = _ago(datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        when = ""
+    return f"{what} · {when}" if when else what
+
+
+def _section(label: str, rows: str) -> str:
+    return f'<p class="lbl section">{esc(label)}</p>{rows}' if rows else ""
+
+
+MAP_LABELS = {  # a site being set up for this user (runtime/mapping.py)
+    "queued": "Queued",
+    "running": "Setting up",
+    "succeeded": "Ready",
+    "failed": "Didn't work",
+    "needs_sign_in": "Needs sign-in",
+}
+
+
 def routes(
     *,
     oauth: OAuth,
@@ -208,6 +231,7 @@ def routes(
     sessions: EncryptedSessionStore | None,
     signup_code: str,
     public_url: Callable[[], str],
+    maps: Any = None,
 ) -> list[BaseRoute]:
     limiter = AttemptLimiter()
     sign_in_cookie = session_cookie(oauth, public_url)
@@ -346,18 +370,39 @@ def routes(
             for p in pending
         )
         site_rows = "".join(
-            f'<div class="row"><span class="big{" struck" if s["status"] != "connected" else ""}">{esc(s["domain"])}</span>'
+            f'<div class="row"><span class="big"><span class="stack"><span>{esc(s["domain"])}</span>'
+            f'<span class="mono">{"signed in" if s["status"] == "connected" else "expired"}</span></span></span>'
+            + (
+                ""
+                if s["status"] == "connected"
+                else '<form method="post" action="/account/signin" style="margin:0">'
+                f'{hidden("domain", s["domain"])}<button class="link" type="submit">Sign in again</button></form>'
+            )
             + square("/account/disconnect", "domain", s["domain"], f"Disconnect {s['domain']}")
             + "</div>"
             for s in sites
         )
         app_rows = "".join(
-            f'<div class="row"><span class="big">{icon("link", 44, label="Connected app")}{esc(a["name"])}</span>'
+            f'<div class="row"><span class="big">{icon("link", 44, label="Connected app")}'
+            f'<span class="stack"><span>{esc(a["name"])}</span>'
+            f'<span class="mono">{esc(_app_detail(a))}</span></span></span>'
             + square("/account/apps/revoke", "client_id", a["client_id"], f"Disconnect {a['name']}")
             + "</div>"
             for a in apps
         )
-        has_rows = bool(site_rows or app_rows)
+        map_rows = "".join(
+            f'<div class="row"><span class="big"><span class="stack"><span>{esc(j["domain"])}</span>'
+            f'<span class="mono">{esc(_job_detail(j))}</span></span></span>'
+            + (
+                f'<span class="pill pulse">{MAP_LABELS.get(j["status"], j["status"])}</span>'
+                if j["status"] in ("queued", "running")
+                else f'<span class="lbl">{MAP_LABELS.get(j["status"], j["status"])}</span>'
+                + square("/account/setups/clear", "job_id", j["job_id"], f"Clear {j['domain']}")
+            )
+            + "</div>"
+            for j in (maps.jobs_for(user)[:5] if maps is not None else [])
+        )
+        has_rows = bool(site_rows or app_rows or map_rows)
         empty = (
             f'<p class="empty" id="empty" data-has-rows="{1 if has_rows else 0}"'
             f'{" hidden" if has_rows or pending else ""}>Nothing yet</p>'
@@ -371,23 +416,21 @@ def routes(
                 f'<button class="tile" type="submit">{icon("key", 28, 1.8)}<span>New key</span></button></form>'
             )
             tiles.append(f'<a class="tile" href="/account/password">{icon("lock", 28, 1.8)}<span>Password</span></a>')
-        tiles.append(f'<button class="tile" type="button" id="alerts">{icon("bell", 28, 1.8)}<span>Alerts</span></button>')
         new_key_rows = (
-            notice("Your new key is below. Your old key no longer works.")
+            notice("Your new key is below. Your old key no longer works.", error=False)
             + copy_row("Claude Code", "claude mcp add", mcp_add_command(base, new_key), "Copy the Claude Code command, which holds your new key")
             if new_key else ""
         )
         body = (
-            notice(message) + new_key_rows
+            f'<h1 class="title">{esc(user)}</h1>' + notice(message, error=False) + new_key_rows
             + f'<div id="waiting" data-seen="{esc(json.dumps([p["url"] for p in pending]))}">{waiting_rows}</div>'
-            + site_rows + app_rows + empty
+            + _section("Setting up", map_rows) + _section("Signed in", site_rows) + _section("Apps", app_rows)
+            + empty
             + f'<div class="tiles">{"".join(tiles)}</div>'
         )
         sign_out = (
             '<form method="post" action="/account/logout" style="margin:0">'
-            '<button type="submit" aria-label="Sign out" style="width:44px;height:44px;border:2px solid currentColor;'
-            f'background:transparent;color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center">'
-            f'{icon("signout", 22)}</button></form>'
+            '<button type="submit">Sign out</button></form>'
         )
         return page(
             title=f"Account, {user}", spine="Account", body=body, spine_end=sign_out,
@@ -423,6 +466,21 @@ def routes(
         if connections is not None and domain:
             await connections.disconnect(user, domain)
         return RedirectResponse("/account", status_code=302)
+
+    async def clear_setup(request: Request) -> Response:
+        user, form, refused = await guarded(request)
+        if refused is not None or user is None:
+            return refused or Response(status_code=400)
+        if maps is not None and form.get("job_id"):
+            maps.state.clear_map_job(user, form.get("job_id", ""))
+        return RedirectResponse("/account", status_code=302)
+
+    async def sign_in_again(request: Request) -> Response:
+        user, form, refused = await guarded(request)
+        if refused is not None or user is None:
+            return refused or Response(status_code=400)
+        out = connections.start(user, form.get("domain", "")) if connections is not None else {}
+        return RedirectResponse(str(out.get("url") or "/account"), status_code=302)
 
     async def new_key(request: Request) -> Response:
         user, _, refused = await guarded(request)
@@ -495,6 +553,8 @@ def routes(
         Route("/account/status", status, methods=["GET"]),
         Route("/account/disconnect", disconnect, methods=["POST"]),
         Route("/account/key", new_key, methods=["POST"]),
+        Route("/account/setups/clear", clear_setup, methods=["POST"]),
+        Route("/account/signin", sign_in_again, methods=["POST"]),
         Route("/account/apps/revoke", revoke_app, methods=["POST"]),
         Route("/account/password", password, methods=["GET"]),
         Route("/account/password", password_post, methods=["POST"]),

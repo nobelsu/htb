@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "domain": "bookshop.test",
+  "action": "search_books",
+  "inputs": {
+    "query": {
+      "marker": true,
+      "examples": [
+        "the",
+        "harbour"
+      ]
+    },
+    "sort": {
+      "marker": false,
+      "examples": [
+        "relevance",
+        "price"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "op": "goto",
+      "url": "http://127.0.0.1:8910/"
+    },
+    {
+      "op": "fill",
+      "target": [
+        {
+          "method": "get_by_placeholder",
+          "args": [
+            "Search books"
+          ]
+        }
+      ],
+      "value": "{{query}}"
+    },
+    {
+      "op": "select",
+      "target": [
+        {
+          "method": "get_by_label",
+          "args": [
+            "Sort by"
+          ]
+        }
+      ],
+      "value": "{{sort}}"
+    },
+    {
+      "op": "press",
+      "target": [
+        {
+          "method": "get_by_placeholder",
+          "args": [
+            "Search books"
+          ]
+        }
+      ],
+      "key": "Enter"
+    },
+    {
+      "op": "wait_for",
+      "target": "#count:not(:empty)",
+      "timeout_ms": 10000
+    }
+  ],
+  "results_selector": ".result h3",
+  "next_page": "#next"
+}

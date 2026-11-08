@@ -399,6 +399,190 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
     copy turns its icon into a tick. Extras: a big inverting cursor (mouse only), field underlines thicken on focus
     and the placeholder slides out as you type, bar arrows nudge, the spine word drifts on scroll. All of it is off
     under prefers-reduced-motion.
+- **L13 Page design: Margin in Linen, named spider (asked, after wireframes: https://claude.ai/artifact/L1o9JnahEtjbWSh57nLBEm).**
+  Replaces Spine (L12), which Nobel found too loud. Every page (`runtime/ui.py`): a left art panel where a spider
+  spins orb webs (radials in a scrambled order, frame, spiral; it rests, wanders off and spins the next; old webs
+  stay and fade back, the oldest go; never quite regular), a hairline, and a calm column of small IBM Plex Sans on
+  the right, centred vertically. Linen palette: paper #F5EDE2, ink #2A2421, umber #6B5A35 for actions, brick
+  #9C3F33 for errors; the finished website sign-in turns to the night version. Fields have labels above them;
+  errors show under the field they are about (the browser's bubbles are off); server errors show as a brick line
+  at the top. The product is named "spider" (PRODUCT_NAME). With reduced motion: one finished web, no movement.
+  - **Home page (asked: "animated show what it does").** The three steps under "Your agent, signed in." are gone
+    (Nobel: pointless). Now one headline and an agent's call typed out (`linkedin_search_companies(query=...)`),
+    then its results arriving, cycling through a few sites. The examples are illustrative, not live data.
+  - **No alerts (asked).** The account page's alerts tile and its browser notifications are removed; the waiting
+    sign-ins already show live on the page.
 - **Link security.** `/connect/` and `/neko/` routes skip the Bearer check; the unguessable, expiring, single-use token is
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
 - **Not handled yet:** per-user quotas (L9); the mapper's own browser doesn't use the residential proxy (L10).
+
+## Mapper v2 (`flowmap/`)
+A second mapper with no explorer: a person records each action once as a flow, the mapper replays it with planted
+markers and infers the card deterministically, and the LLM only names things. Wei Wei's `mapper/` is untouched.
+- **M1 Where (default).** A new package `flowmap/` (tests in `tests/flowmap/`, CLI `python -m flowmap
+  record|map|heal|show`) on branch `mapper-v2`. The brief's `mapper/flows.py`, `mapper/capture.py` and
+  `mapper/cli.py` would clash with Wei Wei's package (`mapper/capture/` is a package, his CLI already has `map` and
+  `heal`, and `runtime/mapper_remapper.py` imports his code).
+- **M2 Healed writes (asked: follow the spec).** The brief said healed writes go to `heal_candidates`; CARD_SPEC
+  Healing (H4) says they go live as a new version, with `requires_confirmation` still true so every run asks.
+  The spec wins: no `heal_candidates`.
+- **M3 Wei Wei's helpers (asked: copy them in).** The few pure helpers worth reusing (marker encodings, request
+  filters, dependency tracing, pagination, secret checks) are copied into `flowmap/` with a comment naming the
+  original, so flowmap doesn't break when his code changes.
+- **M4 Heal events (asked: a new table).** `heal_events` in the runtime database: `remap_start` / `remap_done` (and
+  failures) per heal job, with timings, for the benchmark.
+- **M5 Test sites (asked).** Mapping is aimed at real websites (as Wei Wei does), asking before any run of a write
+  flow on a real site. Healing is tested on a website we build ourselves, with switchable breaks (endpoint, field,
+  structure and param renamed).
+- **M6 Heal plugs into the runtime (default).** `flowmap/heal.py` implements the existing `Remapper` protocol
+  (`REMAPPER=flowmap`); HealManager keeps the pre-check, validation, activation and `degraded` marking.
+- **M7 An agent can record (asked: "we should do it using like an agent"; overlap with Wei Wei's explorer is
+  fine).** `record --agent "task"` (`flowmap/agent.py`): Claude does the action once from the accessibility
+  tree, one tool call per turn; each step is saved with the role and name it used, input values become
+  placeholders, and the results it names become `results_selector` (one CSS selector found in the page).
+  Everything after recording is unchanged. Guards are code, not prompt: same site only, new tabs closed, no
+  sign-out/delete clicks, no data-changing clicks unless `--write` (which asks first on real sites), no
+  sign-in (the person signs in in the window; the recording restarts). Older page snapshots are dropped
+  from the conversation to keep it small.
+- **M8 Mapping runs on the server (asked, 2026-11-08; not built yet).** Map jobs run inside the gateway next to
+  heal jobs, using its stored sessions, `BrowserPool`, proxy and identity (so sign-in goes through Connect,
+  where Google works). Build order: flowmap on the runtime's browser and sessions; map jobs
+  (`request_map`, status); explore as a map job (Claude proposes tasks, each is recorded, mapped and kept
+  only if it passes; follow-ups come from returned ids). Decisions:
+  - Any signed-up user may request a map, but only when the site has no card or a heal is needed (then the
+    request starts the heal).
+  - A site behind a login is mapped with the requester's session; examples on the shared card hold no
+    personal data, and raw captures are deleted after mapping.
+  - Explore tries writes too, but the action that would really commit the write never reaches the site: the
+    agent does the final click and the browser holds the request back, recording it in full. The commit is
+    spotted by any of: the agent saying so, the control's text (Send, Post, Place order, Pay, Book, Follow,
+    Connect, Add to cart...), a GraphQL mutation or a PUT/PATCH/DELETE, or a POST form submit. Before that
+    step only clear changes are blocked (many sites read with POST); after it, anything that could change data.
+  - Private, undoable writes (add to cart, save an item, a preference) may really happen on the requester's
+    account to reach a later step, and are undone afterwards (asked: "yes, then undo them"). Writes other
+    people see (follow, connect, like, message, post, apply) and costly or final ones (order, book, pay, an
+    official form) are always held back. Payment details are never entered: a page that wants a card ends the
+    task there.
+  - A write mapped from a held-back request has no response: the card marks it never run for real; the first
+    confirmed real call clears the mark and records what it returns. Values the page makes up fresh for every
+    request (idempotency ids, nonces) are marked "generate per call", not turned into params.
+  - Heal re-captures writes the same way (held back), so healing never sends a write. M2 is unchanged: a
+    healed write still goes live as a new version with `requires_confirmation`.
+  - Whoever hits a broken action, the heal starts automatically, and the work it interrupted (a map job, an
+    explore) carries on for the user once the heal is done.
+  - Map jobs run in the gateway process, one at a time, separate from heal jobs; a worker of their own later.
+  - Flowmap first; Wei Wei's mapper can plug in through the same `Remapper`-style seam later.
+  - Step 1 built: `flowmap/browser.py` (`BrowserSetup`) opens installed Chrome without the automation flag,
+    with a user's stored sign-in, its device identity and proxy; capture, `record --agent`, `map` and `heal`
+    take `--user`. `Remapper.remap` gained `user=`: HealManager passes whoever's call found the break (it used
+    to heal with the `default` user's sign-in).
+  - Step 2 built: map jobs (`runtime/mapping.py`, `map_jobs` table, `flowmap/server.py`, `MAPPER=flowmap`).
+    Agents call `request_map(site, task, action, inputs)` and `map_status(job_id, wait_seconds)`; the account
+    page lists the user's last five. The requesting agent names the action and gives the input values (no
+    planning call). The runtime validates the mapped card and runs every read example through the executor
+    before saving version 1, as heal does; the mapper never saves. A second request for a site being mapped
+    joins the same job and sees only its status (not the first user's task, values or log). Reads only.
+    Addresses on this machine or a private network are refused (names are resolved first) unless
+    `MAP_ALLOW_LOCAL=1`; redirects during the browser's first visit aren't checked.
+  - Sign-in for a site with no card: the job stops at `needs_sign_in` with a Connect link for the page that
+    asked (`ConnectionManager.start_for_new_site`). With no `session_check` yet it works like a weak check:
+    the user clicks "I've signed in", which counts only once the cookies changed. The stored sign-in
+    (`on_connected`) queues the job again, and it maps signed in under the provider id `provider_for(domain)`
+    (the site's name). flowmap then works out `session_check` and `logged_out_signals` by sending the mapped
+    action's request (then the start page) signed in and signed out; a check that can't tell them apart is
+    kept as weak and reported. The runtime runs the check with the requester's sign-in before saving.
+    The card is shared: other users sign in through the normal Connect flow once it exists.
+  - Step 3, reads built: explore is a map job with no action (`request_map(site)`, `task` optional as what
+    the user wants there). Claude proposes up to four read tasks from the start page, then follow-ups that
+    take values copied from what the kept actions returned; each is recorded and mapped into one card and kept
+    only if it passes (at most six). Proposals are checked in code (names, same site, inputs, change wording);
+    an action with exactly the requests of one already kept is dropped as a duplicate; a task that wants a
+    sign-in pauses the whole job. The runtime now keeps the actions whose examples pass and drops the rest
+    (`result.dropped`), for single-action jobs too (a lone failing action still fails the job). Writes
+    (hold-back, undo, never run for real) are the next piece.
+  - Spec addition (asked, 2026-11-08: "Add to the spec"): placeholders `{{gen.uuid}}`, `{{gen.hex}}` and
+    `{{gen.now_ms}}`, a value made fresh for each call, for what a page makes up anew for every request
+    (idempotency keys, nonces). One value per name per call (all steps and retries share it). Backward
+    compatible, so `schema_version` stays "0.4"; Wei Wei's mapper can emit it too.
+  - Step 3, writes built (simplified, asked to go fast): every write is held back while mapping, private or
+    not, so nothing is undone (doing private writes for real and undoing them is not built). `HoldBack`
+    (`flowmap/holdback.py`) answers held requests itself (200, `{}`, `x-flowmap-held`): before the commit
+    click only PUT/PATCH/DELETE, GraphQL mutations and form posts are held; from the commit click (a control
+    whose text reads as a change in the recorder; the flow's last click in capture) every non-GET. The
+    recorder and capture both use it, so heal re-captures writes held back too. A held write's steps expect
+    any 2xx of any type. Explore proposes up to two writes per round (never delete, settings, payment or
+    sign-out wording); the recorder gives up rather than type payment details. The runtime marks a mapped
+    write `never_run` in `action_state`; `run_action` says so on its confirmation and the first real
+    SUCCESS clears it. flowmap doesn't emit `gen` values yet.
+  - Levels of mapping (asked, 2026-11-08: "let's just do 2"): level 1 is the site's data request (as
+    before); level 2, built, reads a page rendered on the server with a `css` extract (spec addition: each
+    match is `{text, href}`; `from: body` only; selectolax parses). Inference picks the page when its HTML
+    holds the visible results, and prefers the request in a group that carries the input (the blank page of
+    a GET form loads first). Level 3 (replaying the flow in a browser) is not built.
+  - LinkedIn company search mapped at level 2 (2026-11-08): GET /search/results/companies/?keywords={query}
+    read with CSS, http tier, strong sign-in check (signed out: 403 or redirect to /uas/login); a call takes
+    about a second. It took four fixes, all general: (1) a recorded read that ends on an address holding
+    every input becomes just that address (`url_shortcut`), since LinkedIn fetches results in place after
+    typing but renders them in the HTML on a fresh load; (2) capture no longer treats a cookie whose value is
+    a host name as a secret (LinkedIn's hashed www.linkedin.com out of every URL, so nothing looked
+    same-site: every earlier LinkedIn mapping failed on this); (3) inference uses a redirect's target when
+    a request redirects to the same place (LinkedIn's 307); (4) the sign-in check doesn't reject checks
+    that end on the start page when no separate login page is known. The selector LinkedIn gets uses its
+    generated class names, which change with its deploys: heal re-maps it when that happens.
+  - Decision 1 widened (asked, 2026-11-08: "it should be able to remap it if its not complete mapping"): a
+    site with a card can gain actions. request_map with an action it lacks maps that action; with no action
+    it explores again for what the card doesn't have. What's there is never re-mapped (an action it has
+    answers "exists", a broken one starts the heal). The mapper gets the card (`MapRequest.existing`) and
+    adds to it, keeping its sign-in setup; the runtime checks only the new actions' examples and saves a new
+    version, refusing if the card changed while the job ran. LinkedIn gained search_people this way.
+  - Explore is a crawl (asked, 2026-11-08: "deeper and deeper"): from the start page, every kept action's
+    results that link to a new kind of page (by path shape: /in/alice/ and /in/bob/ are one kind) have one
+    such page opened, and Claude proposes what can be read there (details, tabs: posts, comments,
+    reactions...). Up to 3 links deep and 12 new actions per explore. Results that carry ids instead of links
+    (JSON APIs) get the earlier follow-up round from their values. Open: a deep crawl of a site behind a
+    sign-in is a lot of traffic on the requester's account, and actions on people's pages put a real
+    person's id in the shared card's examples (decision 2 says examples hold no personal data).
+  - Decision 2 enforced (asked, 2026-11-08: "Yes, check examples"): before a card is saved, each new
+    action's example values are checked (flowmap/privacy.py): emails and phone numbers by rule; Claude (low
+    effort) judges the rest in context and suggests a public stand-in (a well-known company, a public
+    figure's page, a common term). A stand-in is used only if the action works with it; otherwise the action
+    isn't saved. The saved recording (heal replays it) gets the same values, or is deleted. Ran it on
+    LinkedIn's card: get_profile_experience's example went from a private person's profile to williamhgates
+    (version 4).
+  - The same check covers fixed values in requests (asked, 2026-11-08): a task recorded as "open my
+    profile" bakes the requester's own username or member id into the request, and the shared card would
+    serve their data to everyone. Claude is shown every fixed value (path segments, query and body values);
+    one that belongs to the signed-in person becomes a required input with a public example (kept only if it
+    works), and personal values quoted in descriptions are replaced too. Not built: a per-site "who am I"
+    action, so "my profile" needs the agent to know the user's id.
+  - Inference by evidence, not just resemblance (asked, 2026-11-08: "yeah let's do these"): (1) the recorder
+    points at the results (result_elements: each result's link by role and name, as the tree shows it) and
+    the selector comes from those elements, so badges and formatting never have to be retyped; copying text
+    stays as a fallback. (2) The blocking test: when inference has two or more candidates, the task is
+    replayed with each of the top three blocked in turn; the one whose absence empties the results is the
+    source (flowmap/server.py `_confirm_source`, capture `visible_without`). The page itself is tested last,
+    since blocking it empties any page. Writes still use the held-back request.
+  - The live page isn't the HTML (2026-11-08, from LinkedIn's profiles): a site's scripts can restructure
+    the page after it loads, so the recorder's selector (from the live page) can find nothing in the HTML a
+    plain request gets, though the data is there. When it finds too little, a selector is built from the
+    HTML itself with the same rules (`runtime/extract.py html_selector`), for scoring candidates and for the
+    card. Data kept only inside scripts (no elements) is still not read.
+  - Named writes (asked, 2026-11-08): `request_map` takes `write: true` with a named action (send a connect
+    request, follow, add to cart). It's recorded like explore's writes: the committing click is held back,
+    the action is saved needing confirmation and marked never run until a confirmed call succeeds. A named
+    action whose wording changes something is a write even without the flag (a read can't click a committing
+    button, so it would only fail); payments, deleting and settings are refused by name, as in explore.
+    A task with change wording and no action name ("follow a company page") is sent back at once with what
+    to send instead (action, inputs, write: true), rather than starting an explore of the whole site.
+  - A write's replay arms hold-back at the first click that reads like a change, not the last click
+    (2026-11-08, after a real follow got through): a recording of "follow a company" clicked Follow on the
+    company page, then again from a search; on replay the first click ran before hold-back was armed and
+    LinkedIn received the follow. The recorder and the replay now share one change-word pattern
+    (flowmap/holdback.py WRITES), and the recorder won't accept done on a write until something was held.
+  - Writes are mapped with two more checks (2026-11-08, after follow_company followed the wrong company):
+    an id inside a write's fixed value (`urn:li:fsd_company:74126343`) that an earlier page opened with the
+    inputs shows is read from that page, since every run following the same company left it unchanged
+    (flowmap/infer.py `_ids_from_page`); and before a new write is saved, its steps but the send run through
+    the executor on each tier from its own up, keeping the first that works, or the write isn't saved
+    (runtime/mapping.py `_check_writes`). LinkedIn answered a follow from the impersonate tier with 200 and
+    didn't follow; its writes need the browser tier.

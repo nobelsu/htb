@@ -30,7 +30,7 @@ ENV_KEY_USER = "default"  # the .env key's user
 RESERVED = frozenset({ENV_KEY_USER, "_shared", "admin", "root"})
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{1,31}")
 EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
-KEY_PREFIX = "htb_"
+KEY_PREFIX = "spider_"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS api_users (
@@ -196,7 +196,7 @@ def _verify_password(password: str, stored: str) -> bool:
 
 def mcp_add_command(base_url: str, key: str) -> str:
     """The line a user pastes to connect Claude Code to the gateway."""
-    return f'claude mcp add --transport http htb {base_url.rstrip("/")}/mcp --header "Authorization: Bearer {key}"'
+    return f'claude mcp add --transport http spider {base_url.rstrip("/")}/mcp --header "Authorization: Bearer {key}"'
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -35,7 +35,7 @@ def form_page(error: str = "", name: str = "", email: str = "", status: int = 20
     body = (
         notice(error)
         + '<form class="stack" method="post" action="/signup">'
-        + field("code", "invite code", "password")
+        + field("code", "invite code", code=True)
         + field("name", "username", value=name, autocomplete="username")
         + field("email", "email", "email", value=email, autocomplete="email")
         + field("password", "password", "password", autocomplete="new-password")
@@ -62,7 +62,7 @@ def done_page(name: str, base: str, key: str) -> Response:
     url = base.rstrip("/") + "/mcp"
     command = mcp_add_command(base, key)
     body = (
-        f'<p class="headline" style="padding-top:72px">{esc(name)}</p><div class="rule"></div>'
+        f'<h1 class="title">{esc(name)}</h1><div class="rule"></div>'
         + copy_row("Claude", url.split("://", 1)[-1], url, "Copy the connector URL")
         + copy_row("Claude Code", "claude mcp add", command, "Copy the Claude Code command, which holds your key")
         + bar_link("Go to your account", "/account")

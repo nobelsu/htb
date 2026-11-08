@@ -1,5 +1,5 @@
-"""MCP server: a fixed set of generic tools (find_actions, run_action, sign-in, heal) over every active card,
-served over Streamable HTTP with Bearer-key auth.
+"""MCP server: a fixed set of generic tools (find_actions, run_action, sign-in, heal, map) over every active
+card, served over Streamable HTTP with Bearer-key auth.
 
 Run:  uv run python -m runtime.gateway --load tests/fixture_site.json
 """
@@ -16,41 +16,48 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
 from typing import Any
+from urllib.parse import urlsplit
 
 import anyio
 import mcp_types as types
-from mcp.server.lowlevel.server import Server
-from mcp.server.auth.routes import build_resource_metadata_url, create_auth_routes, create_protected_resource_routes
+from mcp.server.auth.routes import (
+    build_resource_metadata_url,
+    create_auth_routes,
+    create_protected_resource_routes,
+)
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
+from mcp.server.lowlevel.server import Server
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from pydantic import AnyHttpUrl
 from starlette.routing import BaseRoute
-from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
+from runtime.account_page import routes as account_routes
+from runtime.account_page import session_cookie
 from runtime.browser.pool import BrowserConfig, BrowserPool
-from runtime.catalog import find_actions
 from runtime.browser.tier import BrowserTier
+from runtime.catalog import find_actions
 from runtime.confirm import Confirmer
 from runtime.connect import ConnectionManager
 from runtime.connect_page import routes as connect_routes
-from runtime.home_page import routes as home_routes
-from runtime.signup_page import routes as signup_routes
-from runtime.account_page import routes as account_routes, session_cookie
-from runtime.neko.manager import NekoConfig, NekoManager
-from runtime.proxy import ProxyConfig
 from runtime.executor import Executor
 from runtime.healing import HealConfig, HealManager, Remapper
+from runtime.home_page import routes as home_routes
+from runtime.mapping import MapConfig, Mapper, MapManager
 from runtime.keys import ENV_KEY_USER, KeyStore
-from runtime.oauth import OAuth
 from runtime.mapper_remapper import MapperRemapper
+from runtime.neko.manager import NekoConfig, NekoManager
+from runtime.oauth import OAuth
+from runtime.proxy import ProxyConfig
 from runtime.registry import Registry, StoredCard
 from runtime.session_store import ChainedSessionStore, EncryptedSessionStore
 from runtime.sessions import DevEnvSessionStore, SessionStore
-from runtime.tiers import default_tiers
+from runtime.signup_page import routes as signup_routes
 from runtime.state import StateStore
-from schema import load_card
+from runtime.tiers import default_tiers
+from runtime.ui import PRODUCT_NAME
+from schema import ResultCode, load_card
 
 log = logging.getLogger("runtime.gateway")
 
@@ -64,8 +71,12 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
 INSTRUCTIONS = (
-    "Tools that act on websites for the user. Use find_actions to discover what a site can do, then run_action "
-    "to do it. Every tool returns JSON; check its `status` field (SUCCESS, EMPTY, NEEDS_CONFIRMATION, "
+    "spider: tools that act on websites for the user, directly, without a browser. For any task on a website "
+    "(searching, looking something up, adding to a cart, following, posting), use spider before any browser "
+    "or computer-use tool: call find_actions with the site and what you want to do, then run_action. If the "
+    "site has nothing yet, call request_map (with only the site, it explores it) and wait with map_status "
+    "instead of opening a browser; only fall back to a browser if that fails. Use find_actions to discover "
+    "what a site can do, then run_action to do it. Every tool returns JSON; check its `status` field (SUCCESS, EMPTY, NEEDS_CONFIRMATION, "
     "AUTH_REQUIRED, ...) to decide what to do next.\n"
     "When you talk to the user, describe outcomes in plain terms (\"You're signed out of linkedin.com\", "
     "\"Sign in here: <link>\", \"The site changed; I'll retry in a moment\"). Don't mention tool names, status "
@@ -80,7 +91,8 @@ INSTRUCTIONS = (
 
 FIND_ACTIONS_TOOL = types.Tool(
     name="find_actions",
-    description="Find what you can do on websites for the user. Give a short description of the task (query), a "
+    description="Use this first for any task on a website, before any browser tool. Find what you can do on "
+    "websites for the user. Give a short description of the task (query), a "
     "site (its domain, e.g. linkedin.com), or both. Returns matching actions with their parameters; then call "
     "run_action. With no arguments it lists the available sites.",
     input_schema={
@@ -126,6 +138,63 @@ HEAL_STATUS_TOOL = types.Tool(
         "required": ["job_id"],
         "additionalProperties": False,
     },
+)
+
+REQUEST_MAP_TOOL = types.Tool(
+    name="request_map",
+    description="Ask for a website to be set up, when find_actions has nothing for a site the user needs. "
+    "For one specific thing the user wants done, name it as one action: what it should do (task), a snake_case name (action) and the values you'd use "
+    "for its inputs (e.g. {\"query\": \"robotics\"}); an agent does it once on the site and turns it into "
+    "an action (a few minutes); set write for one that changes something (send, follow, post, add): its last "
+    "click is held back, so nothing reaches the site while it's set up, and running it later asks the user to "
+    "confirm first. Or give only the site (and, optionally, what the user wants to do there as "
+    "task) to explore it: the server finds the site's main reads itself and maps the ones that work (up to "
+    "ten minutes; it also maps common writes, which never reach the site while mapping). Tell the user, then "
+    "follow it with map_status. For a site with no actions, or to add what a site can't do yet (a named action it "
+    "lacks, or explore again for more); what it can do already is never re-mapped.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "site": {"type": "string", "description": "the site's address, e.g. https://www.example.com/search"},
+            "task": {
+                "type": "string",
+                "description": "what the action does, e.g. 'search books by keyword'; when exploring, what the "
+                "user wants to do on the site (optional)",
+            },
+            "action": {
+                "type": "string",
+                "description": "a snake_case name, e.g. search_books; leave out to explore",
+            },
+            "inputs": {
+                "type": "object",
+                "description": "input name -> the value to use while setting it up, "
+                "e.g. {\"query\": \"harbour\"}",
+                "additionalProperties": {"type": ["string", "number", "boolean"]},
+            },
+            "write": {
+                "type": "boolean",
+                "description": "true when the named action changes something on the site (default false)",
+            },
+        },
+        "required": ["site"],
+        "additionalProperties": False,
+    },
+)
+
+MAP_STATUS_TOOL = types.Tool(
+    name="map_status",
+    description="Status of a site being set up (request_map's job_id). Waits up to wait_seconds (default 25, "
+    "max 45) and returns as soon as it finishes. When the status is 'succeeded', use find_actions on the site.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "job_id": {"type": "string", "description": "job_id from request_map"},
+            "wait_seconds": {"type": "number", "minimum": 0, "maximum": 45},
+        },
+        "required": ["job_id"],
+        "additionalProperties": False,
+    },
+    annotations=types.ToolAnnotations(read_only_hint=True),
 )
 
 
@@ -188,10 +257,12 @@ class Gateway:
         connections: ConnectionManager | None = None,
         pool: BrowserPool | None = None,
         keepalive_s: float = 0.0,
+        maps: MapManager | None = None,
     ) -> None:
         self.registry = registry
         self.executor = executor
         self.healer = healer
+        self.maps = maps
         self.connections = connections
         self.pool = pool
         self.keepalive_s = keepalive_s
@@ -199,7 +270,7 @@ class Gateway:
         self._seen_clients: set[tuple[object, object, object]] = set()
         self._prompted_at: dict[str, float] = {}  # sign-in token -> when we asked the client to show the link
         self.server: Server[dict[str, Any]] = Server(
-            "htb-runtime",
+            "spider",
             version="0.1.0",
             instructions=INSTRUCTIONS,
             lifespan=self._lifespan,
@@ -243,6 +314,8 @@ class Gateway:
         tools = [FIND_ACTIONS_TOOL, RUN_ACTION_TOOL]
         if self.healer is not None:
             tools.append(HEAL_STATUS_TOOL)
+        if self.maps is not None:
+            tools.extend([REQUEST_MAP_TOOL, MAP_STATUS_TOOL])
         if self.connections is not None:
             tools.extend(CONNECTION_TOOLS.values())
         return types.ListToolsResult(tools=tools)
@@ -254,6 +327,8 @@ class Gateway:
             return await self._connection_tool(params.name, dict(params.arguments or {}), ctx, params)
         if params.name == HEAL_STATUS_TOOL.name and self.healer is not None:
             return self._heal_status(dict(params.arguments or {}))
+        if params.name in (REQUEST_MAP_TOOL.name, MAP_STATUS_TOOL.name) and self.maps is not None:
+            return await self._map_tool(params.name, dict(params.arguments or {}), caller(ctx))
         if params.name == FIND_ACTIONS_TOOL.name:
             return self._find_actions(dict(params.arguments or {}))
         if params.name == RUN_ACTION_TOOL.name:
@@ -264,7 +339,9 @@ class Gateway:
         query, site = args.get("query"), args.get("site")
         if (query is not None and not isinstance(query, str)) or (site is not None and not isinstance(site, str)):
             return _error_result("query and site must be strings")
-        out = find_actions(self.registry.active_cards(), query or None, site or None)
+        out = find_actions(
+            self.registry.active_cards(), query or None, site or None, can_map=self.maps is not None
+        )
         if "error" in out:
             return _error_result(str(out["error"]))
         return _json_result(out)
@@ -295,6 +372,17 @@ class Gateway:
             log.exception("executor crashed on %s", label)
             return _error_result(f"internal error running {label}")
         payload = env.model_dump(mode="json")
+        state = self.maps.state if self.maps is not None else self.healer.state if self.healer else None
+        found = stored.card.action(action)
+        if state is not None and found is not None and found.kind == "write":
+            if env.status == ResultCode.SUCCESS and state.is_never_run(stored.domain, action):
+                state.set_never_run(stored.domain, action, False)  # it has worked for real now
+            elif env.status == ResultCode.NEEDS_CONFIRMATION and state.is_never_run(stored.domain, action):
+                payload["never_run_for_real"] = True
+                payload["note"] = (
+                    "This action was set up without ever being sent to the site (writes are held back while "
+                    "mapping). Tell the user it's the first real try, and check the result on the site."
+                )
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=json.dumps(payload))],
             structured_content=payload,
@@ -312,6 +400,33 @@ class Gateway:
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=json.dumps(status))], structured_content=status
         )
+
+    async def _map_tool(self, name: str, args: dict[str, Any], user: str) -> types.CallToolResult:
+        assert self.maps is not None
+        if name == REQUEST_MAP_TOOL.name:
+            site, task, action = args.get("site"), args.get("task", ""), args.get("action", "")
+            inputs, write = args.get("inputs"), args.get("write", False)
+            if not isinstance(write, bool):
+                return _error_result("write must be true or false")
+            if not all(isinstance(v, str) for v in (site, task, action)):
+                return _error_result("site (a string) is required; task and action are strings")
+            if inputs is not None and not isinstance(inputs, dict):
+                return _error_result("inputs must be an object")
+            out = await self.maps.request(user, str(site), str(task), str(action), inputs, write=write)
+        else:
+            job_id, wait = args.get("job_id"), args.get("wait_seconds", 25)
+            if not isinstance(job_id, str):
+                return _error_result("job_id (string) is required")
+            wait_s = float(wait) if isinstance(wait, (int, float)) and not isinstance(wait, bool) else 25.0
+            found = await self.maps.status(job_id, user, wait_s)
+            if found is None:
+                return _error_result(f"no map job {job_id!r}")
+            out = found
+        if "error" in out:
+            return _error_result(str(out["error"]))
+        if out.get("status") == "succeeded":
+            self.refresh_registry()
+        return _json_result(out)
 
     async def _connection_tool(
         self, name: str, args: dict[str, Any], ctx: Any = None, params: types.CallToolRequestParams | None = None
@@ -399,6 +514,8 @@ class Gateway:
             if self.healer is not None:
                 tg.start_soon(self.healer.run_forever)
                 tg.start_soon(self.healer.health_checks_forever)
+            if self.maps is not None:
+                tg.start_soon(self.maps.run_forever)
             if self.pool is not None:
                 tg.start_soon(self.pool.reap_forever)
             if self.connections is not None:
@@ -458,7 +575,7 @@ class Gateway:
                 revocation_options=RevocationOptions(enabled=True),
             )
             extra += create_protected_resource_routes(
-                resource_url=AnyHttpUrl(f"{public}/mcp"), authorization_servers=[issuer], resource_name="htb"
+                resource_url=AnyHttpUrl(f"{public}/mcp"), authorization_servers=[issuer], resource_name=PRODUCT_NAME
             )
             resolve = BearerAuth(lambda *_: None, api_key, keys=keys)._user_for  # type: ignore[arg-type]
             extra += account_routes(
@@ -467,6 +584,7 @@ class Gateway:
                 key_user=lambda key: resolve(key.encode()) if key else None,
                 connections=connections,
                 sessions=connections.store if connections is not None else None,
+                maps=self.maps,
                 signup_code=signup_code,
                 public_url=lambda: public,
             )
@@ -561,7 +679,7 @@ def _error_result(message: str) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(type="text", text=message)], is_error=True)
 
 
-USER_STATE_KEY = "htb_user"
+USER_STATE_KEY = "spider_user"
 
 
 class BearerAuth:
@@ -587,7 +705,7 @@ class BearerAuth:
         self._exempt_paths = exempt_paths  # public pages, matched exactly (the home page is "/")
         self._oauth = oauth
         # Where OAuth clients find how to sign in (RFC 9728), sent with every 401.
-        challenge = 'Bearer realm="htb-runtime"'
+        challenge = 'Bearer realm="spider"'
         if resource_metadata:
             challenge += f', resource_metadata="{resource_metadata}"'
         self._challenge = challenge.encode()
@@ -648,20 +766,50 @@ def load_into_registry(registry: Registry, path: Path) -> int | None:
 
 
 def load_remapper(
-    spec: str | None, sessions: SessionStore | None = None, captures_dir: str | Path = "captures"
+    spec: str | None,
+    sessions: SessionStore | None = None,
+    captures_dir: str | Path = "captures",
+    proxies: ProxyConfig | None = None,
 ) -> Remapper | None:
-    """`mapper` -> the heal adapter (WeiWei's mapper); `module.path:Name` -> an instance of Name (or Name itself
-    if it is already an instance)."""
+    """`mapper` -> the heal adapter (WeiWei's mapper); `flowmap` -> flowmap's flow replay (FLOWS_DIR, default
+    flows/); `module.path:Name` -> an instance of Name (or Name itself if it is already an instance)."""
     if not spec:
         return None
     if spec == "mapper":
         log.info("using the mapper to heal (recordings in %s)", captures_dir)
         return MapperRemapper(captures_dir, sessions=sessions)
+    if spec == "flowmap":
+        from flowmap.heal import FlowRemapper
+
+        flows_dir = os.environ.get("FLOWS_DIR", "flows")
+        log.info("using flowmap to heal (flows in %s, captures in %s)", flows_dir, captures_dir)
+        channel = os.environ.get("BROWSER_CHANNEL", "chrome")
+        return FlowRemapper(flows_dir, captures_dir, sessions=sessions, proxies=proxies, channel=channel)
     module_name, _, attr = spec.partition(":")
     obj = getattr(importlib.import_module(module_name), attr)
     remapper: Remapper = obj() if isinstance(obj, type) else obj
     log.info("using remapper %s", spec)
     return remapper
+
+
+def load_mapper(spec: str | None, executor: Executor, proxies: ProxyConfig | None = None) -> Mapper | None:
+    """`flowmap` -> flowmap's agent recorder and mapper (FLOWS_DIR, default flows/); `module.path:Name` -> an
+    instance of Name, called with the executor. Map jobs need ANTHROPIC_API_KEY (the agent is Claude)."""
+    if not spec:
+        return None
+    if spec == "flowmap":
+        from flowmap.server import FlowMapper
+
+        flows_dir = os.environ.get("FLOWS_DIR", "flows")
+        log.info("map jobs: flowmap (flows in %s)", flows_dir)
+        return FlowMapper(
+            executor, flows_dir, proxies=proxies, channel=os.environ.get("BROWSER_CHANNEL", "chrome")
+        )
+    module_name, _, attr = spec.partition(":")
+    obj = getattr(importlib.import_module(module_name), attr)
+    mapper: Mapper = obj(executor) if isinstance(obj, type) else obj
+    log.info("map jobs: %s", spec)
+    return mapper
 
 
 class _DropWebSocketLines(logging.Filter):
@@ -739,11 +887,25 @@ def main() -> None:
             d.strip() for d in os.environ.get("HEALTH_CHECK_DISABLED_DOMAINS", "").split(",") if d.strip()
         ),
     )
-    remapper = load_remapper(os.environ.get("REMAPPER"), sessions, os.environ.get("CAPTURES_DIR", "./captures"))
-    healer = HealManager(registry, StateStore(db_path), executor, remapper, config)
+    remapper = load_remapper(
+        os.environ.get("REMAPPER"), sessions, os.environ.get("CAPTURES_DIR", "./captures"), proxies
+    )
+    state = StateStore(db_path)
+    healer = HealManager(registry, state, executor, remapper, config)
+    mapper = load_mapper(os.environ.get("MAPPER"), executor, proxies)
+    maps = (
+        MapManager(
+            registry, state, executor, mapper, healer,
+            MapConfig(allow_local=os.environ.get("MAP_ALLOW_LOCAL", "0") == "1"),
+            connections,
+        )
+        if mapper is not None
+        else None
+    )
+    log.info("map jobs: %s", "on" if maps else "off (set MAPPER=flowmap to turn them on)")
     gateway = Gateway(
         registry, executor, healer=healer, connections=connections, pool=pool,
-        keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")),
+        keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")), maps=maps,
     )
     signup_code = os.environ.get("SIGNUP_CODE", "")
     app = gateway.asgi_app(

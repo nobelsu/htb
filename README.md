@@ -1,4 +1,4 @@
-# htb
+# spider
 
 Hack the Burgh 2026: turn websites into agent-callable actions ("cards").
 Spec: `CARD_SPEC.md` (v0.4, frozen). Runtime judgement calls: `DECISIONS.md`.

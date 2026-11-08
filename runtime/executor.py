@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -45,6 +46,7 @@ from schema.params import CONFIRMATION_ARG, coerce_params, confirmation_summary,
 from schema.placeholders import parse_step_ref
 
 log = logging.getLogger("runtime.executor")
+REDIRECT_LOOP = re.compile(r"TooManyRedirects|too many redirects|redirects followed|redirect loop", re.I)
 
 ACTION_CAP_S = 30.0
 DEFAULT_TIMEOUT_MS = 10_000
@@ -106,9 +108,10 @@ class _Run:
     identity: BrowserIdentity | None = None  # the sign-in's device identity; every tier presents it
     proxy: ProxySpec | None = None  # the sign-in's residential proxy session; every tier uses it
     steps: dict[tuple[str, str], list[Any]] = field(default_factory=dict)
+    generated: dict[str, Any] = field(default_factory=dict)  # gen.* values: one per name for the whole call
 
     def context(self) -> Context:
-        return Context(self.card.base_url, self.params, self.session.cookies, self.steps)
+        return Context(self.card.base_url, self.params, self.session.cookies, self.steps, self.generated)
 
     def headers_for(self, req: Request) -> dict[str, str]:
         return merge_headers(self.card.defaults.headers, self.action.headers, req.headers)
@@ -183,41 +186,71 @@ class Executor:
             cookies = self.sessions.get(user, card.domain, provider_id)
             if cookies is None:
                 return R.AUTH_REQUIRED
-        check = provider.session_check
-        tier = self.start_tier(tier or card.defaults.tier)
         if from_store and identity is None:
             identity = self.identity_for(user, card.domain, provider_id)
+        got, refreshed = await self._session_call(card, provider, user, cookies, tier, identity)
+        if isinstance(got, ResultCode):
+            return got
+        verdict = self.session_verdict(card, provider, got)
+        if verdict is None and from_store:
+            self._save_refreshed(user, card.domain, provider_id, cookies, refreshed)
+        return verdict
+
+    async def session_response(
+        self, card: Card, provider_id: str, user: str, cookies: dict[str, str], *, tier: Tier | None = None
+    ) -> HttpResponse | ResultCode:
+        """The provider's `session_check` response itself, sent with exactly these cookies (``{}``: signed
+        out), for the mapper to work out what a signed-out response looks like. Nothing is saved."""
+        provider = card.provider(provider_id)
+        if provider is None:
+            return R.ERROR
+        got, _ = await self._session_call(
+            card, provider, user, cookies, tier, self.identity_for(user, card.domain, provider_id)
+        )
+        return got
+
+    async def _session_call(
+        self,
+        card: Card,
+        provider: ConnectProvider,
+        user: str,
+        cookies: Cookies,
+        tier: Tier | None,
+        identity: BrowserIdentity | None,
+    ) -> tuple[HttpResponse | ResultCode, Cookies]:
+        check = provider.session_check
+        tier = self.start_tier(tier or card.defaults.tier)
         session = self.tiers[tier].open(
             card.base_url,
             cookies,
-            ProfileKey(user, card.domain, provider_id),
+            ProfileKey(user, card.domain, provider.id),
             identity,
-            self.proxy_for(user, card.domain, provider_id, card.base_url),
+            self.proxy_for(user, card.domain, provider.id, card.base_url),
         )
         try:
             try:
                 await session.prepare()
             except Exception as e:
                 log.warning("session_check could not start the %s tier: %s", tier, e)
-                return R.ERROR
+                return R.ERROR, {}
             ctx = Context(card.base_url, {}, session.cookies, {})
             try:
                 built = build_request(check, merge_headers(card.defaults.headers, check.headers), ctx)
             except MissingCookie:
-                return R.AUTH_EXPIRED
+                return R.AUTH_EXPIRED, {}
             except TemplateError:
-                return R.ERROR
+                return R.ERROR, {}
             try:
                 resp = await session.send(built, DEFAULT_TIMEOUT_MS / 1000)
-            except (TransportTimeout, TransportError):
-                return R.ERROR
-            refreshed = session.site_cookies
+            except TransportError as e:
+                # A site that has ended a session often bounces every request in a loop (LinkedIn: /feed/ to
+                # /feed/, clearing its login cookie each time): on the sign-in check that means signed out.
+                return (R.AUTH_EXPIRED if REDIRECT_LOOP.search(str(e)) else R.ERROR), {}
+            except TransportTimeout:
+                return R.ERROR, {}
+            return resp, session.site_cookies
         finally:
             await session.aclose()
-        verdict = self._session_verdict(card, provider, resp)
-        if verdict is None and from_store:
-            self._save_refreshed(user, card.domain, provider_id, cookies, refreshed)
-        return verdict
 
     def proxy_for(self, user: str, domain: str, provider_id: str, base_url: str) -> ProxySpec | None:
         """The sign-in's residential proxy session (None: go direct)."""
@@ -240,7 +273,7 @@ class Executor:
         log.info("saved a refreshed sign-in for %s/%s/%s (%d cookie(s) changed)", user, domain, provider_id, changed)
 
     @staticmethod
-    def _session_verdict(card: Card, provider: ConnectProvider, resp: HttpResponse) -> ResultCode | None:
+    def session_verdict(card: Card, provider: ConnectProvider, resp: HttpResponse) -> ResultCode | None:
         check = provider.session_check
         listed = resp.status in check.expect.status
         if not listed and resp.status == 429:

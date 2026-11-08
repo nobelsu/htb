@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import secrets
+import time
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -43,6 +46,8 @@ class Context:
     cookies: Mapping[str, str] = field(default_factory=dict)
     # (step_id, extract_key) -> every match of that extract
     steps: Mapping[tuple[str, str], list[Any]] = field(default_factory=dict)
+    # gen.NAME -> its value for this call, made on first use (one value per name per call)
+    generated: dict[str, Any] = field(default_factory=dict)
 
 
 # ---- filters ---------------------------------------------------------------
@@ -109,6 +114,11 @@ def lookup(ph: Placeholder, ctx: Context) -> Any:
         if name not in ctx.params:
             raise MissingParam(f"param {name!r} has no value")
         return ctx.params[name]
+    if ph.namespace == "gen":
+        name = ph.path[0]
+        if name not in ctx.generated:
+            ctx.generated[name] = _generate(name)
+        return ctx.generated[name]
     if ph.namespace == "session":
         name = ph.path[1]
         if name not in ctx.cookies:
@@ -119,6 +129,14 @@ def lookup(ph: Placeholder, ctx: Context) -> Any:
     if len(matches) != 1:
         raise StepValueError(step_id, key, len(matches))
     return matches[0]
+
+
+def _generate(name: str) -> Any:
+    if name == "uuid":
+        return str(uuid.uuid4())
+    if name == "hex":
+        return secrets.token_hex(16)
+    return int(time.time() * 1000)  # now_ms
 
 
 def evaluate(ph: Placeholder, ctx: Context) -> Any:

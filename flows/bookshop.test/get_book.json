@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "domain": "bookshop.test",
+  "action": "get_book",
+  "inputs": {
+    "book_id": {
+      "marker": true,
+      "examples": [
+        "b001",
+        "b005"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "op": "goto",
+      "url": "http://127.0.0.1:8910/book/{{book_id}}"
+    }
+  ],
+  "results_selector": "#title"
+}

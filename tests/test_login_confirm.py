@@ -182,8 +182,8 @@ async def test_signed_in_button_on_the_page(weak_gateway: tuple[str, FakeNeko], 
             await page.click("#done")
             await page.wait_for_selector("#done-panel", state="visible")
             assert "You're in." in await page.inner_text("#done-panel")
-            assert await page.is_hidden("#viewer") and await page.inner_text(".word") == "Done"
-            assert "inv" in (await page.get_attribute(".wrap", "class") or "")  # the page turns black
+            assert await page.is_hidden("#viewer")
+            assert "inv" in (await page.get_attribute(".wrap", "class") or "")  # the page turns to night
             await browser.close()
         assert envelope(await client.call_tool("poll_connection", {"domain": DOMAIN}))["status"] == "connected"
         assert envelope(await client.call_tool(*act("list_orders", {})))["status"] == "SUCCESS"
