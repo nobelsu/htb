@@ -88,7 +88,7 @@ def fixture_captures(chromium, tmp_path_factory):
     """Capture the fixture site's tasks once per session. Returns a callable(task, run) -> bundle dir."""
     from fixture_site import scripts
 
-    from harmap.capture.record import CaptureConfig, record
+    from spider.harmap.capture.record import CaptureConfig, record
 
     root = tmp_path_factory.mktemp("captures")
     site = FixtureSite().start()

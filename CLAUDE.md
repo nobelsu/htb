@@ -10,8 +10,8 @@ If code and spec disagree, the spec wins; raise a question rather than changing 
 ## Ownership (do not edit the other side's code)
 | Area | Owner | Paths |
 |---|---|---|
-| Mapper, capture scripts, card generation | Mapper owner | `harmap/`, `docs/harmap-design.md` |
-| Executor, MCP server, browser worker, login flow, shared `schema/` package | Runtime owner | everything else |
+| Mapper, capture scripts, card generation | Mapper owner | `src/spider/harmap/`, `docs/harmap.md` |
+| Executor, MCP server, browser worker, login flow, shared `src/spider/card/` package | Runtime owner | everything else |
 
 ## Repo-wide rules
 - Never commit captures, HAR files, `state.json`, cookies or `.env`. They contain live login sessions.

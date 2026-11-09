@@ -116,7 +116,7 @@ agent (Claude) ──MCP──▶ spider gateway ──▶ executor ──▶ th
 
 ## Design profile (use for the deck's look)
 
-From the product's own pages (`runtime/web/ui.py`) and the design rules.
+From the product's own pages (`src/spider/web/design.py`) and the design rules.
 
 - **Name:** spider, always lowercase, as a wordmark. Theme: web crawling, spiders, orb webs. ("Silk Road"
   was rejected.)
@@ -145,4 +145,4 @@ From the product's own pages (`runtime/web/ui.py`) and the design rules.
 
 - `README.md` (setup, pages, users and keys), `CARD_SPEC.md` (the card format), `DECISIONS.md` (every
   judgement call: L-series runtime and sign-in, M-series mapper), `docs/flowmap.md` (the mapper),
-  `docs/harmap-design.md` (harmap), `action_map.example.json` (an example card).
+  `docs/harmap.md` (harmap), `action_map.example.json` (an example card).

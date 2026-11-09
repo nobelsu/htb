@@ -2,7 +2,7 @@
 
 Card `schema_version` for this spec: `"0.4"`.
 
-One JSON file per site. Example: `action_map.example.json`. Checker: `tools/check_card.py`.
+One JSON file per site. Example: `action_map.example.json`. Checker: `src/spider/card/check.py`.
 Stored in SQLite `action_maps.map_json`, one row per version, one active version per domain.
 
 **All LinkedIn URLs, `queryId`s and JSON paths in the example are illustrative**, not just the ones marked `PLACEHOLDER`. Real values come from a capture.
@@ -10,7 +10,7 @@ Stored in SQLite `action_maps.map_json`, one row per version, one active version
 ## Ownership
 - The **mapper** writes cards. The **executor** reads them and never edits them.
 - Runtime learnings (which tier worked, failure and EMPTY counts) go in `action_state`, not in the card.
-- Cards are validated against the shared Pydantic models in the importable `schema/` package before saving. The mapper and executor import the same package.
+- Cards are validated against the shared Pydantic models in the importable `src/spider/card/` package before saving. The mapper and executor import the same package.
 - **Owners:** MCP server, executor, browser worker and login flow belong to the runtime owner. Mapper, capture scripts and card generation belong to the mapper owner.
 
 ## Site-level fields

@@ -4,15 +4,15 @@ from collections.abc import Iterator
 
 import pytest
 
-from flowmap.flows import Click, Fill, Flow, Goto, Input, LocatorCall, Press, Select, WaitFor
+from spider.flowmap.record.flows import Click, Fill, Flow, Goto, Input, LocatorCall, Press, Select, WaitFor
 from tests.conftest import LiveServer
 from tests.sites.bookshop import app, state
 
 
 @pytest.fixture(autouse=True)
 def no_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``python -m flowmap`` loads .env; in tests that would bring in a real ANTHROPIC_API_KEY (paid labelling
-    calls, and other tests then see the key too). Tests run with neither."""
+    """``python -m spider.flowmap`` loads .env; in tests that would bring in a real ANTHROPIC_API_KEY (paid
+    labelling calls, and other tests then see the key too). Tests run with neither."""
     monkeypatch.setattr("dotenv.load_dotenv", lambda *args, **kwargs: False)
     for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
         monkeypatch.delenv(name, raising=False)

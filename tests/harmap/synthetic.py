@@ -88,8 +88,8 @@ def make_bundle(
     domain: str = "example.com",
 ):
     """An in-memory Bundle from synthetic HAR entries (M1 filter applied, like load_bundle)."""
-    from harmap.pipeline.m1_load import entry_from_har, filter_entries
-    from harmap.pipeline.runs import Bundle
+    from spider.harmap.helpers.runs import Bundle
+    from spider.harmap.pipeline.load import entry_from_har, filter_entries
 
     is_marker_run = run in ("m1", "m2")
     meta = {

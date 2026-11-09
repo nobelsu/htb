@@ -4,18 +4,18 @@ import sys
 
 import pytest
 
-import harmap
-from harmap import cli
+import spider.harmap
+from spider.harmap import cli
 
 
 def test_version_constants():
-    assert harmap.__version__ == "0.1.0"
-    assert harmap.SCHEMA_VERSION == "0.4"
+    assert spider.harmap.__version__ == "0.1.0"
+    assert spider.harmap.SCHEMA_VERSION == "0.4"
 
 
 def test_module_entrypoint_help():
     out = subprocess.run(
-        [sys.executable, "-m", "harmap", "--help"], capture_output=True, text=True, check=True
+        [sys.executable, "-m", "spider.harmap", "--help"], capture_output=True, text=True, check=True
     )
     for command in ("capture", "map", "validate"):
         assert command in out.stdout

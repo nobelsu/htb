@@ -4,8 +4,8 @@ import copy
 import json
 from pathlib import Path
 
-from harmap import checks
-from harmap.validate import live_validate, run_check_card, static_validate
+from spider.harmap.helpers import checks
+from spider.harmap.validate import live_validate, run_check_card, static_validate
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = json.loads((ROOT / "action_map.example.json").read_text())
@@ -14,7 +14,7 @@ EXAMPLE = json.loads((ROOT / "action_map.example.json").read_text())
 def test_spec_example_passes_every_checker():
     v = static_validate(EXAMPLE)
     assert v.ok, v.errors
-    assert v.ran[:2] == ["schema.validate_card", "tools/check_card.py"]
+    assert v.ran[:2] == ["spider.card.validate_card", "card/check.py"]
 
 
 def test_invalid_card_reports_schema_and_check_card_errors():

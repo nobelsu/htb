@@ -38,27 +38,44 @@ agent (Claude) --MCP--> gateway --> executor --> the site's own HTTP endpoints
 
 ## Repository
 
+All code is one package, `spider`, under `src/`. Tests mirror it under `tests/`.
+
 | Path | What |
 |---|---|
-| `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card |
-| `cards/` | The live, checked cards: linkedin.com (12 actions) and amazon.co.uk (2). Explained in `docs/cards.md` |
-| `schema/` | Card and result models, `validate_card()`, placeholders |
-| `runtime/gateway.py` | The MCP gateway: tools, pages and jobs wired together (`python -m runtime.gateway`) |
-| `runtime/run/` | Running an action: executor, templates, extraction, signals, tiers, `browser/` (real Chrome tabs), confirmation ids, redaction |
-| `runtime/signin/` | Sign-in: the connect flow, `neko/` (remote sign-in browsers), encrypted sessions, device identity, proxy |
-| `runtime/jobs/` | Heal jobs and map jobs, and the adapter to harmap |
-| `runtime/store/` | SQLite: card registry and search, users and API keys, job state |
-| `runtime/web/` | The gateway's pages and the OAuth sign-in for regular Claude |
-| `flowmap/` | The mapper the product runs: record, replay, infer, assemble, heal, explore |
-| `harmap/` | Harmap: capture pipeline and explorer |
-| `tools/check_card.py` | Checks a card file against the spec without running it |
-| `tests/runtime/`, `tests/flowmap/`, `tests/harmap/` | Tests for each package |
+| `src/spider/card/` | The card format in code: models, result envelope, placeholders, validation, `python -m spider.card.check` |
+| `src/spider/gateway.py` | The MCP gateway: tools, pages and jobs wired together (`python -m spider.gateway`) |
+| `src/spider/run/` | Running an action: the executor, confirmation ids and redaction |
+| `src/spider/run/request/` | Building each request (templates), reading the answer (extract), spotting signals |
+| `src/spider/run/tiers/` | How requests go out: plain HTTP and a browser fingerprint (`http`), or a real Chrome tab (`browser`) |
+| `src/spider/signin/` | Signing users in: the flow, device identity, proxy, `sessions/` (stored sign-ins), `neko/` (remote browsers) |
+| `src/spider/jobs/` | Heal jobs and map jobs, and the adapter that lets harmap heal |
+| `src/spider/store/` | SQLite: card registry and search, users and keys, job records |
+| `src/spider/web/` | The page design, OAuth for regular Claude, and `pages/` (home, sign-up, account, website sign-in) |
+| `src/spider/flowmap/` | The mapper the product runs: `record/`, `infer/`, `serve/` (map jobs and healing) |
+| `src/spider/harmap/` | The earlier mapper: `capture/`, `pipeline/`, `helpers/` |
 | `tests/sites/` | Test sites: the demo shop (`fixture_site/`, card `fixture_site.json`) and the bookshop |
+| `cards/` | The live, checked cards: linkedin.com (12 actions) and amazon.co.uk (2). Explained in `docs/cards.md` |
+| `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card |
 | `flows/bookshop.test/` | Example flowmap recordings |
-| `docs/` | Cards explained (`cards.md`), the mappers (`flowmap.md`, `harmap-design.md`), the pitch context |
+| `docs/` | Cards (`cards.md`), the two mappers (`flowmap.md`, `harmap.md`), the pitch context |
 
-`runtime/registry.py`, `executor.py`, `confirm.py` and `sessions.py` are old import paths kept for `harmap/`.
 `DECISIONS.md` records every judgement call made while building (L-series runtime and sign-in, M-series mapper).
+
+## Two mappers
+
+A mapper turns a task done once in a browser into a card. The repository has two. **flowmap is the one the
+product runs:** map jobs (`request_map`), healing and nearly every action in `cards/` come from it, and it is
+what the Hack the Burgh demo used. harmap came first; three LinkedIn actions (`get_me`,
+`send_connection_request`, `start_conversation`) and the card format's streamed-rows support come from it.
+
+| | flowmap | harmap |
+|---|---|---|
+| Recording | Once, by Claude (`--agent`) or a person, saved as browser steps | Three or four times by hand (two with marker values, one real, one on page 2), saved as network traffic (HAR) |
+| Finding the request | Replays the steps itself with fresh markers, matches what the page shows to the answers, and confirms by blocking the request: if the results vanish, that request is the action | Searches the saved traffic for the markers, in nine steps (`pipeline/`) |
+| Where it runs | Command line, and inside the gateway as map jobs | Command line only |
+| Writes | The send is held back from the first click that would commit; the steps before it are tried on each tier before saving | The send is held back during capture |
+| Privacy | Examples and fixed values checked for personal data (rules, then Claude) | No live secrets in the card |
+| Healing | Replays just the broken action | Re-records and re-maps the whole site |
 
 ## Quick start
 
@@ -71,14 +88,14 @@ cp .env.example .env
 ```
 
 Set `GATEWAY_API_KEY` and `CONFIRMATION_SECRET` in `.env`, and `SESSION_KEY`
-(`uv run python -m runtime.signin.session_store` prints one). Then run the demo shop and the gateway, in two terminals:
+(`uv run python -m spider.signin.sessions.encrypted` prints one). Then run the demo shop and the gateway, in two terminals:
 
 ```bash
 uv run uvicorn tests.sites.fixture_site.app:app --port 8900
 ```
 
 ```bash
-uv run python -m runtime.gateway --load tests/sites/fixture_site.json
+uv run python -m spider.gateway --load tests/sites/fixture_site.json
 ```
 
 Add it to Claude Code:
@@ -92,7 +109,7 @@ Then ask Claude: "use spider to search the fixture.test shop for lamps".
 To also load the real sites' cards (LinkedIn needs each user to sign in with their own account):
 
 ```bash
-uv run python -m runtime.gateway --load tests/sites/fixture_site.json --load cards/linkedin.com.json --load cards/amazon.co.uk.json
+uv run python -m spider.gateway --load tests/sites/fixture_site.json --load cards/linkedin.com.json --load cards/amazon.co.uk.json
 ```
 
 The demo shop (`tests/sites/fixture_site/`) has 21 actions covering every runtime case: reads, writes that need
@@ -117,7 +134,7 @@ Claude).
 | `connection_status` | Which sites the user is signed in to |
 | `disconnect` | Delete a stored sign-in and its browser profile |
 
-Every result is one envelope (`schema/envelope.py`): a status (`SUCCESS`, `EMPTY`, `NEEDS_CONFIRMATION`,
+Every result is one envelope (`src/spider/card/envelope.py`): a status (`SUCCESS`, `EMPTY`, `NEEDS_CONFIRMATION`,
 `AUTH_EXPIRED`, `PAGE_CHANGED`, `BLOCKED`, ...), the data, and what to do next.
 
 ## Using spider from regular Claude (web, desktop, phone)
@@ -126,7 +143,7 @@ In Claude: Customize, Connectors, Add custom connector, URL `<PUBLIC_BASE_URL>/m
 itself and opens spider's sign-in page (password, an API key, or a new account with the invite code).
 `PUBLIC_BASE_URL` must be the https address people reach, for example an ngrok domain.
 
-The gateway serves its own pages (`runtime/web/ui.py`): home `/`, sign-up `/signup`, sign-in `/account/login`, the
+The gateway serves its own pages (`src/spider/web/design.py`): home `/`, sign-up `/signup`, sign-in `/account/login`, the
 account page `/account` (waiting sign-ins, sites, connected apps, API key), Claude's sign-in `/oauth/login`, and
 the website sign-in `/connect/<token>`. `PRODUCT_NAME` sets the name shown on them.
 
@@ -137,7 +154,7 @@ identity. `GATEWAY_API_KEY` is user `default`. Everyone else gets their own key:
 
 - **Sign-up page:** set `SIGNUP_CODE` and share it; people open `/signup`, enter the code, a name and an email,
   and get their key once with the `claude mcp add` line. Wrong codes are rate limited.
-- **Command line:** `uv run python -m runtime.store.keys add alice --email alice@example.com` (also `list`, `reissue`,
+- **Command line:** `uv run python -m spider.store.users add alice --email alice@example.com` (also `list`, `reissue`,
   `revoke`, `set-password`). Keys are shown once; only their SHA-256 is stored.
 
 ## Setting up a new site
@@ -160,16 +177,16 @@ one that works.
 
 ```bash
 # have Claude record an action once (or drop --agent and do it yourself in the browser that opens)
-uv run python -m flowmap record https://example.com/ --action search_things \
+uv run python -m spider.flowmap record https://example.com/ --action search_things \
   --agent "search for the query" --input query=lamp --example query=chair
 
-uv run python -m flowmap map example.com            # replay, infer, check, save to the registry
-uv run python -m flowmap show example.com           # the card and recent heal timings
-uv run python -m flowmap heal example.com search_things
+uv run python -m spider.flowmap map example.com            # replay, infer, check, save to the registry
+uv run python -m spider.flowmap show example.com           # the card and recent heal timings
+uv run python -m spider.flowmap heal example.com search_things
 ```
 
-Full reference: `docs/flowmap.md`. Harmap (`python -m harmap capture | map | heal`) is described in
-`docs/harmap-design.md`.
+Full reference: `docs/flowmap.md`. Harmap (`python -m spider.harmap capture | map | heal`) is described in
+`docs/harmap.md`.
 
 ## Healing
 
@@ -178,7 +195,7 @@ or an expired sign-in, then asks the remapper to re-map just the broken action. 
 the action's `examples` and saved as a new version. `REMAPPER` picks the remapper:
 
 - `flowmap`: replays the action's recording from `FLOWS_DIR/<domain>/<action>.json`.
-- `mapper`: harmap, replaying recordings from `CAPTURES_DIR/<domain>/`.
+- `harmap`: replays harmap's recordings from `CAPTURES_DIR/<domain>/`.
 - `tests.sites.fixture_site.remapper:FixtureRemapper`: a stand-in for the demo shop.
 
 ## Sign-in and the browser tier
@@ -202,8 +219,8 @@ Every setting is described in `.env.example`.
 
 ```bash
 uv run pytest
-uv run ruff check runtime schema flowmap tools tests --exclude tests/harmap
-uv run ruff format --check runtime schema flowmap tools tests --exclude tests/harmap
+uv run ruff check .
+uv run ruff format --check .
 ```
 
 Tests run in parallel. Those that need Docker, Neko or a Playwright browser skip themselves when it isn't
@@ -220,4 +237,4 @@ git-ignored and must never be committed. Logs show cookie, csrf and auth header 
 - An action is set up from one real example, so a page layout the example didn't show can come back empty.
 - Pages about a single item (a product page) yield one field so far.
 - Writes on real sites are early: the safety path is tested on the demo shop and on LinkedIn.
-- No per-user quotas, response cache or outgoing rate limit yet (`TODO`s in `runtime/run/executor.py`).
+- No per-user quotas, response cache or outgoing rate limit yet (`TODO`s in `src/spider/run/executor.py`).

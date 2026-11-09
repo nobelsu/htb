@@ -8,8 +8,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fixture_site import scripts
 
-from harmap.capture import driver
-from harmap.capture.record import CaptureConfig, CaptureError, record
+from spider.harmap.capture import driver
+from spider.harmap.capture.record import CaptureConfig, CaptureError, record
 
 META_KEYS = {
     "bundle_version",
@@ -197,7 +197,7 @@ def test_cli_headless_capture(chromium, site, tmp_path):
         [
             sys.executable,
             "-m",
-            "harmap",
+            "spider.harmap",
             "capture",
             site.url + "/",
             "--task",

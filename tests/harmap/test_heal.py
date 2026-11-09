@@ -8,9 +8,9 @@ import sys
 import pytest
 from synthetic import ts
 
-from harmap.capture.replay import new_marker, script_from_actions
-from harmap.pipeline import map_domain, save_card
-from harmap.validate import RuntimeExecutor
+from spider.harmap.capture.replay import new_marker, script_from_actions
+from spider.harmap.pipeline import map_domain, save_card
+from spider.harmap.validate import RuntimeExecutor
 
 START = "http://127.0.0.1:9/"
 
@@ -95,7 +95,7 @@ def test_site_change_breaks_the_card_and_heal_fixes_it(site_copy, fixture_captur
     assert _search(before.card, cookies)["status"] == "PAGE_CHANGED"
 
     out = subprocess.run(
-        [sys.executable, "-m", "harmap", "heal", str(site_copy), "--live", "--save", "--db", str(db)],
+        [sys.executable, "-m", "spider.harmap", "heal", str(site_copy), "--live", "--save", "--db", str(db)],
         capture_output=True,
         text=True,
         timeout=300,
@@ -116,7 +116,7 @@ def test_site_change_breaks_the_card_and_heal_fixes_it(site_copy, fixture_captur
     assert new_markers.keys() == old_markers.keys() and new_markers != old_markers  # fresh markers
     assert (site_copy.parent / "127.0.0.1.prev" / "search" / "m1" / "meta.json").exists()  # old kept
 
-    from runtime.registry import Registry
+    from spider.store.registry import Registry
 
     reg = Registry(db)
     try:

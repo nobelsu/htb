@@ -2,8 +2,8 @@
 
 import pytest
 
-from harmap import jsonpaths, restli
-from harmap.domains import registrable_domain, same_site, tool_prefix
+from spider.harmap.helpers import jsonpaths, restli
+from spider.harmap.helpers.domains import registrable_domain, same_site, tool_prefix
 
 
 @pytest.mark.parametrize(

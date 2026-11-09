@@ -11,8 +11,8 @@ from typing import Any
 
 import httpx
 
-from runtime.jobs.healing import RemapError
-from schema import Card
+from spider.card import Card
+from spider.jobs.heal import RemapError
 
 OLD, NEW = "/api/items/", "/api/v2/items/"
 

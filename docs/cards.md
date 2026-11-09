@@ -21,13 +21,13 @@ this repository.
 Load them when you start the gateway (each is saved as a new version only if it changed):
 
 ```bash
-uv run python -m runtime.gateway --load cards/linkedin.com.json --load cards/amazon.co.uk.json
+uv run python -m spider.gateway --load cards/linkedin.com.json --load cards/amazon.co.uk.json
 ```
 
 Check a card without running anything:
 
 ```bash
-uv run python tools/check_card.py cards/linkedin.com.json
+uv run python -m spider.card.check cards/linkedin.com.json
 ```
 
 A card holds no cookies, passwords or anyone's data. Each user signs in to the site themselves (the agent
@@ -129,10 +129,10 @@ Streamed React Server Components rows are resolved into JSON first (`resolve: ro
 1. **Mapped.** flowmap (`docs/flowmap.md`) records the task once in a browser, replays it with planted
    marker values to find the request that carries the input and the results, and writes the card. The model
    only names things.
-2. **Checked.** Before saving, the card is validated (`schema.validate_card`), every read action runs with its
+2. **Checked.** Before saving, the card is validated (`spider.card.validate_card`), every read action runs with its
    examples, and example and fixed values are checked for personal data. A write's steps up to the send are
    tried on each tier to find one that works.
-3. **Saved as a version.** The registry (`runtime/store/registry.py`) keeps every version of each site's card
+3. **Saved as a version.** The registry (`src/spider/store/registry.py`) keeps every version of each site's card
    in SQLite; one is active. Older versions stay, so a bad change can be rolled back.
 4. **Healed.** When an action returns `PAGE_CHANGED`, a heal job replays that action's recording, re-maps
    just that action and saves a new version, while the agent's call waits or retries.
@@ -143,7 +143,7 @@ Cards are shared: once one user's agent sets a site up, every user can use it, e
 
 Cards can be written by hand; some LinkedIn actions here were. Keep to `CARD_SPEC.md`, then:
 
-1. Run `tools/check_card.py` on the file.
+1. Run `uv run python -m spider.card.check FILE`.
 2. Load it with `--load` (or `Registry.save`); saving validates it and refuses an invalid card.
 3. Call each action once through the gateway, or run its examples, before relying on it.
 

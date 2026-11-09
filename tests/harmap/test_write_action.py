@@ -7,7 +7,7 @@ import shutil
 
 import pytest
 
-from harmap.pipeline import map_domain, write_outputs
+from spider.harmap.pipeline import map_domain, write_outputs
 
 # characters that break a form body unless they are encoded
 TRICKY = "Tom & Jerry = 100% fun +1"
@@ -75,11 +75,11 @@ def test_report_shows_csrf_dependency_and_text_param(note, tmp_path):
 
 @pytest.mark.browser
 def test_note_is_saved_through_the_executor_after_confirmation(note, domain_dir, fixture_captures):
-    from runtime.confirm import Confirmer
-    from runtime.executor import Executor
-    from runtime.registry import StoredCard
-    from runtime.sessions import InMemorySessionStore
-    from schema import load_card
+    from spider.card import load_card
+    from spider.run.confirm import Confirmer
+    from spider.run.executor import Executor
+    from spider.signin.sessions.base import InMemorySessionStore
+    from spider.store.registry import StoredCard
 
     card = load_card(note.card)
     cookies = json.loads((domain_dir / "add_note" / "m1" / "state.json").read_text())["cookies"]

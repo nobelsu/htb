@@ -1,4 +1,5 @@
-"""python -m flowmap end to end on the bookshop: record (from a codegen script), map, show, break, heal."""
+"""python -m spider.flowmap end to end on the bookshop: record (from a codegen script), map, show, break,
+heal."""
 
 from __future__ import annotations
 
@@ -8,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from flowmap.cli import _is_local, main, parser
+from spider.flowmap.cli import _is_local, main, parser
 
 
 def test_parser_and_local_hosts() -> None:

@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from harmap.pipeline import map_domain, write_outputs
+from spider.harmap.pipeline import map_domain, write_outputs
 
 
 @pytest.fixture(scope="module")
@@ -28,7 +28,7 @@ def mapped(domain_dir):
 def test_card_passes_every_save_time_check(mapped):
     v = mapped.validation
     assert v.ok, v.errors
-    assert v.ran == ["schema.validate_card", "tools/check_card.py", "harmap.checks (secrets)"]
+    assert v.ran == ["spider.card.validate_card", "card/check.py", "spider.harmap.helpers.checks (secrets)"]
     assert not v.warnings
 
 
@@ -120,7 +120,7 @@ def test_cli_map_writes_card_and_saves_to_registry(domain_dir, tmp_path):
         [
             sys.executable,
             "-m",
-            "harmap",
+            "spider.harmap",
             "map",
             str(domain_dir),
             "--task",
@@ -138,7 +138,7 @@ def test_cli_map_writes_card_and_saves_to_registry(domain_dir, tmp_path):
     )
     assert out.returncode == 0, out.stdout + out.stderr
     assert "VALID" in out.stdout and "saved 127.0.0.1 v1" in out.stdout
-    from runtime.registry import Registry
+    from spider.store.registry import Registry
 
     reg = Registry(db)
     try:
@@ -147,7 +147,7 @@ def test_cli_map_writes_card_and_saves_to_registry(domain_dir, tmp_path):
     finally:
         reg.close()
     v = subprocess.run(
-        [sys.executable, "-m", "harmap", "validate", str(tmp_path / "card.json")],
+        [sys.executable, "-m", "spider.harmap", "validate", str(tmp_path / "card.json")],
         capture_output=True,
         text=True,
     )
