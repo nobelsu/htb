@@ -23,7 +23,7 @@ import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import data, pages
 
@@ -33,6 +33,10 @@ STATIC = {
     "/static/app.css": ("text/css", pages.APP_CSS),
     "/static/search.js": ("application/javascript", pages.SEARCH_JS),
     "/static/compose.js": ("application/javascript", pages.COMPOSE_JS),
+    "/static/stream.js": ("application/javascript", pages.STREAM_JS),
+    "/static/me.js": ("application/javascript", pages.ME_JS),
+    "/static/company.js": ("application/javascript", pages.COMPANY_JS),
+    "/static/messages.js": ("application/javascript", pages.MESSAGES_JS),
 }
 
 
@@ -50,6 +54,7 @@ class SiteState:
         self.lock = threading.Lock()
         self.sessions: dict[str, Session] = {}
         self.requests: list[tuple[str, str]] = []  # (method, path) log for tests
+        self.sent: list[tuple[str, str]] = []  # messages that really reached the site
         self.note_seq = 0
         # "site redesign" switch for healing tests: search moves from /api/search to /api/v2/search
         self.search_endpoint = "/api/search"
@@ -121,14 +126,26 @@ class Handler(BaseHTTPRequestHandler):
         route = {
             "/": self._home,
             "/login": self._login_page,
+            "/logout": self._logout,
             "/search": self._search_page,
             "/compose": self._compose_page,
+            "/stream-search": self._stream_search_page,
+            "/me": lambda _q: self._page(pages.me()),
+            "/messages": lambda _q: self._page(pages.messages()),
+            "/api/me": self._api_me,
+            "/api/conversations": self._api_conversations,
             "/api/session": self._api_session,
             self.state.search_endpoint: self._api_search,
             "/api/notes": self._api_notes_list,
         }.get(url.path)
         if route:
             route(query)
+        elif url.path.startswith("/company/"):
+            self._page(pages.company())
+        elif url.path.startswith("/api/companies/"):
+            self._api_company(unquote(url.path.removeprefix("/api/companies/")))
+        elif url.path.startswith("/api/conversations/") and url.path.endswith("/messages"):
+            self._api_messages(unquote(url.path.split("/")[3]))
         elif url.path in STATIC:
             ctype, body = STATIC[url.path]
             self._send(200, body, ctype)
@@ -146,6 +163,12 @@ class Handler(BaseHTTPRequestHandler):
             self._login_submit()
         elif url.path == "/api/notes":
             self._api_notes_create()
+        elif url.path == "/api/stream/search":
+            self._api_stream_search()
+        elif url.path == "/api/stream/log":
+            self._api_stream_log()
+        elif url.path.startswith("/api/conversations/") and url.path.endswith("/messages"):
+            self._api_send(unquote(url.path.split("/")[3]))
         else:
             self._json(404, {"error": "not found"})
 
@@ -155,6 +178,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _login_page(self, query) -> None:
         self._html(200, pages.login(query.get("next", "/")))
+
+    def _logout(self, _query) -> None:
+        """Ends the session server-side: an explorer that clicks this would lose its login."""
+        sid = _parse_cookies(self.headers.get("Cookie")).get("sid")
+        with self.state.lock:
+            self.state.sessions.pop(sid or "", None)
+        self._redirect("/login")
 
     def _login_submit(self) -> None:
         form = self._form()
@@ -185,6 +215,61 @@ class Handler(BaseHTTPRequestHandler):
         }
         self._html(200, pages.search(next_data, self.state.search_endpoint))
 
+    def _page(self, html: str) -> None:
+        if self._require_page_login() is not None:
+            self._html(200, html)
+
+    def _api_me(self, _query) -> None:
+        if self._require_api_login() is None:
+            return
+        member = {
+            "first_name": "Demo",
+            "last_name": "Member",
+            "headline": "Tester at Acme Directory",
+            "profile_urn": "urn:fx:profile:demo1",
+            "public_identifier": "demo-member",
+        }
+        self._json(200, {"member": member})
+
+    def _api_company(self, slug: str) -> None:
+        if self._require_api_login() is None:
+            return
+        hit = next((c for c in data.COMPANIES if c["url"] == f"/company/{slug}"), None)
+        self._json(200 if hit else 404, {"company": hit} if hit else {"error": "no such company"})
+
+    def _api_conversations(self, _query) -> None:
+        if self._require_api_login() is None:
+            return
+        self._json(200, {"elements": pages.CONVERSATIONS})
+
+    def _api_messages(self, urn: str) -> None:
+        if self._require_api_login() is None:
+            return
+        who = next((c["title"] for c in pages.CONVERSATIONS if c["conversation_urn"] == urn), None)
+        if who is None:
+            self._json(404, {"error": "no such conversation"})
+            return
+        n = int(urn.rsplit(":", 1)[1])
+        msgs = [
+            {"text": f"Message {i} from {who}", "sender": who, "delivered_at": 1_700_000_000 + i}
+            for i in range(n + 1)
+        ]
+        self._json(200, {"conversation_urn": urn, "elements": msgs})
+
+    def _api_send(self, urn: str) -> None:
+        """A real send: the test checks that exploring never reaches this."""
+        if self._require_api_login() is None:
+            return
+        body = self._json_body()
+        with self.state.lock:
+            self.state.sent.append((urn, body.get("text")))
+        self._json(200, {"message_urn": f"urn:fx:msg:{len(self.state.sent)}", "text": body.get("text")})
+
+    def _stream_search_page(self, _query) -> None:
+        if self._require_page_login() is None:
+            return
+        self._html(200, pages.stream_search())
+
     def _compose_page(self, _query) -> None:
         sess = self._require_page_login()
         if sess is None:
@@ -200,6 +285,47 @@ class Handler(BaseHTTPRequestHandler):
         if sess is None:
             self._json(401, {"error": "login required"})
         return sess
+
+    def _json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            return json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            return {}
+
+    def _api_stream_search(self) -> None:
+        """Streamed data rows, one result spread over a card row and the info row it points to."""
+        if self._require_api_login() is None:
+            return
+        q = str(self._json_body().get("q", ""))
+        total, hits = data.search(q, 0)
+        lines = ['0:["$","h2",null,{"children":"Companies"}]', '1:I["chunks/card.js",["card"],"Card"]']
+        cards = []
+        for i, c in enumerate(hits):
+            info_id, card_id = format(16 + 2 * i, "x"), format(17 + 2 * i, "x")
+            info = {"name": c["name"], "industry": c["industry"], "id": c["id"]}
+            card = [
+                "$",
+                "$L1",
+                None,
+                {"info": f"${info_id}", "link": c["url"], "followers": f"{c['followers']} followers"},
+            ]
+            lines += [f"{info_id}:{json.dumps(info)}", f"{card_id}:{json.dumps(card)}"]
+            cards.append(f"$L{card_id}")
+        lines.append(f'2:["$","ul",null,{{"children":{json.dumps(cards)}}}]')
+        lines.append(f'3:["$","p",null,{{"children":"{total} results"}}]')
+        self._send(200, "\n".join(lines) + "\n", "application/octet-stream")
+
+    def _api_stream_log(self) -> None:
+        """Carries the typed query too, but answers the same two rows whatever was searched."""
+        if self._require_api_login() is None:
+            return
+        self._json_body()
+        self._send(
+            200,
+            '0:["$","@1",null,{"ok":true}]\n1:["$","span",null,{"children":"logged"}]\n',
+            "application/octet-stream",
+        )
 
     def _api_session(self, _query) -> None:
         sess = self._require_api_login()

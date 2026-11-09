@@ -63,3 +63,15 @@ def test_run_choice_enforced():
 def test_command_required():
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args([])
+
+
+def test_cli_reads_dotenv_without_overriding_the_environment(tmp_path):
+    (tmp_path / ".env").write_text("MAPPER_DOTENV_PROBE=from-dotenv\nMAPPER_DOTENV_KEEP=from-dotenv\n")
+    code = (
+        "import os; from mapper.cli import load_env; load_env(); "
+        "print(os.environ.get('MAPPER_DOTENV_PROBE'), os.environ.get('MAPPER_DOTENV_KEEP'))"
+    )
+    env = {k: v for k, v in __import__("os").environ.items() if not k.startswith("MAPPER_DOTENV")}
+    env["MAPPER_DOTENV_KEEP"] = "from-shell"
+    out = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert out.stdout.split() == ["from-dotenv", "from-shell"], out.stderr

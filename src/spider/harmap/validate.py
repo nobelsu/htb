@@ -45,6 +45,8 @@ class Executor(Protocol):
 class RuntimeExecutor:
     """``Executor`` over ``spider.run.executor.Executor`` (http tier), with an in-memory session."""
 
+    http_only = True  # no browser pool here: browser-tier actions are left to the gateway
+
     def run_action(self, card, action, params, *, session_cookies=None) -> dict:
         import asyncio
         import secrets
@@ -85,7 +87,7 @@ class LiveResult:
 
     @property
     def ok(self) -> bool:
-        return self.status == "SUCCESS" and self.items >= self.min_items
+        return self.status == "SKIPPED" or (self.status == "SUCCESS" and self.items >= self.min_items)
 
 
 @dataclass
@@ -141,6 +143,22 @@ def live_validate(card: dict, executor: Executor, session_cookies: dict[str, str
     results = []
     for action in card["actions"]:
         if action["kind"] != "read":
+            continue
+        tier = action.get("tier") or (card.get("defaults") or {}).get("tier")
+        if tier == "browser" and getattr(
+            executor, "http_only", False
+        ):  # the gateway's browser pool runs these
+            for ex in action.get("examples", []):
+                results.append(
+                    LiveResult(
+                        action["name"],
+                        ex["params"],
+                        "SKIPPED",
+                        0,
+                        ex.get("min_items", 1),
+                        "needs the browser tier: test it through the gateway",
+                    )
+                )
             continue
         for ex in action.get("examples", []):
             try:

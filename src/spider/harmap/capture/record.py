@@ -18,9 +18,11 @@ import queue
 import shutil
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
+from typing import Any
 
 from spider.harmap import BUNDLE_VERSION, __version__
 from spider.harmap.bundle import (
@@ -34,7 +36,28 @@ from spider.harmap.bundle import (
     iso_now,
 )
 from spider.harmap.capture import driver
-from spider.harmap.helpers.domains import hostname, registrable_domain
+from spider.harmap.helpers.domains import hostname, registrable_domain, same_site
+
+# The mapper only reads a site's data requests and HTML pages (M1 drops everything else). Capture
+# still lets the browser load everything, exactly as for a person; only the saved file is trimmed:
+# these entries keep their URL, status and headers but not their body. Scripts alone were 57% of a
+# LinkedIn recording.
+NO_BODY = frozenset({"image", "media", "font", "script", "stylesheet", "manifest", "texttrack"})
+
+
+def slim_har(path: Path) -> None:
+    """Drop the bodies of static files (code, styles, images, video, fonts) from a saved recording."""
+    har = json.loads(path.read_text(encoding="utf-8"))
+    for entry in har.get("log", {}).get("entries", []):
+        content = (entry.get("response") or {}).get("content") or {}
+        if entry.get("_resourceType") in NO_BODY and "text" in content:
+            del content["text"]
+            content.pop("encoding", None)
+            content["comment"] = "body not saved: the mapper does not read static files"
+    path.write_text(json.dumps(har), encoding="utf-8")
+
+
+BLOCKED_FILE = "blocked.json"  # requests a write task's final action was stopped from sending
 
 HUMAN_HELP = (
     "Drive the browser to perform the task.\n"
@@ -60,6 +83,13 @@ class CaptureConfig:
     out: Path = Path("captures")
     headless: bool = False
     script: str | Path | list[dict] | None = None
+    # A live driver, e.g. the explorer's LLM: called as agent(page, tracker, mark) once the start page has
+    # loaded, it moves the browser and calls mark() right after the action that performs the task.
+    agent: Callable[[Any, driver.NetworkTracker, Callable[[], None]], None] | None = None
+    step_timeout_ms: int | None = None  # Playwright's per-action timeout; None keeps its default (30 s)
+    # Write tasks while exploring: the marked action's changes to the site are blocked (see WriteBlocker)
+    block_writes: bool = False
+    extra_meta: dict = field(default_factory=dict)  # e.g. which inputs are picked, for the mapper
     force: bool = False
 
     @property
@@ -77,8 +107,10 @@ class CaptureConfig:
             raise CaptureError(f"run {self.run} takes --marker values, not --input")
         if self.run in REAL_RUNS and self.markers:
             raise CaptureError(f"run {self.run} takes --input values, not --marker")
-        if self.headless and self.script is None:
+        if self.headless and self.script is None and self.agent is None:
             raise CaptureError("--headless needs a --script for the scripted driver")
+        if self.script is not None and self.agent is not None:
+            raise CaptureError("a capture has one driver: a script or an agent, not both")
         if self.state is not None and not Path(self.state).is_file():
             raise CaptureError(f"--state file not found: {self.state}")
 
@@ -174,8 +206,10 @@ def record(cfg: CaptureConfig) -> Path:
         "real_inputs": dict(cfg.real_inputs) if cfg.run in REAL_RUNS else {},
         "page": 2 if cfg.run == "page2" else 1,
         "kind_hint": cfg.kind,
-        "driver": "script" if steps is not None else "human",
+        "driver": "script" if steps is not None else "agent" if cfg.agent is not None else "human",
         "goal_marks": [],
+        **({"writes_blocked": True} if cfg.block_writes else {}),
+        **cfg.extra_meta,
         "started_at": iso_now(),
         "ended_at": None,
         "mapper_version": __version__,
@@ -191,15 +225,24 @@ def record(cfg: CaptureConfig) -> Path:
             record_har_content="embed",
             record_har_mode="full",
             storage_state=str(cfg.state) if cfg.state else None,
+            # a service worker's requests would go around the write blocker's route
+            **({"service_workers": "block"} if cfg.block_writes else {}),
         )
+        tracker = None
         try:
             context.expose_binding("__mapperLog", lambda _source, event: log.add(dict(event)))
             context.add_init_script(_logger_js())
             context.on("page", lambda p: _attach_navigation_log(p, log))
             tracker = driver.NetworkTracker(context)
+            if cfg.block_writes:
+                tracker.blocker = driver.WriteBlocker(
+                    context, lambda url: same_site(hostname(url), cfg.domain), cfg.markers.values()
+                )
             page = context.new_page()
+            if cfg.step_timeout_ms:
+                page.set_default_timeout(cfg.step_timeout_ms)
             page.goto(cfg.start_url, wait_until="load")
-            tracker.wait_quiet(page)
+            driver.settle(page)
 
             if steps is not None:
                 driver.run_script(
@@ -210,6 +253,8 @@ def record(cfg: CaptureConfig) -> Path:
                     tracker=tracker,
                     on_mark=lambda: marks.append(iso_now()),
                 )
+            elif cfg.agent is not None:
+                cfg.agent(page, tracker, lambda: marks.append(iso_now()))
             else:
                 _human_loop(context, marks)
 
@@ -221,10 +266,16 @@ def record(cfg: CaptureConfig) -> Path:
                     pass
             context.storage_state(path=str(out / STATE_FILE))
         finally:
+            if tracker is not None and tracker.blocker is not None:
+                tracker.blocker.arm()  # closing must not let a queued send out
+                if tracker.blocker.blocked:
+                    (out / BLOCKED_FILE).write_text(json.dumps(tracker.blocker.blocked, indent=1) + "\n")
             context.close()  # flushes the HAR
             browser.close()
 
     log.finish()
+    if (out / HAR_FILE).exists():
+        slim_har(out / HAR_FILE)
     for name in (HAR_FILE, STATE_FILE):
         _write_private(out / name)
     meta["ended_at"] = iso_now()

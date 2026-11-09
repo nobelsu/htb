@@ -55,13 +55,20 @@ def annotate(
     output_fields: list[str],
     has_unknowns: bool,
     llm: LLM,
+    trusted_kind: bool = False,
 ) -> Annotation:
     warnings: list[str] = []
-    kind = "read" if goal.method in ("GET", "HEAD") else "write"
-    if kind != kind_hint:
-        warnings.append(
-            f"operator said {kind_hint!r} but the goal request is a {goal.method}: using {kind!r}"
-        )
+    by_method = "read" if goal.method in ("GET", "HEAD") else "write"
+    if trusted_kind and kind_hint in ("read", "write"):
+        kind = kind_hint  # the explorer says what the task does
+        if kind != by_method:
+            warnings.append(f"the explorer said {kind_hint!r} for this {goal.method}: kept {kind!r}")
+    else:
+        kind = by_method
+        if kind != kind_hint:
+            warnings.append(
+                f"operator said {kind_hint!r} but the goal request is a {goal.method}: using {kind!r}"
+            )
 
     spends = kind == "write" and bool(SPEND_RE.search(goal.path))
     if kind == "read":

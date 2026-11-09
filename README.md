@@ -185,7 +185,7 @@ uv run python -m spider.flowmap show example.com           # the card and recent
 uv run python -m spider.flowmap heal example.com search_things
 ```
 
-Full reference: `docs/flowmap.md`. Harmap (`python -m spider.harmap capture | map | heal`) is described in
+Full reference: `docs/flowmap.md`. harmap (`python -m spider.harmap explore | capture | map | heal`) is described in
 `docs/harmap.md`.
 
 ## Healing

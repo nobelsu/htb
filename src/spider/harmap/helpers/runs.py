@@ -11,6 +11,8 @@ from spider.harmap.bundle import ACTIONS_FILE, HAR_FILE, META_FILE, RUNS, STATE_
 from spider.harmap.pipeline.load import Entry, filter_entries, load_har
 from spider.harmap.pipeline.normalize import Field, normalize
 
+BLOCKED_FILE = "blocked.json"  # written by mapper.capture.record for write tasks
+
 
 @dataclass
 class Bundle:
@@ -70,7 +72,12 @@ class Bundle:
 def load_bundle(path: str | Path) -> Bundle:
     path = Path(path)
     meta = json.loads((path / META_FILE).read_text())
-    result = filter_entries(load_har(path / HAR_FILE), meta["domain"])
+    entries = load_har(path / HAR_FILE)
+    if (path / BLOCKED_FILE).exists():  # a write explored with its final request stopped
+        stopped = {(b["method"], b["url"]) for b in json.loads((path / BLOCKED_FILE).read_text())}
+        for e in entries:
+            e.blocked = (e.method, e.url) in stopped and e.status <= 0
+    result = filter_entries(entries, meta["domain"])
     actions = []
     if (path / ACTIONS_FILE).exists():
         actions = [

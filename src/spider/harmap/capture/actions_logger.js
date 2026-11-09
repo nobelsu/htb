@@ -23,11 +23,18 @@
       return false;
     }
   };
+  // Ids a framework makes up per render (React useId, Ember) can change between page loads or
+  // deploys, so a selector built on one breaks when the script is replayed. Skip them.
+  // Ids a framework numbers per page load (React :r1:, Ember ember64, also inside a longer id like
+  // conversation-card-ember64 or ember376-suggestions-menu): they differ on the next load, so a replay
+  // could never find them again.
+  const GENERATED_ID = /^(:r[0-9a-z]*:|\u00abr[0-9a-z]*\u00bb|_r_[0-9a-z]*_)$|(^|[^a-z])ember\d+|\d{5,}/i;
+  const stableId = (id) => Boolean(id) && !GENERATED_ID.test(id);
 
   function selectorFor(el) {
     if (!(el instanceof Element)) return null;
     const tag = el.tagName.toLowerCase();
-    if (el.id && unique("#" + CSS.escape(el.id))) return "#" + CSS.escape(el.id);
+    if (stableId(el.id) && unique("#" + CSS.escape(el.id))) return "#" + CSS.escape(el.id);
     for (const attr of ["data-testid", "data-test", "name", "aria-label", "type", "placeholder"]) {
       const v = el.getAttribute(attr);
       if (v) {
@@ -38,7 +45,7 @@
     const parts = [];
     let node = el;
     while (node && node.nodeType === 1 && node !== document.body && node !== document.documentElement) {
-      if (node.id && unique("#" + CSS.escape(node.id))) {
+      if (stableId(node.id) && unique("#" + CSS.escape(node.id))) {
         parts.unshift("#" + CSS.escape(node.id));
         break;
       }
@@ -53,6 +60,8 @@
     }
     return parts.join(" > ");
   }
+
+  window.__mapperSelectorFor = selectorFor; // reused by the explorer's page snapshots
 
   const isSecret = (el) =>
     el.type === "password" || /pass|secret|otp|cvv|cvc/i.test(el.name || "") ||

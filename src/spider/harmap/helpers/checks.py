@@ -29,14 +29,22 @@ def strings(obj: Any, where: str = "") -> Iterator[tuple[str, str]]:
         yield where, obj
 
 
+# A cookie value made only of ordinary words, like a time zone (`Europe/London`) or a theme name, is a
+# setting, not a session: it shows up legitimately in tracking headers and must not fail the card.
+WORD = r"(?:[A-Z]?[a-z]+|[A-Z]+)"
+PLAIN_WORDS = re.compile(rf"{WORD}(?:[/_.\- ]{WORD})*")
+
+
 def secret_values(cookies: dict[str, str], headers: Iterable[tuple[str, str]]) -> set[str]:
     """Values that must never appear in a card: session cookies and sensitive request headers."""
     out = set()
     for value in cookies.values():
         for v in (value, value.strip('"')):
-            if len(v) >= MIN_SECRET_LEN:
+            if len(v) >= MIN_SECRET_LEN and not PLAIN_WORDS.fullmatch(v):
                 out.add(v)
     for name, value in headers:
+        if name.startswith(":"):  # HTTP/2 pseudo-headers; `:authority` is the host name, not auth
+            continue
         if SENSITIVE_NAME.search(name) and len(value) >= MIN_SECRET_LEN:
             out.add(value)
     return out

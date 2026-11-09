@@ -21,7 +21,11 @@ from spider.harmap.pipeline.goal import (
     endpoint_key,
     find_goal,
     find_read_goal,
+    find_screen_goal,
+    operation_key,
+    similar_entry,
 )
+from spider.harmap.pipeline.goal import _pick_mark as pick_mark
 from spider.harmap.pipeline.output import OutputPlan, expect_for, find_result_list, plan_output
 from spider.harmap.pipeline.provenance import Provenance, trace
 from spider.harmap.pipeline.recon import Recon, recon
@@ -66,14 +70,68 @@ def _matching_goal(bundle: Bundle | None, like: Goal, like_bundle: Bundle, kind:
                 return Goal(c, "same endpoint as m1's goal", g.candidates, False, g.typed_at, g.mark)
     except GoalNotFound:
         pass
-    entry = counterpart(bundle, like.entry, like_bundle.values)
+    entry = counterpart(bundle, like.entry, like_bundle.values) or similar_entry(bundle, like.entry)
     return Goal(entry, "same endpoint as m1's goal") if entry is not None else None
 
 
+def _after_pick(bundle: Bundle, entry):
+    """A page opens on a default item first (the newest conversation) and loads the clicked one next,
+    with the same call: the action is the last such call before the goal mark."""
+    marks = bundle.goal_marks
+    same = [
+        e
+        for e in bundle.entries
+        if operation_key(e) == operation_key(entry) and (not marks or e.started <= marks[-1])
+    ]
+    return same[-1] if same else entry
+
+
 def _summary(e) -> str:
-    keys = sorted(e.response_json) if isinstance(e.response_json, dict) else type(e.response_json).__name__
+    """One candidate for the LLM tie-break: what it is and what came back (shape and size)."""
+    if e.response_kind == "stream":
+        answer = f"streamed answer, {len(e.response_rows or [])} data rows"
+    elif isinstance(e.response_json, dict):
+        answer = str(sorted(e.response_json)) + _field_names(e.response_json)
+    elif e.response_kind == "html":
+        answer = "HTML page"
+    else:
+        answer = type(e.response_json).__name__
     query = "&".join(sorted(k.split("=")[0] for k in e.raw_query.split("&") if k))
-    return f"{e.method} {e.path}?{query} → {keys}"
+    ops = ", ".join(v for _, v in operation_key(e)[3])  # one /graphql path serves many reads: name it
+    named = f" (operation {ops})" if ops else ""
+    return f"{e.method} {e.path}?{query}{named} → {answer}, {len(e.response_body or '') // 1000} kB"
+
+
+def _field_names(doc, limit: int = 25) -> str:
+    """The field names inside a JSON answer, most frequent first: what the data is about
+    (firstName, publicIdentifier) beyond its top-level wrapper."""
+    from collections import Counter
+
+    seen: Counter = Counter()
+    stack = [doc]
+    while stack and sum(seen.values()) < 20_000:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if not k.startswith(("$", "*", "_")):
+                    seen[k] += 1
+                stack.append(v)
+        elif isinstance(node, list):
+            stack.extend(node[:50])
+    names = [k for k, _ in seen.most_common(limit)]
+    return f" with fields {', '.join(names)}" if names else ""
+
+
+def _held(e, screen: list[str]) -> str:
+    """For an answer recognised by the page's text: how much of it, with examples, so the LLM can tell
+    the result from a menu or app settings that repeat a few labels."""
+    if not screen:
+        return ""
+    texts = [t for t in dict.fromkeys(screen) if len(t) >= 3]
+    body = e.response_body or ""
+    held = [t for t in texts if t in body or json.dumps(t)[1:-1] in body]
+    sample = "; ".join(t[:40] for t in sorted(held, key=len, reverse=True)[:6])
+    return f"; holds {len(held)} of the {len(texts)} texts on the page" + (f", e.g. {sample}" if held else "")
 
 
 def _pagination(page2: Bundle, goal: Goal, m1: Bundle, real_goal: Goal | None):
@@ -99,6 +157,57 @@ def _pagination(page2: Bundle, goal: Goal, m1: Bundle, real_goal: Goal | None):
     return pagination.infer(page2, first, page2, last, items_path)
 
 
+SCREEN_FILE = "screen.json"  # written by the explorer: the text on its live run's final page
+
+
+def _screen(bundle: Bundle | None) -> list[str]:
+    path = bundle.path / SCREEN_FILE if bundle is not None and bundle.path is not None else None
+    return json.loads(path.read_text()) if path is not None and path.exists() else []
+
+
+def _picks(bundle: Bundle) -> list[str]:
+    return [k for k, how in (bundle.meta.get("inputs_via") or {}).items() if how == "picked"]
+
+
+def _task_goal(runs: dict[str, Bundle], kind: str) -> tuple[Goal, str, list[str]]:
+    """m1's goal request, how it was chosen, and (for reads without input) the live run's screen text.
+    A read that takes no input has nothing typed to look for: its goal is the answer that holds what the
+    explorer's live run saw on the page, found in that run and then at the same endpoint in m1."""
+    m1, real = runs["m1"], runs.get("real")
+    live = real or m1
+    screen = _screen(live) if kind == "read" else []
+    if screen:  # recorded by the explorer: the answer that holds what its live run's page showed
+        try:
+            found = find_screen_goal(live, screen, values=live.values or None)
+        except GoalNotFound:
+            found = None
+            if not m1.values:
+                raise
+        if found is not None:
+            in_m1, shown = [], []  # the candidates m1 has too (best match first), and the live ones
+            for cand in [found.entry, *found.candidates]:
+                e = cand if live is m1 else counterpart(m1, cand, live.values) or similar_entry(m1, cand)
+                if e is not None and all(e is not x for x in in_m1):
+                    in_m1.append(e)
+                    shown.append(cand)
+            if in_m1:
+                # page text overlaps menus, app settings and prefetches of other pages too: the LLM
+                # picks among the best matches with the action's description, judging the live run's
+                # answers (a replay's copy may be cut short)
+                tie = len(in_m1) > 1
+                goal = Goal(in_m1[0], found.reason, in_m1, tie, None, pick_mark(m1, 0), shown)
+                return goal, "the text on the page", screen
+    return find_goal(m1, kind), "earliest (no LLM)", screen
+
+
+def find_task_goal(task_dir: str | Path) -> Goal:
+    """The task's goal request in m1 (what ``map`` would use), without the LLM tie-break."""
+    runs = load_task(task_dir)
+    if "m1" not in runs:
+        raise MapError(f"{task_dir}: no m1 run")
+    return _task_goal(runs, runs["m1"].kind_hint)[0]
+
+
 def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     """M3–M7 for one task (one card action)."""
     llm = llm or LLM()
@@ -112,18 +221,43 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     if m2 is None:
         warnings.append("no m2 run: params and dependencies are not cross-checked")
 
-    goal = find_goal(m1, kind)
-    picked_by = "earliest (no LLM)"
+    goal, picked_by, screen = _task_goal(runs, kind)
     if goal.tie:
-        idx = llm.pick_goal(task, [_summary(c) for c in goal.candidates])
+        idx = llm.pick_goal(
+            task,
+            [_summary(c) + _held(c, screen) for c in (goal.shown or goal.candidates)],
+            description=m1.meta.get("task_description", ""),
+            typed=bool(m1.values) and picked_by != "the text on the page",
+        )
         if idx is not None:
+            if goal.candidates[idx] is not goal.entry:
+                goal.reason = "the LLM picked it from the candidates as the request that returns this data"
             goal.entry, picked_by = goal.candidates[idx], "the LLM"
         warnings.append(f"goal tie between {len(goal.candidates)} endpoints, picked by {picked_by}")
     m2_goal = _matching_goal(m2, goal, m1, kind)
     real_goal = _matching_goal(real, goal, m1, kind)
+    if kind == "read" and _picks(m1):  # the call for the item clicked, not the page's first load
+        goal.entry = _after_pick(m1, goal.entry)
+        for g, b in ((m2_goal, m2), (real_goal, real)):
+            if g is not None and b is not None:
+                g.entry = _after_pick(b, g.entry)
 
-    prov = trace(m1, goal.entry, m2, m2_goal.entry if m2_goal else None)
-    is_read = goal.entry.method in ("GET", "HEAD")
+    listed = list((m1.meta.get("inputs_via") or {}).keys())
+
+    def namer(groups: list[dict]) -> list[str] | None:  # one picked item, several inputs: the LLM names them
+        return llm.name_inputs(task, groups, listed, m1.meta.get("task_description", ""))
+
+    prov = trace(m1, goal.entry, m2, m2_goal.entry if m2_goal else None, namer=namer)
+    # Explorer recordings say read/write themselves (the LLM driver was told what the task does); a
+    # person's recording falls back to the method, so a forgotten --kind write can't make a write a read.
+    explorer = any(b.meta.get("driver") == "agent" for b in runs.values())
+    is_read = kind == "read" if explorer else goal.entry.method in ("GET", "HEAD")
+    if not explorer and not is_read and kind == "read":  # a search sent as POST (LinkedIn's people
+        live_goal = real_goal.entry if real_goal else goal.entry  # search): a read when results come back
+        is_read = live_goal.response_kind == "stream" or (
+            isinstance(live_goal.response_json, (dict, list))
+            and find_result_list(goal.entry.response_json, live_goal.response_json) is not None
+        )
     pag = None
     if is_read and runs.get("page2") is not None:
         pag, pag_warnings = _pagination(runs["page2"], goal, m1, real_goal)
@@ -134,7 +268,16 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
     plans = plan_steps(prov, m1)
     goal_plan = next(p for p in plans if p.draft.is_goal)
     if is_read:
-        output = plan_output(goal_plan, goal.entry, real_goal.entry if real_goal else None, task, llm)
+        output = plan_output(
+            goal_plan,
+            goal.entry,
+            real_goal.entry if real_goal else None,
+            task,
+            llm,
+            description=m1.meta.get("task_description", ""),
+            screen=screen,
+            compare_runs=bool(m1.values),
+        )
     else:
         output = OutputPlan(dict(NO_OUTPUT), source="none")
     if pag is not None and output.output["from"] is not None:
@@ -151,11 +294,24 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
         warnings += p.warnings
     warnings += output.warnings + prov.warnings
 
-    params = [p for p in m1.values if any(p in lab.params for d in prov.steps for lab in d.labels)]
+    used = [p for d in prov.steps for lab in d.labels for p in lab.params]
+    # a picked item can carry more than one input (an invitation's id and its token): all are params
+    params = [p for p in dict.fromkeys([*m1.values, *_picks(m1), *used]) if p in used]
     for p in m1.values:
         if p not in params:
             warnings.append(f"input {p!r} was typed but never reached a request")
-    real_inputs = real.values if real is not None else {}
+    for p in _picks(m1):  # the card would act on the recorded item every time (message that person)
+        if p not in params:
+            raise MapError(
+                f"picked input {p!r}: no request changed with the item chosen (the replays clicked the "
+                "same one?), so the action would always use the recorded item; explore it again"
+            )
+    real_inputs = dict(real.values) if real is not None else {}
+    if real is not None and real_goal is not None:  # a picked input's example: what the real run chose
+        real_fields = real.field_map(real_goal.entry)
+        for lab in prov.goal.labels:
+            if lab.encoding == "picked" and lab.address in real_fields:
+                real_inputs[lab.params[0]] = str(real_fields[lab.address].value)
     ann = annotate(
         task=task,
         task_description=m1.meta.get("task_description", ""),
@@ -166,6 +322,7 @@ def map_task(task_dir: str | Path, llm: LLM | None = None) -> TaskResult:
         output_fields=list(output.output["fields"]),
         has_unknowns=bool(prov.unknowns),
         llm=llm,
+        trusted_kind=explorer or (is_read and kind == "read"),
     )
     warnings += ann.warnings
     fields = dict(ann.fields)
@@ -203,7 +360,11 @@ class DomainResult:
 
 
 def task_dirs(captures_dir: Path, task: str | None = None) -> list[Path]:
-    dirs = sorted(d for d in captures_dir.iterdir() if d.is_dir() and (d / "m1" / "meta.json").exists())
+    dirs = sorted(  # "<task>.bad" / "<task>.failed": set aside, not mapped
+        d
+        for d in captures_dir.iterdir()
+        if d.is_dir() and "." not in d.name and (d / "m1" / "meta.json").exists()
+    )
     if task is not None:
         dirs = [d for d in dirs if d.name == task]
         if not dirs:
@@ -211,6 +372,15 @@ def task_dirs(captures_dir: Path, task: str | None = None) -> list[Path]:
     if not dirs:
         raise MapError(f"{captures_dir}: no task with an m1 run")
     return dirs
+
+
+def _explore_start(captures_dir: Path) -> str | None:
+    """The page the explorer started from (logged in, e.g. a feed): a page that sends a logged-out visitor
+    to sign in, so a better sign-in link than whichever page a task happened to start on."""
+    try:
+        return json.loads((captures_dir / "explore.json").read_text()).get("start_url")
+    except (OSError, ValueError):
+        return None
 
 
 def map_domain(
@@ -223,14 +393,24 @@ def map_domain(
 ) -> DomainResult:
     llm = llm or LLM()
     captures_dir = Path(captures_dir)
-    tasks = [map_task(d, llm) for d in task_dirs(captures_dir, task)]
+    tasks, skipped = [], []
+    for d in task_dirs(captures_dir, task):  # one task that can't be mapped must not sink the others
+        try:
+            tasks.append(map_task(d, llm))
+        except (GoalNotFound, MapError) as e:
+            skipped.append(f"{Path(d).name}: not mapped ({e})")
+    if not tasks:
+        raise MapError("; ".join(skipped) or f"{captures_dir}: no tasks")
     first = tasks[0]
     domain = first.runs["m1"].meta["domain"]
     base_url = first.goal.entry.base_url
     for tr in tasks[1:]:
         if tr.goal.entry.base_url != base_url:
             tr.warnings.append(f"goal is on {tr.goal.entry.base_url}, card base_url is {base_url}")
-    card, notes = assemble(domain, base_url, [t.mapped for t in tasks])
+    card, notes = assemble(
+        domain, base_url, [t.mapped for t in tasks], login_url=_explore_start(captures_dir)
+    )
+    notes = [*skipped, *notes]
 
     cookies: dict[str, str] = {}
     headers: list[tuple[str, str]] = []
@@ -244,6 +424,15 @@ def map_domain(
     if live:
         session = dict(first.runs["m1"].state_cookies)
         validation.live = live_validate(card, executor or RuntimeExecutor(), session)
+        for r in validation.live:  # blocked on every tier below the browser: start in the browser
+            if r.status == "BLOCKED" and "tiers tried" in r.message:
+                action = next(a for a in card["actions"] if a["name"] == r.action)
+                action["tier"] = "browser"
+                r.status, r.message = (
+                    "SKIPPED",
+                    f"blocked without a browser ({r.message}): tier set to 'browser'",
+                )
+                notes.append(f"{r.action}: the site blocks it without a real browser; tier set to 'browser'")
     every_entry = [
         e for tr in tasks for b in tr.runs.values() for e in (*b.entries, *(d for d, _ in b.dropped))
     ]

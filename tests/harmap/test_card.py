@@ -44,7 +44,7 @@ def test_card_site_fields(mapped, fixture_captures):
     assert card["schema_version"] == "0.4"
     assert (card["domain"], card["tool_prefix"]) == ("127.0.0.1", "127_0_0_1")
     assert card["base_url"] == fixture_captures.site.url
-    assert card["blocked_signals"] == ["status:403"]
+    assert card["blocked_signals"] == ["status:403", "status:999"]
     assert card["provenance"]["source"] == "network_capture"
     assert card["defaults"]["auth_provider"] == "127_0_0_1"
     [provider] = card["connect_providers"]

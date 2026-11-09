@@ -41,6 +41,18 @@ def test_secret_values_ignore_short_and_non_sensitive():
     assert s == {'"ajax:12345678"', "ajax:12345678"}
 
 
+def test_secret_values_skip_settings_and_the_host_header():
+    """Seen on LinkedIn: the `timezone` cookie is echoed in a tracking header, and HTTP/2's `:authority`
+    (the host name) matched "auth"; both failed real cards as "live session values"."""
+    s = checks.secret_values(
+        {"timezone": "Europe/London", "tz2": "America/Argentina/Buenos_Aires", "li_at": "AQEDATxyzLmnQ"},
+        [(":authority", "www.linkedin.com"), ("csrf-token", "ajax:9876543210")],
+    )
+    assert s == {"AQEDATxyzLmnQ", "ajax:9876543210"}
+    random_letters = "kQzPLmnBvcXa"  # no digits, but not words: still a secret
+    assert checks.secret_values({"token": random_letters}, []) == {random_letters}
+
+
 class FakeExecutor:
     def __init__(self, envelopes):
         self.envelopes, self.calls = envelopes, []

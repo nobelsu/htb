@@ -88,6 +88,38 @@ def build_parser() -> argparse.ArgumentParser:
     hl.add_argument("--out", help="output directory for card.json/report (default: the captures dir)")
     hl.set_defaults(handler=_cmd_heal)
 
+    ex = sub.add_parser(
+        "explore", help="let an LLM pick the site's main tasks, do each live while recorded, then map them"
+    )
+    ex.add_argument("start_url", help="page to start from (logged in, via --state)")
+    ex.add_argument("--state", help="logged-in Playwright storage_state to explore with")
+    ex.add_argument("--tasks", nargs="*", help='only these tasks, in plain English (e.g. "search companies")')
+    ex.add_argument("--max-tasks", type=int, default=30, help="most tasks the AI lists (default 30)")
+    ex.add_argument(
+        "--tasks-file",
+        help="the actions to map, as a task list (default: mapper/explore/tasks/<domain>.txt if it exists)",
+    )
+    ex.add_argument("--headed", action="store_true", help="show the browser")
+    ex.add_argument(
+        "--resurvey", action="store_true", help="redo the look-around even if a recent one is saved"
+    )
+    ex.add_argument("--batch", type=int, help="explore only the next N tasks not yet recorded (one go)")
+    ex.add_argument("--redo", action="store_true", help="explore tasks again even if already recorded")
+    ex.add_argument(
+        "--pause", type=float, default=0, help="seconds to wait after each task (slower is less bot-like)"
+    )
+    ex.add_argument("--parallel", type=int, default=4, help="tasks explored at the same time (default 4)")
+    ex.add_argument(
+        "--max-browsers", type=int, default=8, help="most browsers open at once, in total (default 8)"
+    )
+    ex.add_argument("--out", default="captures", help="captures root (default: captures)")
+    ex.add_argument(
+        "--live", action="store_true", help="run read examples through the executor after mapping"
+    )
+    ex.add_argument("--save", action="store_true", help="save the card to the registry if it is valid")
+    ex.add_argument("--db", help="registry SQLite file (default: $REGISTRY_DB or ./runtime.db)")
+    ex.set_defaults(handler=_cmd_explore)
+
     rc = sub.add_parser("recon", help="guess what a captured site is built with (informational)")
     rc.add_argument("captures_dir", help="captures/<domain>/")
     rc.set_defaults(handler=_cmd_recon)
@@ -128,6 +160,12 @@ def _cmd_heal(args: argparse.Namespace) -> int:
     return pipeline.heal_main(args)
 
 
+def _cmd_explore(args: argparse.Namespace) -> int:
+    from mapper.explore import explorer
+
+    return explorer.main(args)
+
+
 def _cmd_recon(args: argparse.Namespace) -> int:
     from spider.harmap import pipeline
 
@@ -142,7 +180,19 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return validate.main(args)
 
 
+def load_env() -> None:
+    """Read ``.env`` (from the working directory upwards, then the repo root) like the gateway does.
+    Variables already set in the environment win."""
+    from pathlib import Path
+
+    from dotenv import find_dotenv, load_dotenv
+
+    load_dotenv(find_dotenv(usecwd=True))
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    load_env()
     parser = build_parser()
     args = parser.parse_args(argv)
     return int(args.handler(args) or 0)

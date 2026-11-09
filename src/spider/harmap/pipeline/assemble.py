@@ -49,12 +49,24 @@ class MappedAction:
     entries: list[Entry] = field(default_factory=list)  # every M1-kept entry, for challenge detection
 
 
-def challenge_signals(entries: list[Entry]) -> list[str]:
+CHALLENGE_PAGE_MAX = 50_000  # a challenge page is small; a full app page mentions "captcha" in its scripts
+
+
+def challenge_signals(entries: list[Entry], answers: list[Entry] = ()) -> list[str]:
+    """``body_contains:`` signals for challenge pages seen while recording: an error status, or a small
+    page. A marker that a step's own answer contains would flag every success, so it is left out."""
     found = []
+    normal = [(a.response_body or "").lower() for a in answers]
     for e in entries:
+        if 200 <= e.status < 300 and len(e.response_body or "") > CHALLENGE_PAGE_MAX:
+            continue
         body = (e.response_body or "")[:200_000].lower()
         for marker in CHALLENGE_MARKERS:
-            if marker.lower() in body and f"body_contains:{marker}" not in found:
+            if (
+                marker.lower() in body
+                and f"body_contains:{marker}" not in found
+                and not any(marker.lower() in n for n in normal)
+            ):
                 found.append(f"body_contains:{marker}")
     return found
 
@@ -65,7 +77,9 @@ def _is_plain_get(plan: StepPlan) -> bool:
     return req["method"] == "GET" and "{{params." not in text and "{{steps." not in text
 
 
-def placeholder_provider(provider_id: str, mapped: list[MappedAction], base_url: str) -> dict:
+def placeholder_provider(
+    provider_id: str, mapped: list[MappedAction], base_url: str, login_url: str | None = None
+) -> dict:
     """Smallest schema-valid provider: the runtime's login flow replaces these values."""
     check = None
     for m in mapped:
@@ -84,7 +98,7 @@ def placeholder_provider(provider_id: str, mapped: list[MappedAction], base_url:
             "body": None,
             "expect": {"status": [200], "content_type": "any", "paths": []},
         }
-    start = mapped[0].start_url if mapped else base_url + "/"
+    start = login_url or (mapped[0].start_url if mapped else base_url + "/")
     return {"id": provider_id, "login_url": start, "session_check": check, "logged_out_signals": []}
 
 
@@ -101,7 +115,9 @@ def _hoist_headers(actions: list[dict]) -> dict[str, str]:
     return common
 
 
-def assemble(domain: str, base_url: str, mapped: list[MappedAction]) -> tuple[dict, list[str]]:
+def assemble(
+    domain: str, base_url: str, mapped: list[MappedAction], login_url: str | None = None
+) -> tuple[dict, list[str]]:
     """Returns ``(card, notes)``. ``notes`` go to the mapping report."""
     notes: list[str] = []
     prefix = tool_prefix(domain)
@@ -123,7 +139,14 @@ def assemble(domain: str, base_url: str, mapped: list[MappedAction]) -> tuple[di
         for a in actions:
             a.pop("tier", None)
 
-    blocked = ["status:403", *challenge_signals([e for m in mapped for e in m.entries])]
+    answers = [p.draft.entry for m in mapped for p in m.plans]
+    # 999: the non-standard "you look like a bot" status (LinkedIn); marking it blocked lets the executor
+    # move the action up a tier (to a real browser) instead of failing
+    blocked = [
+        "status:403",
+        "status:999",
+        *challenge_signals([e for m in mapped for e in m.entries], answers),
+    ]
     card = {
         "schema_version": "0.4",
         "domain": domain,
@@ -132,7 +155,9 @@ def assemble(domain: str, base_url: str, mapped: list[MappedAction]) -> tuple[di
         "blocked_signals": blocked,
         "changed_signals": [],
         "provenance": {"mapped_at": iso_now(), "source": "network_capture", "mapper_version": __version__},
-        "connect_providers": [placeholder_provider(prefix, mapped, base_url)] if uses_session else [],
+        "connect_providers": [placeholder_provider(prefix, mapped, base_url, login_url)]
+        if uses_session
+        else [],
         "defaults": defaults,
         "actions": actions,
     }

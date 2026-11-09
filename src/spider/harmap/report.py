@@ -152,7 +152,19 @@ def _section_task(tr: TaskResult, secrets: set[str]) -> list[str]:
         source = {"llm": "picked by the LLM", "fallback": "first item's scalar leaves (no LLM)"}.get(
             tr.output.source, tr.output.source
         )
-        out.append(f"From `{o['from']}` (`{tr.output.items_path}[*]`), limit {o['limit']}, fields {source}:")
+        step = next(st for st in a["steps"] if o["from"] == f"steps.{st['id']}.items")
+        items = step["extract"]["items"]
+        where = (
+            "the streamed result rows"
+            if items.get("resolve") == "rows"
+            else "the page's visible text, one string per element"
+            if tr.output.source == "page_text"
+            else f"`{items['expr']}`"
+        )
+        if tr.output.source == "page_text":
+            out.append(f"From `{o['from']}` ({where}), limit {o['limit']}, no fields.")
+        else:
+            out.append(f"From `{o['from']}` ({where}), limit {o['limit']}, fields {source}:")
         out.append("")
         for name, path in o["fields"].items():
             out.append(f"- `{name}` ← `{path}`")
@@ -168,6 +180,25 @@ def _section_task(tr: TaskResult, secrets: set[str]) -> list[str]:
         out.append(f"- **unknown** `{lab.address}`: {'; '.join(lab.notes)}")
     for w in warnings:
         out.append(f"- ⚠ {w}")
+    out.append("")
+    return out
+
+
+def _section_explore(captures_dir) -> list[str]:
+    """What the explorer's LLM decided to map (when the captures came from `mapper explore`)."""
+    from pathlib import Path
+
+    path = Path(captures_dir) / "explore.json"
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text())
+    out = ["## Explorer (tasks chosen by the LLM)", ""]
+    out.append(f"Started from `{data['start_url']}`; surveyed {len(data.get('pages', []))} page(s).")
+    out.append("")
+    out += ["| Task | Kind | Status | Attempts | Note |", "|---|---|---|---|---|"]
+    for t in data["tasks"]:
+        note = _cell(t.get("reason") or t["description"], 80)
+        out.append(f"| `{t['name']}` | {t['kind']} | {t['status']} | {len(t.get('attempts', []))} | {note} |")
     out.append("")
     return out
 
@@ -245,7 +276,8 @@ def render(result: DomainResult) -> str:
         out.append("Live runs through the executor:")
         for r in v.live:
             out.append(
-                f"- {'✅' if r.ok else '❌'} `{r.action}({r.params})` → {r.status}, "
+                f"- {'⏭' if r.status == 'SKIPPED' else '✅' if r.ok else '❌'} "
+                f"`{r.action}({r.params})` → {r.status}, "
                 f"{r.items} item(s) {r.message}"
             )
     elif result.live_requested:
@@ -254,6 +286,7 @@ def render(result: DomainResult) -> str:
         out.append("- live validation not run (pass `--live` to run examples through the executor)")
     out.append("")
 
+    out += _section_explore(result.captures_dir)
     if result.recon is not None:
         out += _section_recon(result.recon)
     for tr in result.tasks:

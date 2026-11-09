@@ -65,6 +65,17 @@ def endpoint_key(entry: Entry, values: dict[str, str] | None = None) -> tuple[st
     return entry.method, entry.host, path
 
 
+OPERATION_PARAMS = ("queryId", "operationName", "operation", "op", "action", "componentId", "sduiid")
+
+
+def operation_key(entry: Entry) -> tuple:
+    """Endpoint plus the query values that name the operation (a GraphQL ``queryId``/``operationName``):
+    one ``/graphql`` path serves many different reads."""
+    pairs = [kv.split("=", 1) for kv in entry.raw_query.split("&") if "=" in kv]
+    ops = tuple(sorted((k, v.split(".")[0]) for k, v in pairs if k in OPERATION_PARAMS))
+    return entry.method, entry.host, entry.path, ops
+
+
 @dataclass
 class Goal:
     entry: Entry
@@ -73,6 +84,7 @@ class Goal:
     tie: bool = False
     typed_at: datetime | None = None
     mark: datetime | None = None
+    shown: list[Entry] = field(default_factory=list)  # the candidates as the live run recorded them
 
 
 class GoalNotFound(LookupError):
@@ -117,8 +129,13 @@ def find_read_goal(bundle: Bundle, values: dict[str, str] | None = None, mark_in
         if any(entry_mentions(bundle, e, v) for v in values.values() if v)
         and (typed is None or e.started >= typed)
     ]
-    json_lists = [e for e in mentioned if e.response_kind == "json" and has_list(e.response_json)]
-    candidates = json_lists or [e for e in mentioned if e.response_kind in ("html", "text", "json")]
+    json_lists = [
+        e
+        for e in mentioned
+        if (e.response_kind == "json" and has_list(e.response_json))
+        or (e.response_kind == "stream" and e.response_rows)  # streamed data rows are a list
+    ]
+    candidates = json_lists or [e for e in mentioned if e.response_kind in ("html", "text", "json", "stream")]
     if not candidates:
         raise GoalNotFound(f"{bundle.run}: no request carries the input values {sorted(values)}")
 
@@ -141,11 +158,25 @@ def find_read_goal(bundle: Bundle, values: dict[str, str] | None = None, mark_in
     return Goal(chosen, reason, window, tie, typed, mark)
 
 
+WRITE_GRACE = timedelta(milliseconds=500)  # the mark is taken just after the click that sends
+
+
 def find_write_goal(bundle: Bundle, mark_index: int = 0) -> Goal:
     writes = [e for e in bundle.entries if e.method not in ("GET", "HEAD")]
     if not writes:
         raise GoalNotFound(f"{bundle.run}: no non-GET/HEAD request in the capture")
     mark = _pick_mark(bundle, mark_index)
+    # Explored writes: the request the blocker stopped that carries the made-up text is the send itself
+    # (its timing says little: it starts inside the click, and bot sensors post around it)
+    values = [v for v in bundle.values.values() if v]
+    carrying = [
+        e for e in writes if e.blocked and values and any(entry_mentions(bundle, e, v) for v in values)
+    ]
+    if carrying:  # drafts saved while typing come before the send, retries of it after
+        at_mark = [e for e in carrying if mark is None or e.started <= mark + WRITE_GRACE]
+        chosen = at_mark[-1] if at_mark else carrying[0]
+        reason = "the blocked request that carries the typed input (the send the explorer stopped)"
+        return Goal(chosen, reason, carrying, False, None, mark)
     if mark is None:
         return Goal(writes[0], "first non-GET/HEAD request (no goal mark)", writes, len(writes) > 1)
     anchor = _anchor(bundle, None, mark)
@@ -166,6 +197,106 @@ def find_write_goal(bundle: Bundle, mark_index: int = 0) -> Goal:
     return Goal(chosen, reason, pool, _distinct_endpoints(pool, {}) > 1, None, mark)
 
 
+MAX_SCREEN_CANDIDATES = 14  # with small data answers holding the page's text, for the LLM to weigh
+NAV_SLACK = timedelta(seconds=2)
+SMALL = 50_000  # bytes: a "who am I" answer is small; big ones are pages, feeds and app settings
+MIN_AT_ACTION = 5_000  # bytes: a data answer fetched at the action smaller than this is a setting or flag
+MIN_SCREEN_SHARE = 1 / 10  # less than this of what the page showed: the answer was not recorded
+SCREEN_GRACE = timedelta(seconds=3)  # a page that performs the task fetches its data right after loading
+
+
+def similar_entry(bundle: Bundle, like: Entry) -> Entry | None:
+    """The same endpoint in another run when one path segment differs (a picked item's id in the path:
+    /api/conversations/<id>/messages): same method, host and segment count, one segment at most apart."""
+    segs = like.path.strip("/").split("/")
+    same = [
+        e
+        for e in bundle.entries
+        if (e.method, e.host) == (like.method, like.host)
+        and len(e.path.strip("/").split("/")) == len(segs)
+        and sum(a != b for a, b in zip(e.path.strip("/").split("/"), segs, strict=True)) <= 1
+    ]
+    return same[0] if same else None
+
+
+def find_screen_goal(
+    bundle: Bundle, screen: list[str], mark_index: int = 0, values: dict[str, str] | None = None
+) -> Goal:
+    """Reads that take no input (nothing typed to look for): the answer that holds most of what the page
+    showed. Each text counts less the more answers carry it (menus are on every page), and a data answer
+    (JSON, streamed rows) wins over the page's HTML unless it holds less than half as much."""
+    mark = _pick_mark(bundle, mark_index)
+    anchor = _anchor(bundle, None, mark)  # the click/Enter that performed the task, if it was one
+    texts = [t for t in dict.fromkeys(screen) if len(t) >= 3]
+    forms = {t: (t, json.dumps(t)[1:-1]) for t in texts}
+    seen = [
+        e
+        for e in bundle.entries
+        if (not values or any(entry_mentions(bundle, e, v) for v in values.values() if v))
+        and e.response_kind in ("json", "stream", "html", "text")
+        and e.response_body
+        and 200 <= e.status < 300
+        and (mark is None or e.started <= mark + SCREEN_GRACE)
+    ]
+    pool = [e for e in seen if anchor is None or e.started >= anchor]
+    holds = {id(e): {t for t in texts if any(f in e.response_body for f in forms[t])} for e in seen}
+    spread = {t: max(1, sum(t in holds[id(e)] for e in pool)) for t in texts}
+    score = {id(e): sum(1 / spread[t] for t in holds[id(e)]) for e in seen}
+    scored = [e for e in pool if score[id(e)] > 0]
+    if not scored:
+        raise GoalNotFound(f"{bundle.run}: no answer holds the text the page showed")
+    best = max(score[id(e)] for e in scored)
+    data = [e for e in scored if e.response_kind in ("json", "stream")]
+    first = scored
+    if data and max(score[id(e)] for e in data) * 2 >= best:
+        first = data  # a data answer goes first; the pages stay candidates (app settings look like data)
+    top = max(score[id(e)] for e in first)
+    window = sorted((e for e in first if score[id(e)] == top), key=lambda e: e.started)
+    held = len(holds[id(window[0])])
+    reason = f"its answer holds {held} of the {len(texts)} texts the page showed"
+    ranked = sorted(scored, key=lambda e: -score[id(e)])
+    candidates = [window[0], *[e for e in ranked if e is not window[0]][:5]]
+    at_action = []
+    if mark is not None:  # data fetched right at the task's action, even if it words things differently
+        # (first and last name apart, while the page shows "Ada Lovelace"); small answers are settings
+        at_action = [
+            e
+            for e in seen
+            if e.response_kind in ("json", "stream")
+            and len(e.response_body or "") >= MIN_AT_ACTION
+            and mark - NAV_SLACK <= e.started <= mark + SCREEN_GRACE
+        ]
+        at_action = sorted(at_action, key=lambda e: -len(e.response_body or ""))[:3]  # results are big
+    if held < len(texts) * MIN_SCREEN_SHARE:
+        raise GoalNotFound(
+            f"{bundle.run}: no recorded answer holds the page's result (best: {held} of {len(texts)} "
+            "texts); the recording missed it, explore the task again"
+        )
+    # no input at all (who am I): the data may have loaded before the task, on every page
+    if not values and not bundle.meta.get("inputs_via"):
+        dense = [
+            e
+            for e in seen
+            if e.response_kind in ("json", "stream") and score[id(e)] > 0 and len(e.response_body) < SMALL
+        ]
+        dense.sort(key=lambda e: (-score[id(e)], len(e.response_body)))  # rare text first, not menu labels
+        taken = {operation_key(c) for c in candidates}
+        fresh = []
+        for e in dense:  # each loads on every page: once per endpoint, and not one already listed
+            if operation_key(e) not in taken:
+                taken.add(operation_key(e))
+                fresh.append(e)
+        candidates += fresh[:5]
+    candidates += at_action
+    unique, ops = [], set()
+    for e in candidates:  # each operation once
+        if operation_key(e) not in ops and len(unique) < MAX_SCREEN_CANDIDATES:
+            ops.add(operation_key(e))
+            unique.append(e)
+    candidates = unique
+    return Goal(window[0], reason, candidates, False, None, mark)
+
+
 def find_goal(bundle: Bundle, kind: str | None = None, mark_index: int = 0) -> Goal:
     kind = kind or bundle.kind_hint
     if kind == "write":
@@ -179,6 +310,7 @@ def counterpart(
     """The entry in ``bundle`` for the same endpoint as ``like`` (nearest before ``before``)."""
     key = endpoint_key(like, like_values)
     same = [e for e in bundle.entries if endpoint_key(e, bundle.values) == key]
+    same = [e for e in same if operation_key(e) == operation_key(like)] or same  # the same GraphQL query
     if before is not None:
         earlier = [e for e in same if e.started < before]
         if earlier:
