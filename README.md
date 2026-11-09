@@ -1,40 +1,108 @@
 # spider
 
-spider turns websites into actions an AI agent can call directly, without driving a browser.
+spider turns websites into tools an AI agent can call directly, without driving a browser.
 
-A site's own pages already call the site's own internal endpoints. spider watches a task being done once in a
-real browser, works out which of those requests is the action, and writes it down as a **card**: the request to
-send, where the inputs go, and where the results are in the answer. Agents then call
-`run_action("linkedin.com", "search_companies", {"query": "robotics"})` over MCP and get clean JSON back in
-about a second, signed in as their user.
+An agent asks for `linkedin.com` / `search_companies` with `{"query": "robotics"}` and gets clean JSON back in
+about a second, signed in as its user. Behind that call is no screenshot, no clicking and no page to read: just
+the same request LinkedIn's own page would have sent.
 
 Built for Hack the Burgh 2026.
 
-## How it works
+## Why
 
-```
-agent (Claude) --MCP--> gateway --> executor --> the site's own HTTP endpoints
-                          |            |
-                          |            +-- the user's sign-in (encrypted), their browser identity,
-                          |                residential proxy, tiers: plain HTTP, browser fingerprint, real Chrome
-                          |
-                          +-- registry: cards, versioned per site (SQLite)
-                          +-- map jobs: flowmap records with Claude, replays, infers, checks, saves
-                          +-- heal jobs: broken action, replay its recording, re-map, new version
+Agents mostly use websites the way a person does. A browser agent opens the page, reads it or looks at a
+screenshot, clicks, types, waits, and reads again. That works, but on every single call it is:
+
+- **Slow.** One search is tens of seconds and many model turns.
+- **Expensive.** Every page the model reads costs tokens, every time.
+- **Fragile.** A moved button or a new pop-up breaks it.
+
+Public APIs would be better, but most sites people care about don't have one, or have one that doesn't cover
+what people actually do there (LinkedIn, Amazon, job boards, internal tools).
+
+There is a third way. Every modern site already has an API: the internal requests its own pages make to fetch
+search results, load a profile or follow a company. Those requests are fast and return structured data. They
+just aren't written down anywhere an agent can use.
+
+spider writes them down. It watches a task being done once, works out which request is the real action, and
+saves it so any agent can call it from then on.
+
+```mermaid
+flowchart TB
+    subgraph after["With spider"]
+        direction LR
+        B1[run_action] --> B2[the site's own request] --> B3[JSON]
+    end
+    subgraph before["A browser agent, on every call"]
+        direction LR
+        A1[open page] --> A2[read or screenshot] --> A3[click and type] --> A4[wait] --> A2
+    end
 ```
 
-1. **Map.** Claude (or a person) does the task once in a browser. flowmap replays it with planted marker values,
+## What spider does
+
+A site's actions are kept in one JSON file, its **card** (`CARD_SPEC.md`, explained in `docs/cards.md`). Each
+action says what request to send, where the inputs go, and where the results are in the answer. A card is made
+once and shared by every user; each user signs in with their own account.
+
+```mermaid
+flowchart LR
+    M["Map<br/>do the task once,<br/>find the request"] --> S["Save<br/>a versioned card<br/>for the site"]
+    S --> R["Run<br/>any agent calls it,<br/>as its own user"]
+    R -- "site changed" --> H["Heal<br/>re-map just that action,<br/>save a new version"]
+    H --> R
+```
+
+1. **Map.** Claude (or a person) does the task once in a browser. spider replays it with planted marker values,
    sees which request carries the input and which response carries the results, and confirms it by replaying
-   with that request blocked. The model only does the task and names things; which request is the action is
-   decided from the evidence.
-2. **Save.** One card per site (`CARD_SPEC.md`, explained in `docs/cards.md`), shared by every user. Example values and fixed request values
-   are checked for personal data before a card is saved.
-3. **Run.** Agents find actions with `find_actions` and call them with `run_action`. Each call uses the user's
-   own sign-in, and climbs from plain HTTP to a real Chrome tab only when the site needs it.
+   with that request blocked: if the results vanish, that request is the action. The model only does the task
+   and names things; which request is the action is decided from the evidence.
+2. **Save.** The action goes into the site's card. Example values and fixed request values are checked for
+   personal data first, and every version is kept so a bad change can be rolled back.
+3. **Run.** Agents connect over MCP, find actions with `find_actions` and call them with `run_action`. Each call
+   uses the user's own sign-in, and moves from plain HTTP up to a real Chrome tab only when the site needs it.
 4. **Heal.** When a site changes and an action breaks, spider replays that action's recording, re-maps it and
    saves a new card version while the call waits or retries.
-5. **Writes are held back while mapping.** When a write (follow, send, add to cart) is mapped, the committing
-   request is held in the browser so the site never gets it. Saved writes always need the user's confirmation.
+
+Writes (follow, send, add to cart) are handled carefully at both ends. While mapping, the request that would
+commit the write is held back in the browser, so the site never receives it. Once saved, a write always needs
+the user's confirmation before it is sent.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    agent["Agent<br/>(Claude)"] -- MCP --> gateway
+    subgraph spider
+        gateway["Gateway<br/>find, run, request a map"] --> executor["Executor"]
+        gateway --> registry[("Registry<br/>cards per site")]
+        gateway --> jobs["Map and heal jobs<br/>(flowmap)"]
+        jobs --> registry
+        executor --> registry
+        executor --> signins[("Sign-ins<br/>encrypted")]
+    end
+    executor -- "plain HTTP, browser fingerprint,<br/>or a real Chrome tab" --> site["The site's own<br/>endpoints"]
+    user["User"] -. "signs in once,<br/>in a private browser" .-> signins
+```
+
+What happens on one call:
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant G as spider
+    participant S as linkedin.com
+    A->>G: find_actions("search companies on linkedin.com")
+    G-->>A: search_companies(query)
+    A->>G: run_action(search_companies, query="robotics")
+    G->>S: the site's own search request, with the user's sign-in
+    S-->>G: the site's answer
+    G-->>A: SUCCESS, a list of companies as JSON
+```
+
+The agent never sees a password or a cookie. If the user hasn't signed in to the site yet, the call returns a
+sign-in link instead; the user signs in to the real site in a private remote browser, and spider keeps the
+session encrypted.
 
 ## Repository
 
@@ -56,7 +124,7 @@ All code is one package, `spider`, under `src/`. Tests mirror it under `tests/`.
 | `cards/` | The live, checked cards: linkedin.com (12 actions) and amazon.co.uk (2). Explained in `docs/cards.md` |
 | `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card |
 | `flows/bookshop.test/` | Example flowmap recordings |
-| `docs/` | Cards (`cards.md`), the two mappers (`flowmap.md`, `harmap.md`), the pitch context |
+| `docs/` | Cards (`cards.md`) and the two mappers (`flowmap.md`, `harmap.md`) |
 
 Both mappers have the same stages, so the same file name means the same job in each:
 
