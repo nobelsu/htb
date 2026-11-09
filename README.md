@@ -8,7 +8,7 @@ send, where the inputs go, and where the results are in the answer. Agents then 
 `run_action("linkedin.com", "search_companies", {"query": "robotics"})` over MCP and get clean JSON back in
 about a second, signed in as their user.
 
-Built for Hack the Burgh 2026 by Nobel Suhendra and Wei Wei.
+Built for Hack the Burgh 2026.
 
 ## How it works
 
@@ -38,24 +38,24 @@ agent (Claude) --MCP--> gateway --> executor --> the site's own HTTP endpoints
 
 ## Repository
 
-| Path | What | Owner |
-|---|---|---|
-| `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card | shared |
-| `cards/` | The live, checked cards: linkedin.com (12 actions) and amazon.co.uk (2). Explained in `docs/cards.md` | Nobel |
-| `schema/` | Card and result models, `validate_card()`, placeholders | Nobel |
-| `runtime/gateway.py` | The MCP gateway: tools, pages and jobs wired together (`python -m runtime.gateway`) | Nobel |
-| `runtime/run/` | Running an action: executor, templates, extraction, signals, tiers, `browser/` (real Chrome tabs), confirmation ids, redaction | Nobel |
-| `runtime/signin/` | Sign-in: the connect flow, `neko/` (remote sign-in browsers), encrypted sessions, device identity, proxy | Nobel |
-| `runtime/jobs/` | Heal jobs and map jobs, and the adapter to Wei Wei's mapper | Nobel |
-| `runtime/store/` | SQLite: card registry and search, users and API keys, job state | Nobel |
-| `runtime/web/` | The gateway's pages and the OAuth sign-in for regular Claude | Nobel |
-| `flowmap/` | The mapper the product runs: record, replay, infer, assemble, heal, explore | Nobel |
-| `mapper/` | Wei Wei's mapper: capture pipeline and explorer | Wei Wei |
-| `tools/check_card.py` | Checks a card file against the spec without running it | Nobel |
-| `tests/runtime/`, `tests/flowmap/`, `tests/mapper/` | Tests for each package | both |
-| `tests/sites/` | Test sites: the demo shop (`fixture_site/`, card `fixture_site.json`) and the bookshop | Nobel |
-| `flows/bookshop.test/` | Example flowmap recordings | Nobel |
-| `docs/` | Cards explained (`cards.md`), the mappers (`flowmap.md`, `mapper-design.md`), the pitch context | both |
+| Path | What |
+|---|---|
+| `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card |
+| `cards/` | The live, checked cards: linkedin.com (12 actions) and amazon.co.uk (2). Explained in `docs/cards.md` |
+| `schema/` | Card and result models, `validate_card()`, placeholders |
+| `runtime/gateway.py` | The MCP gateway: tools, pages and jobs wired together (`python -m runtime.gateway`) |
+| `runtime/run/` | Running an action: executor, templates, extraction, signals, tiers, `browser/` (real Chrome tabs), confirmation ids, redaction |
+| `runtime/signin/` | Sign-in: the connect flow, `neko/` (remote sign-in browsers), encrypted sessions, device identity, proxy |
+| `runtime/jobs/` | Heal jobs and map jobs, and the adapter to mapper v1 |
+| `runtime/store/` | SQLite: card registry and search, users and API keys, job state |
+| `runtime/web/` | The gateway's pages and the OAuth sign-in for regular Claude |
+| `flowmap/` | The mapper the product runs: record, replay, infer, assemble, heal, explore |
+| `mapper/` | Mapper v1: capture pipeline and explorer |
+| `tools/check_card.py` | Checks a card file against the spec without running it |
+| `tests/runtime/`, `tests/flowmap/`, `tests/mapper/` | Tests for each package |
+| `tests/sites/` | Test sites: the demo shop (`fixture_site/`, card `fixture_site.json`) and the bookshop |
+| `flows/bookshop.test/` | Example flowmap recordings |
+| `docs/` | Cards explained (`cards.md`), the mappers (`flowmap.md`, `mapper-design.md`), the pitch context |
 
 `runtime/registry.py`, `executor.py`, `confirm.py` and `sessions.py` are old import paths kept for `mapper/`.
 `DECISIONS.md` records every judgement call made while building (L-series runtime and sign-in, M-series mapper).
@@ -168,7 +168,7 @@ uv run python -m flowmap show example.com           # the card and recent heal t
 uv run python -m flowmap heal example.com search_things
 ```
 
-Full reference: `docs/flowmap.md`. Wei Wei's mapper (`python -m mapper capture | map | heal`) is described in
+Full reference: `docs/flowmap.md`. Mapper v1 (`python -m mapper capture | map | heal`) is described in
 `docs/mapper-design.md`.
 
 ## Healing
@@ -178,7 +178,7 @@ or an expired sign-in, then asks the remapper to re-map just the broken action. 
 the action's `examples` and saved as a new version. `REMAPPER` picks the remapper:
 
 - `flowmap`: replays the action's recording from `FLOWS_DIR/<domain>/<action>.json`.
-- `mapper`: Wei Wei's mapper, replaying recordings from `CAPTURES_DIR/<domain>/`.
+- `mapper`: mapper v1, replaying recordings from `CAPTURES_DIR/<domain>/`.
 - `tests.sites.fixture_site.remapper:FixtureRemapper`: a stand-in for the demo shop.
 
 ## Sign-in and the browser tier
@@ -207,7 +207,7 @@ uv run ruff format --check runtime schema flowmap tools tests --exclude tests/ma
 ```
 
 Tests run in parallel. Those that need Docker, Neko or a Playwright browser skip themselves when it isn't
-installed; two of Wei Wei's mapper tests need `uv sync --extra llm`.
+installed; two of mapper v1's tests need `uv sync --extra llm`.
 
 ## Security
 

@@ -1,7 +1,7 @@
 # Mapper design
 
 The mapper turns a **capture** of a person (or agent) using a website into a **card** (see
-`CARD_SPEC.md`). The executor (Nobel's) runs the cards. The mapper never runs anything live
+`CARD_SPEC.md`). The executor (the runtime's) runs the cards. The mapper never runs anything live
 except during validation.
 
 ```
@@ -155,7 +155,7 @@ seen during capture (e.g. a captcha page returned with 200).
 **`tool_prefix`:** the registrable domain minus its TLD, lowercased, `[a-z0-9_]` only, max 20 chars
 (`linkedin.com` → `linkedin`).
 
-**`connect_providers` (owned by Nobel's login flow, see "Open items").** When any request carries session
+**`connect_providers` (owned by the runtime's login flow, see "Open items").** When any request carries session
 cookies, M8 adds one provider (`id` = `tool_prefix`) and sets `defaults.auth_provider` to it. The mapper
 only knows logged-in traffic, so it writes the smallest schema-valid placeholder: `login_url` = the
 capture's `start_url`, `session_check` = a parameter-free logged-in GET from the capture, and
@@ -172,10 +172,10 @@ This deliberately overrides `CARD_SPEC.md` "Healing" points 4–5 for this proje
 re-mapped (not only the broken action) and the new card replaces the old one whole, **write actions
 included, with no human approval step**. The per-call `requires_confirmation` prompt is unchanged.
 
-## Open items for Nobel
+## Open items for the runtime
 
-- **Healing differs from the spec (decided by WeiWei).** The mapper's `heal` re-maps the whole site and
-  saves the result as the active version, write actions included, with no approval step. Nobel's
+- **Healing differs from the spec (decided by the mapper owner).** The mapper's `heal` re-maps the whole site and
+  saves the result as the active version, write actions included, with no approval step. The runtime's
   `runtime/healing.py` still holds healed write actions back (`heal_candidates`, "writes are never
   auto-activated", around line 239); per this decision that hold-back should go.
 - **Next (mapper): `Remapper` adapter.** Wire `mapper heal` in as the runtime's `runtime.healing.Remapper`

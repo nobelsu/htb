@@ -3,7 +3,7 @@
 * ``schema_version``, ``domain``, ``tool_prefix``, ``base_url``, ``provenance``.
 * ``blocked_signals``: ``status:403`` plus ``body_contains:`` for any challenge page seen in capture.
 * ``connect_providers``: when any action sends session cookies, one **placeholder** provider (see
-  docs/mapper-design.md "Open items": Nobel's hosted-login flow owns the real values). Actions that send
+  docs/mapper-design.md "Open items": the runtime's hosted-login flow owns the real values). Actions that send
   session cookies inherit it through ``defaults.auth_provider``; the others get ``auth_provider: null``.
 * ``defaults``: tier, auth, timeouts and limits, plus any header every step of every action sends with
   the same template.
@@ -32,7 +32,7 @@ CHALLENGE_MARKERS = (
 )
 
 PLACEHOLDER_PROVIDER_NOTE = (
-    "HIGH PRIORITY (Nobel): connect_providers is a placeholder. login_url, session_check and "
+    "HIGH PRIORITY (runtime): connect_providers is a placeholder. login_url, session_check and "
     "logged_out_signals belong to the hosted-login flow (docs/mapper-design.md, Open items)."
 )
 
@@ -65,7 +65,7 @@ def _is_plain_get(plan: StepPlan) -> bool:
 
 
 def placeholder_provider(provider_id: str, mapped: list[MappedAction], base_url: str) -> dict:
-    """Smallest schema-valid provider: Nobel's login flow replaces these values."""
+    """Smallest schema-valid provider: the runtime's login flow replaces these values."""
     check = None
     for m in mapped:
         for plan in m.plans:

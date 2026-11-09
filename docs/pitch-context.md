@@ -77,7 +77,7 @@ agent (Claude) ──MCP──▶ spider gateway ──▶ executor ──▶ th
   confirmation, rate limits, bot challenges, pages that change, browser-only endpoints).
 - 25 map jobs run on the server today (2026-11-08) against LinkedIn and Amazon; 5 succeeded. Most failures
   were real-site problems that each led to a fix (see "Honest limits").
-- About 30,000 lines of Python; 661 automated tests; 135 commits (Nobel and Wei Wei).
+- About 30,000 lines of Python; 661 automated tests; 135 commits.
 - Model used for mapping and labelling: Claude (Anthropic API).
 
 ## Demo ideas
@@ -114,16 +114,9 @@ agent (Claude) ──MCP──▶ spider gateway ──▶ executor ──▶ th
 - Amazon product pages give only the title so far; actions are set up from one real example.
 - Hosting is a laptop behind ngrok; no always-on server yet. No per-user quotas.
 
-## Team and ownership
-
-- **Nobel Suhendra:** runtime (executor, MCP gateway, sign-in, healing, map jobs) and flowmap, the mapper
-  the product runs.
-- **Wei Wei (pig8pig):** the original mapper (`mapper/`): capture pipeline and an explorer; his streamed-rows
-  support is in the product.
-
 ## Design profile (use for the deck's look)
 
-From the product's own pages (`runtime/web/ui.py`) and Nobel's design rules.
+From the product's own pages (`runtime/web/ui.py`) and the design rules.
 
 - **Name:** spider, always lowercase, as a wordmark. Theme: web crawling, spiders, orb webs. ("Silk Road"
   was rejected.)
@@ -152,4 +145,4 @@ From the product's own pages (`runtime/web/ui.py`) and Nobel's design rules.
 
 - `README.md` (setup, pages, users and keys), `CARD_SPEC.md` (the card format), `DECISIONS.md` (every
   judgement call: L-series runtime and sign-in, M-series mapper), `docs/flowmap.md` (the mapper),
-  `docs/mapper-design.md` (Wei Wei's mapper), `action_map.example.json` (an example card).
+  `docs/mapper-design.md` (mapper v1), `action_map.example.json` (an example card).

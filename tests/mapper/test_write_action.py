@@ -1,5 +1,5 @@
 """Step 8: the fixture's "Save note" form POST → a write action with a csrf regex extract,
-requires_confirmation: true and examples: []. Proven end to end through Nobel's executor."""
+requires_confirmation: true and examples: []. Proven end to end through the runtime's executor."""
 
 import asyncio
 import json

@@ -1,4 +1,4 @@
-"""The heal adapter: a heal job re-records the broken actions with WeiWei's mapper and re-maps the site.
+"""The heal adapter: a heal job re-records the broken actions with mapper v1 and re-maps the site.
 
 Unit tests use a fake mapper (no browser). The end-to-end test captures the mapper's fixture site, breaks it
 (the search API moves) and lets the runtime's HealManager heal it through the adapter.

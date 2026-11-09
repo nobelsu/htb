@@ -1,6 +1,6 @@
 """Mapper-side card checks that ``schema.validate_card`` cannot do.
 
-The save-time rules from the spec live in Nobel's ``schema`` package (and ``tools/check_card.py``); the
+The save-time rules from the spec live in the runtime's ``schema`` package (and ``tools/check_card.py``); the
 mapper calls both. This module only adds what needs the capture itself:
 
 * **No live secrets in the card.** No string in the card may contain a session cookie value or a

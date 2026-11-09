@@ -5,7 +5,7 @@ Read `CARD_SPEC.md` (the contract) and `docs/mapper-design.md` (the design) befo
 
 ## Scope
 - Work only in `mapper/`, `tests/mapper/` and `docs/mapper-design.md`.
-- Do **not** create or edit `schema/`, the executor, the MCP server or the login flow. They are Nobel's.
+- Do **not** create or edit `schema/`, the executor, the MCP server or the login flow. They belong to the runtime.
   - If `schema/` (the shared Pydantic models) is missing, emit plain dicts and run the save-time rules
     from the spec in `mapper/checks.py`. Switch to `schema/` once it lands, and keep `checks.py` only for
     rules the schema doesn't cover.

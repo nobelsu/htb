@@ -50,7 +50,7 @@ def test_card_site_fields(mapped, fixture_captures):
     [provider] = card["connect_providers"]
     assert provider["id"] == "127_0_0_1"
     assert provider["session_check"]["url"] == "{{base_url}}/api/session"  # placeholder, see Open items
-    assert any("HIGH PRIORITY (Nobel)" in n for n in mapped.notes)
+    assert any("HIGH PRIORITY (runtime)" in n for n in mapped.notes)
 
 
 @pytest.mark.browser
@@ -99,7 +99,7 @@ def test_report_shows_every_goal_field_with_provenance(mapped, tmp_path):
         line = next((ln for ln in goal_section.splitlines() if ln.startswith(f"| {start}")), None)
         assert line is not None and template in line, (start, line)
     assert "confirmed on m2" in report
-    assert "HIGH PRIORITY (Nobel)" in report
+    assert "HIGH PRIORITY (runtime)" in report
     assert "**VALID**" in report and "SUCCESS, 10 item(s)" in report
 
 

@@ -1,6 +1,6 @@
 """Validate a card: static save-time rules, then (optionally) live runs of its examples.
 
-Static: Nobel's ``schema.validate_card`` (the spec's save-time rules), ``tools/check_card.py`` when it
+Static: the runtime's ``schema.validate_card`` (the spec's save-time rules), ``tools/check_card.py`` when it
 exists, and ``mapper.checks`` (no live secrets in the card).
 
 Live (opt-in, ``--live``): every read action's ``examples`` run through the executor with the capture's
@@ -26,7 +26,7 @@ CHECK_CARD = Path(__file__).resolve().parent.parent / "tools" / "check_card.py"
 
 # ==== EXECUTOR HOOK ===============================================================================
 # The mapper never replays HTTP itself (mapper/CLAUDE.md). Live validation goes through this protocol;
-# ``RuntimeExecutor`` adapts Nobel's ``runtime.executor.Executor`` to it.
+# ``RuntimeExecutor`` adapts the runtime's ``runtime.executor.Executor`` to it.
 
 
 class Executor(Protocol):

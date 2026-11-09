@@ -854,7 +854,7 @@ def load_remapper(
     captures_dir: str | Path = "captures",
     proxies: ProxyConfig | None = None,
 ) -> Remapper | None:
-    """`mapper` -> the heal adapter (WeiWei's mapper); `flowmap` -> flowmap's flow replay (FLOWS_DIR, default
+    """`mapper` -> the heal adapter (mapper v1); `flowmap` -> flowmap's flow replay (FLOWS_DIR, default
     flows/); `module.path:Name` -> an instance of Name (or Name itself if it is already an instance)."""
     if not spec:
         return None

@@ -1,7 +1,7 @@
 # Decisions
 
 Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
-"Asked" = answered by Nobel. "Default" = proposed and not objected to.
+"Asked" = answered by the project owner. "Default" = proposed and not objected to.
 
 ## Answered questions
 - **D1 `action_maps` columns (asked).** `id INTEGER PK, domain, version, map_json, active, created_at, note`.
@@ -143,29 +143,29 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **H3 EMPTY spikes (asked).** Built now. Only fresh agent-facing `EMPTY` results count; `SUCCESS` resets the
   count; other codes leave it alone. At 5 the count resets and one example with `min_items >= 1` runs in the
   background; if it is `EMPTY` too, a heal is queued (`trigger: empty_spike`).
-- **Cooldown (not in the spec; approved by Nobel).** After a heal for an action ends `failed`, `cancelled` or
+- **Cooldown (not in the spec; approved).** After a heal for an action ends `failed`, `cancelled` or
   `needs_review`, PAGE_CHANGED for that action returns the finished job's id with the remaining cooldown as
   `retry_after_s` (default 300 s), instead of queueing a heal on every call.
 - **Pre-check.** Runs `session_check` for each provider the broken actions use, then one example of the first
   broken read. `BLOCKED`, `AUTH_EXPIRED`, `RATE_LIMITED` and `AUTH_REQUIRED` cancel the job (nothing degraded).
   If the example now *passes*, the job is also cancelled (the break was input-specific, e.g. an ambiguous SKU);
-  this case is not in the spec (approved by Nobel).
+  this case is not in the spec (approved).
 - **"Pass".** For validation and health checks: every example returns `SUCCESS`/`EMPTY` with at least `min_items`.
 - **Activation.** Changed actions = those whose definition differs from the active card. Actions the remapper
   adds are ignored; actions it drops are kept. Changed reads that pass go in; changed reads that fail keep the old
   definition and are marked degraded; changed writes go live (H4). A broken
   action the remapper didn't change stays degraded. No change → no new version.
 - **H4 Healed writes go live (asked; spec changed).** A healed write action goes into the new version like a read
-  (WeiWei's mapper decision, approved by Nobel). Writes are never executed to validate them (that would really
+  (mapper v1's decision, approved). Writes are never executed to validate them (that would really
   post/buy/follow, and writes usually have no examples), so the job result lists them under `unvalidated`. The
   `heal_candidates` table is no longer written (*since removed* from the schema; old databases keep an
   unused empty table). `CARD_SPEC.md` "Healing" is
   updated to match.
-- **H5 Heal adapter (asked).** `runtime/jobs/mapper_remapper.py` is the `Remapper` done by WeiWei's mapper; Nobel builds
+- **H5 Heal adapter (asked).** `runtime/jobs/mapper_remapper.py` is the `Remapper` done by mapper v1; the runtime builds
   it (runtime side), calling the mapper's own `recapture` and `map_domain` without changing `mapper/`. Turned on
   with `REMAPPER=mapper`; recordings are read from `CAPTURES_DIR/<domain>/<action>/`.
   - **Only the broken actions are re-recorded (asked).** Each broken action's recordings are replayed, then the
-    whole card is rebuilt from every recording. Faster than WeiWei's `mapper heal` (which replays everything); the
+    whole card is rebuilt from every recording. Faster than mapper v1's `mapper heal` (which replays everything); the
     runtime still validates every changed action before it goes live.
   - **Sign-in for the replay (asked).** The user's current sign-in from our encrypted store (the one made through
     the login link), else the sign-in saved inside the recording. The cookies go to a private (0600) Playwright
@@ -292,7 +292,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **L5 Browser tier (asked).** Each step runs as `fetch()` in a tab on the request's origin, so it goes out as real
   Chrome. Browser-owned headers (cookie, user-agent, origin, referer, host...) are dropped. Only a redirect's final
   URL is visible, so `redirect:` signals see the final path only.
-- **L7 Cookie rotation (asked; spec changed).** Nobel and WeiWei agreed the spec shouldn't forbid saving refreshed
+- **L7 Cookie rotation (asked; spec changed).** Both owners agreed the spec shouldn't forbid saving refreshed
   cookies (`CARD_SPEC.md` "Cookies" is updated). After a run that ends `SUCCESS` or `EMPTY`, and after a passing
   `session_check` (so the 15-minute keep-alive refreshes idle sign-ins too), the cookies are saved back to the
   user's encrypted sign-in, mirroring the site: changed values updated, new cookies added, deleted ones removed
@@ -406,7 +406,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
     and the placeholder slides out as you type, bar arrows nudge, the spine word drifts on scroll. All of it is off
     under prefers-reduced-motion.
 - **L13 Page design: Margin in Linen, named spider (asked, after wireframes: https://claude.ai/artifact/L1o9JnahEtjbWSh57nLBEm).**
-  Replaces Spine (L12), which Nobel found too loud. Every page (`runtime/web/ui.py`): a left art panel where a spider
+  Replaces Spine (L12), which was too loud. Every page (`runtime/web/ui.py`): a left art panel where a spider
   spins orb webs (radials in a scrambled order, frame, spiral; it rests, wanders off and spins the next; old webs
   stay and fade back, the oldest go; never quite regular), a hairline, and a calm column of small IBM Plex Sans on
   the right, centred vertically. Linen palette: paper #F5EDE2, ink #2A2421, umber #6B5A35 for actions, brick
@@ -414,7 +414,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   errors show under the field they are about (the browser's bubbles are off); server errors show as a brick line
   at the top. The product is named "spider" (PRODUCT_NAME). With reduced motion: one finished web, no movement.
   - **Home page (asked: "animated show what it does").** The three steps under "Your agent, signed in." are gone
-    (Nobel: pointless). Now one headline and an agent's call typed out (`linkedin_search_companies(query=...)`),
+    (judged pointless). Now one headline and an agent's call typed out (`linkedin_search_companies(query=...)`),
     then its results arriving, cycling through a few sites. The examples are illustrative, not live data.
   - **No alerts (asked).** The account page's alerts tile and its browser notifications are removed; the waiting
     sign-ins already show live on the page.
@@ -424,25 +424,25 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 
 ## Mapper v2 (`flowmap/`)
 A second mapper with no explorer: a person records each action once as a flow, the mapper replays it with planted
-markers and infers the card deterministically, and the LLM only names things. Wei Wei's `mapper/` is untouched.
+markers and infers the card deterministically, and the LLM only names things. Mapper v1 (`mapper/`) is untouched.
 - **M1 Where (default).** A new package `flowmap/` (tests in `tests/flowmap/`, CLI `python -m flowmap
   record|map|heal|show`) on branch `mapper-v2`. The brief's `mapper/flows.py`, `mapper/capture.py` and
-  `mapper/cli.py` would clash with Wei Wei's package (`mapper/capture/` is a package, his CLI already has `map` and
-  `heal`, and `runtime/jobs/mapper_remapper.py` imports his code).
+  `mapper/cli.py` would clash with mapper v1's package (`mapper/capture/` is a package, its CLI already has `map` and
+  `heal`, and `runtime/jobs/mapper_remapper.py` imports its code).
 - **M2 Healed writes (asked: follow the spec).** The brief said healed writes go to `heal_candidates`; CARD_SPEC
   Healing (H4) says they go live as a new version, with `requires_confirmation` still true so every run asks.
   The spec wins: no `heal_candidates`.
-- **M3 Wei Wei's helpers (asked: copy them in).** The few pure helpers worth reusing (marker encodings, request
+- **M3 Mapper v1's helpers (asked: copy them in).** The few pure helpers worth reusing (marker encodings, request
   filters, dependency tracing, pagination, secret checks) are copied into `flowmap/` with a comment naming the
-  original, so flowmap doesn't break when his code changes.
+  original, so flowmap doesn't break when that code changes.
 - **M4 Heal events (asked: a new table).** `heal_events` in the runtime database: `remap_start` / `remap_done` (and
   failures) per heal job, with timings, for the benchmark.
-- **M5 Test sites (asked).** Mapping is aimed at real websites (as Wei Wei does), asking before any run of a write
+- **M5 Test sites (asked).** Mapping is aimed at real websites (as mapper v1 does), asking before any run of a write
   flow on a real site. Healing is tested on a website we build ourselves, with switchable breaks (endpoint, field,
   structure and param renamed).
 - **M6 Heal plugs into the runtime (default).** `flowmap/heal.py` implements the existing `Remapper` protocol
   (`REMAPPER=flowmap`); HealManager keeps the pre-check, validation, activation and `degraded` marking.
-- **M7 An agent can record (asked: "we should do it using like an agent"; overlap with Wei Wei's explorer is
+- **M7 An agent can record (asked: "we should do it using like an agent"; overlap with mapper v1's explorer is
   fine).** `record --agent "task"` (`flowmap/agent.py`): Claude does the action once from the accessibility
   tree, one tool call per turn; each step is saved with the role and name it used, input values become
   placeholders, and the results it names become `results_selector` (one CSS selector found in the page).
@@ -477,7 +477,7 @@ markers and infers the card deterministically, and the LLM only names things. We
   - Whoever hits a broken action, the heal starts automatically, and the work it interrupted (a map job, an
     explore) carries on for the user once the heal is done.
   - Map jobs run in the gateway process, one at a time, separate from heal jobs; a worker of their own later.
-  - Flowmap first; Wei Wei's mapper can plug in through the same `Remapper`-style seam later.
+  - Flowmap first; mapper v1 can plug in through the same `Remapper`-style seam later.
   - Step 1 built: `flowmap/browser.py` (`BrowserSetup`) opens installed Chrome without the automation flag,
     with a user's stored sign-in, its device identity and proxy; capture, `record --agent`, `map` and `heal`
     take `--user`. `Remapper.remap` gained `user=`: HealManager passes whoever's call found the break (it used
@@ -509,7 +509,7 @@ markers and infers the card deterministically, and the LLM only names things. We
   - Spec addition (asked, 2026-11-08: "Add to the spec"): placeholders `{{gen.uuid}}`, `{{gen.hex}}` and
     `{{gen.now_ms}}`, a value made fresh for each call, for what a page makes up anew for every request
     (idempotency keys, nonces). One value per name per call (all steps and retries share it). Backward
-    compatible, so `schema_version` stays "0.4"; Wei Wei's mapper can emit it too.
+    compatible, so `schema_version` stays "0.4"; mapper v1 can emit it too.
   - Step 3, writes built (simplified, asked to go fast): every write is held back while mapping, private or
     not, so nothing is undone (doing private writes for real and undoing them is not built). `HoldBack`
     (`flowmap/holdback.py`) answers held requests itself (200, `{}`, `x-flowmap-held`): before the commit

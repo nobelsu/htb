@@ -1,4 +1,4 @@
-"""The heal adapter: the runtime's `Remapper`, done by WeiWei's mapper.
+"""The heal adapter: the runtime's `Remapper`, done by mapper v1.
 
 When a heal job runs, this re-records the broken actions by replaying their saved recordings
 (`captures/<domain>/<action>/`) in a headless browser, then re-maps the whole site from every recording and

@@ -195,7 +195,7 @@ async def test_non_breaks_never_heal(shop: Setup) -> None:
 @pytest.mark.browser
 async def test_field_rename_is_not_detected_by_the_spec_today(shop: Setup) -> None:
     """CARD_SPEC: a field with no match is null, not an error, so a renamed field reads as SUCCESS with nulls
-    and nothing queues a heal. Open question to Nobel (see the step 7 report)."""
+    and nothing queues a heal. Open question (see the step 7 report)."""
     shop.brk("field")
     env = await shop.run("search_books", QUERY)
     assert env.status == ResultCode.SUCCESS and env.heal is None
