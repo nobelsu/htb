@@ -117,11 +117,11 @@ def test_rollback(reg: Registry) -> None:
 
 def test_refresh_sees_writes_from_another_connection(reg: Registry, db_path: Path) -> None:
     other = Registry(db_path)  # e.g. the mapper process
-    other.save(variant("from mapper"))
+    other.save(variant("from harmap"))
     assert reg.get("linkedin.com") is None  # in-memory copy is stale until refresh
     assert reg.refresh() == {"linkedin.com"}
     stored = reg.get("linkedin.com")
-    assert stored is not None and stored.card.actions[0].description == "from mapper"
+    assert stored is not None and stored.card.actions[0].description == "from harmap"
     assert reg.refresh() == set()
     other.close()
 

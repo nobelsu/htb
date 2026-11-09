@@ -123,7 +123,7 @@ def visible_match(leaf: Any, visible: str) -> bool:
 
 
 def value_forms(value: str) -> set[str]:
-    """Wire forms of a typed value. Adapted from mapper v1's mapper/pipeline/m3_goal.py (DECISIONS M3)."""
+    """Wire forms of a typed value. Adapted from harmap/pipeline/m3_goal.py (DECISIONS M3)."""
     return {value, quote(value, safe=""), quote_plus(value), json.dumps(value)[1:-1], escape_restli(value)}
 
 
@@ -136,7 +136,7 @@ def escape_restli(value: str) -> str:
 
 def splice(value: str, replacements: list[tuple[str, str]]) -> str:
     """Replace each needle in ``value`` by its placeholder, left to right, without overlaps.
-    Adapted from mapper v1's mapper/pipeline/m4_provenance.py (DECISIONS M3)."""
+    Adapted from harmap/pipeline/m4_provenance.py (DECISIONS M3)."""
     spans: list[tuple[int, int, str]] = []
     for needle, placeholder in replacements:
         start = 0

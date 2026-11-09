@@ -38,7 +38,7 @@ from flowmap.holdback import WRITES, HoldBack
 RECORDED_TYPES = {"xhr", "fetch", "document"}
 TEXT_TYPES = re.compile(r"json|text|javascript|xml|html|x-www-form-urlencoded", re.I)
 MAX_BODY = 2_000_000
-# Copied from mapper v1's mapper/checks.py (SENSITIVE_NAME, MIN_SECRET_LEN), see DECISIONS M3.
+# Copied from harmap/checks.py (SENSITIVE_NAME, MIN_SECRET_LEN), see DECISIONS M3.
 SENSITIVE_NAME = re.compile(r"cookie|csrf|xsrf|auth|token|session|secret|password|api[-_]?key|bearer", re.I)
 MIN_SECRET_LEN = 8
 SECRET = re.compile(r"secret_[0-9a-f]{16}")
@@ -46,7 +46,7 @@ _LETTERS = "bcdfghjklmnpqrstvwxz"
 
 
 def new_marker() -> str:
-    """A fresh, unlikely string like ``qzvx4821``. Copied from mapper v1's mapper/capture/replay.py (M3)."""
+    """A fresh, unlikely string like ``qzvx4821``. Copied from harmap/capture/replay.py (M3)."""
     return "".join(secrets.choice(_LETTERS) for _ in range(4)) + f"{secrets.randbelow(10**4):04d}"
 
 
@@ -115,7 +115,7 @@ HOSTNAME = re.compile(r"^\.?(?:[a-z0-9-]+\.)+[a-z]{2,}$", re.I)
 def secret_values(cookies: Iterable[str], headers: Iterable[tuple[str, str]]) -> set[str]:
     """Live values to hash: cookie values (quotes stripped, so a header carrying the unquoted value hashes the
     same) and sensitive header values (and the credential after an auth scheme like ``Bearer``).
-    Adapted from mapper v1's mapper/checks.py ``secret_values`` (M3)."""
+    Adapted from harmap/checks.py ``secret_values`` (M3)."""
     out: set[str] = set()
     for value in cookies:
         v = value.strip('"')

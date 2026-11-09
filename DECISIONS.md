@@ -156,16 +156,16 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   definition and are marked degraded; changed writes go live (H4). A broken
   action the remapper didn't change stays degraded. No change → no new version.
 - **H4 Healed writes go live (asked; spec changed).** A healed write action goes into the new version like a read
-  (mapper v1's decision, approved). Writes are never executed to validate them (that would really
+  (harmap's decision, approved). Writes are never executed to validate them (that would really
   post/buy/follow, and writes usually have no examples), so the job result lists them under `unvalidated`. The
   `heal_candidates` table is no longer written (*since removed* from the schema; old databases keep an
   unused empty table). `CARD_SPEC.md` "Healing" is
   updated to match.
-- **H5 Heal adapter (asked).** `runtime/jobs/mapper_remapper.py` is the `Remapper` done by mapper v1; the runtime builds
-  it (runtime side), calling the mapper's own `recapture` and `map_domain` without changing `mapper/`. Turned on
+- **H5 Heal adapter (asked).** `runtime/jobs/harmap_remapper.py` is the `Remapper` done by harmap; the runtime builds
+  it (runtime side), calling the mapper's own `recapture` and `map_domain` without changing `harmap/`. Turned on
   with `REMAPPER=mapper`; recordings are read from `CAPTURES_DIR/<domain>/<action>/`.
   - **Only the broken actions are re-recorded (asked).** Each broken action's recordings are replayed, then the
-    whole card is rebuilt from every recording. Faster than mapper v1's `mapper heal` (which replays everything); the
+    whole card is rebuilt from every recording. Faster than harmap's `mapper heal` (which replays everything); the
     runtime still validates every changed action before it goes live.
   - **Sign-in for the replay (asked).** The user's current sign-in from our encrypted store (the one made through
     the login link), else the sign-in saved inside the recording. The cookies go to a private (0600) Playwright
@@ -424,25 +424,25 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 
 ## Mapper v2 (`flowmap/`)
 A second mapper with no explorer: a person records each action once as a flow, the mapper replays it with planted
-markers and infers the card deterministically, and the LLM only names things. Mapper v1 (`mapper/`) is untouched.
+markers and infers the card deterministically, and the LLM only names things. Harmap (`harmap/`) is untouched.
 - **M1 Where (default).** A new package `flowmap/` (tests in `tests/flowmap/`, CLI `python -m flowmap
-  record|map|heal|show`) on branch `mapper-v2`. The brief's `mapper/flows.py`, `mapper/capture.py` and
-  `mapper/cli.py` would clash with mapper v1's package (`mapper/capture/` is a package, its CLI already has `map` and
-  `heal`, and `runtime/jobs/mapper_remapper.py` imports its code).
+  record|map|heal|show`) on branch `mapper-v2`. The brief's `harmap/flows.py`, `harmap/capture.py` and
+  `harmap/cli.py` would clash with harmap's package (`harmap/capture/` is a package, its CLI already has `map` and
+  `heal`, and `runtime/jobs/harmap_remapper.py` imports its code).
 - **M2 Healed writes (asked: follow the spec).** The brief said healed writes go to `heal_candidates`; CARD_SPEC
   Healing (H4) says they go live as a new version, with `requires_confirmation` still true so every run asks.
   The spec wins: no `heal_candidates`.
-- **M3 Mapper v1's helpers (asked: copy them in).** The few pure helpers worth reusing (marker encodings, request
+- **M3 Harmap's helpers (asked: copy them in).** The few pure helpers worth reusing (marker encodings, request
   filters, dependency tracing, pagination, secret checks) are copied into `flowmap/` with a comment naming the
   original, so flowmap doesn't break when that code changes.
 - **M4 Heal events (asked: a new table).** `heal_events` in the runtime database: `remap_start` / `remap_done` (and
   failures) per heal job, with timings, for the benchmark.
-- **M5 Test sites (asked).** Mapping is aimed at real websites (as mapper v1 does), asking before any run of a write
+- **M5 Test sites (asked).** Mapping is aimed at real websites (as harmap does), asking before any run of a write
   flow on a real site. Healing is tested on a website we build ourselves, with switchable breaks (endpoint, field,
   structure and param renamed).
 - **M6 Heal plugs into the runtime (default).** `flowmap/heal.py` implements the existing `Remapper` protocol
   (`REMAPPER=flowmap`); HealManager keeps the pre-check, validation, activation and `degraded` marking.
-- **M7 An agent can record (asked: "we should do it using like an agent"; overlap with mapper v1's explorer is
+- **M7 An agent can record (asked: "we should do it using like an agent"; overlap with harmap's explorer is
   fine).** `record --agent "task"` (`flowmap/agent.py`): Claude does the action once from the accessibility
   tree, one tool call per turn; each step is saved with the role and name it used, input values become
   placeholders, and the results it names become `results_selector` (one CSS selector found in the page).
@@ -477,7 +477,7 @@ markers and infers the card deterministically, and the LLM only names things. Ma
   - Whoever hits a broken action, the heal starts automatically, and the work it interrupted (a map job, an
     explore) carries on for the user once the heal is done.
   - Map jobs run in the gateway process, one at a time, separate from heal jobs; a worker of their own later.
-  - Flowmap first; mapper v1 can plug in through the same `Remapper`-style seam later.
+  - Flowmap first; harmap can plug in through the same `Remapper`-style seam later.
   - Step 1 built: `flowmap/browser.py` (`BrowserSetup`) opens installed Chrome without the automation flag,
     with a user's stored sign-in, its device identity and proxy; capture, `record --agent`, `map` and `heal`
     take `--user`. `Remapper.remap` gained `user=`: HealManager passes whoever's call found the break (it used
@@ -509,7 +509,7 @@ markers and infers the card deterministically, and the LLM only names things. Ma
   - Spec addition (asked, 2026-11-08: "Add to the spec"): placeholders `{{gen.uuid}}`, `{{gen.hex}}` and
     `{{gen.now_ms}}`, a value made fresh for each call, for what a page makes up anew for every request
     (idempotency keys, nonces). One value per name per call (all steps and retries share it). Backward
-    compatible, so `schema_version` stays "0.4"; mapper v1 can emit it too.
+    compatible, so `schema_version` stays "0.4"; harmap can emit it too.
   - Step 3, writes built (simplified, asked to go fast): every write is held back while mapping, private or
     not, so nothing is undone (doing private writes for real and undoing them is not built). `HoldBack`
     (`flowmap/holdback.py`) answers held requests itself (200, `{}`, `x-flowmap-held`): before the commit

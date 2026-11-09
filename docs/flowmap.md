@@ -1,4 +1,4 @@
-# flowmap (mapper v2)
+# flowmap
 
 A person (or Claude, with `record --agent`) records each action once. flowmap replays it with planted markers, works out the card from what the
 site sent, and saves it to the registry. The LLM only names things. Healing replays the same recording.

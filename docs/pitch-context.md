@@ -145,4 +145,4 @@ From the product's own pages (`runtime/web/ui.py`) and the design rules.
 
 - `README.md` (setup, pages, users and keys), `CARD_SPEC.md` (the card format), `DECISIONS.md` (every
   judgement call: L-series runtime and sign-in, M-series mapper), `docs/flowmap.md` (the mapper),
-  `docs/mapper-design.md` (mapper v1), `action_map.example.json` (an example card).
+  `docs/harmap-design.md` (harmap), `action_map.example.json` (an example card).

@@ -46,18 +46,18 @@ agent (Claude) --MCP--> gateway --> executor --> the site's own HTTP endpoints
 | `runtime/gateway.py` | The MCP gateway: tools, pages and jobs wired together (`python -m runtime.gateway`) |
 | `runtime/run/` | Running an action: executor, templates, extraction, signals, tiers, `browser/` (real Chrome tabs), confirmation ids, redaction |
 | `runtime/signin/` | Sign-in: the connect flow, `neko/` (remote sign-in browsers), encrypted sessions, device identity, proxy |
-| `runtime/jobs/` | Heal jobs and map jobs, and the adapter to mapper v1 |
+| `runtime/jobs/` | Heal jobs and map jobs, and the adapter to harmap |
 | `runtime/store/` | SQLite: card registry and search, users and API keys, job state |
 | `runtime/web/` | The gateway's pages and the OAuth sign-in for regular Claude |
 | `flowmap/` | The mapper the product runs: record, replay, infer, assemble, heal, explore |
-| `mapper/` | Mapper v1: capture pipeline and explorer |
+| `harmap/` | Harmap: capture pipeline and explorer |
 | `tools/check_card.py` | Checks a card file against the spec without running it |
-| `tests/runtime/`, `tests/flowmap/`, `tests/mapper/` | Tests for each package |
+| `tests/runtime/`, `tests/flowmap/`, `tests/harmap/` | Tests for each package |
 | `tests/sites/` | Test sites: the demo shop (`fixture_site/`, card `fixture_site.json`) and the bookshop |
 | `flows/bookshop.test/` | Example flowmap recordings |
-| `docs/` | Cards explained (`cards.md`), the mappers (`flowmap.md`, `mapper-design.md`), the pitch context |
+| `docs/` | Cards explained (`cards.md`), the mappers (`flowmap.md`, `harmap-design.md`), the pitch context |
 
-`runtime/registry.py`, `executor.py`, `confirm.py` and `sessions.py` are old import paths kept for `mapper/`.
+`runtime/registry.py`, `executor.py`, `confirm.py` and `sessions.py` are old import paths kept for `harmap/`.
 `DECISIONS.md` records every judgement call made while building (L-series runtime and sign-in, M-series mapper).
 
 ## Quick start
@@ -168,8 +168,8 @@ uv run python -m flowmap show example.com           # the card and recent heal t
 uv run python -m flowmap heal example.com search_things
 ```
 
-Full reference: `docs/flowmap.md`. Mapper v1 (`python -m mapper capture | map | heal`) is described in
-`docs/mapper-design.md`.
+Full reference: `docs/flowmap.md`. Harmap (`python -m harmap capture | map | heal`) is described in
+`docs/harmap-design.md`.
 
 ## Healing
 
@@ -178,7 +178,7 @@ or an expired sign-in, then asks the remapper to re-map just the broken action. 
 the action's `examples` and saved as a new version. `REMAPPER` picks the remapper:
 
 - `flowmap`: replays the action's recording from `FLOWS_DIR/<domain>/<action>.json`.
-- `mapper`: mapper v1, replaying recordings from `CAPTURES_DIR/<domain>/`.
+- `mapper`: harmap, replaying recordings from `CAPTURES_DIR/<domain>/`.
 - `tests.sites.fixture_site.remapper:FixtureRemapper`: a stand-in for the demo shop.
 
 ## Sign-in and the browser tier
@@ -202,12 +202,12 @@ Every setting is described in `.env.example`.
 
 ```bash
 uv run pytest
-uv run ruff check runtime schema flowmap tools tests --exclude tests/mapper
-uv run ruff format --check runtime schema flowmap tools tests --exclude tests/mapper
+uv run ruff check runtime schema flowmap tools tests --exclude tests/harmap
+uv run ruff format --check runtime schema flowmap tools tests --exclude tests/harmap
 ```
 
 Tests run in parallel. Those that need Docker, Neko or a Playwright browser skip themselves when it isn't
-installed; two of mapper v1's tests need `uv sync --extra llm`.
+installed; two of harmap's tests need `uv sync --extra llm`.
 
 ## Security
 

@@ -33,8 +33,8 @@ from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 from pydantic import AnyHttpUrl
 from starlette.routing import BaseRoute
 
+from runtime.jobs.harmap_remapper import HarmapRemapper
 from runtime.jobs.healing import HealConfig, HealManager, Remapper
-from runtime.jobs.mapper_remapper import MapperRemapper
 from runtime.jobs.mapping import MapConfig, MapManager, Mapper
 from runtime.run.browser.pool import BrowserConfig, BrowserPool
 from runtime.run.browser.tier import BrowserTier
@@ -854,13 +854,14 @@ def load_remapper(
     captures_dir: str | Path = "captures",
     proxies: ProxyConfig | None = None,
 ) -> Remapper | None:
-    """`mapper` -> the heal adapter (mapper v1); `flowmap` -> flowmap's flow replay (FLOWS_DIR, default
-    flows/); `module.path:Name` -> an instance of Name (or Name itself if it is already an instance)."""
+    """`flowmap` -> flowmap's flow replay (FLOWS_DIR, default flows/); `harmap` (or its old name `mapper`) ->
+    harmap's recordings; `module.path:Name` -> an instance of Name (or Name itself if it is already an
+    instance)."""
     if not spec:
         return None
-    if spec == "mapper":
-        log.info("using the mapper to heal (recordings in %s)", captures_dir)
-        return MapperRemapper(captures_dir, sessions=sessions)
+    if spec in ("harmap", "mapper"):
+        log.info("using harmap to heal (recordings in %s)", captures_dir)
+        return HarmapRemapper(captures_dir, sessions=sessions)
     if spec == "flowmap":
         from flowmap.heal import FlowRemapper
 
