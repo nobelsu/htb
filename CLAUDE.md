@@ -10,7 +10,7 @@ If code and spec disagree, the spec wins; raise a question rather than changing 
 ## Ownership (do not edit the other side's code)
 | Area | Owner | Paths |
 |---|---|---|
-| Mapper, capture scripts, card generation | Mapper owner | `src/spider/harmap/`, `docs/harmap.md` |
+| Mapper, capture scripts, card generation | Mapper owner | `src/spider/mappers/harmap/`, `docs/harmap.md` |
 | Executor, MCP server, browser worker, login flow, shared `src/spider/card/` package | Runtime owner | everything else |
 
 ## Repo-wide rules

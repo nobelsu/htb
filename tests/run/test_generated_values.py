@@ -13,8 +13,8 @@ from spider.card.placeholders import PlaceholderError, parse_placeholder
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
 from spider.run.request.template import Context, resolve
-from spider.signin.sessions.base import InMemorySessionStore
-from spider.store.registry import StoredCard
+from spider.store.cards import StoredCard
+from spider.store.sessions import InMemorySessionStore
 from tests.sites.fixture_site.app import state
 
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")

@@ -42,8 +42,8 @@ from spider.run.tiers.http import (
 )
 from spider.signin.identity import BrowserIdentity
 from spider.signin.proxy import ProxyConfig, ProxySpec
-from spider.signin.sessions.base import Cookies, SessionStore
-from spider.store.registry import StoredCard
+from spider.store.cards import StoredCard
+from spider.store.sessions import Cookies, SessionStore
 
 log = logging.getLogger(__name__)
 REDIRECT_LOOP = re.compile(r"TooManyRedirects|too many redirects|redirects followed|redirect loop", re.I)

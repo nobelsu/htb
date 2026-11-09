@@ -7,12 +7,12 @@ from typing import Any
 import pytest
 
 from spider.card import load_card
-from spider.gateway import Gateway
+from spider.gateway.app import Gateway
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
-from spider.signin.sessions.base import InMemorySessionStore
+from spider.store.cards import Registry, StoredCard
 from spider.store.catalog import find_actions
-from spider.store.registry import Registry, StoredCard
+from spider.store.sessions import InMemorySessionStore
 from tests.conftest import LiveServer
 from tests.gateway.test_gateway import API_KEY, connect, envelope
 

@@ -8,7 +8,7 @@ from spider.run.redact import redact_headers
 from spider.run.request.extract import ExtractError, ResponseView, project, run_extract
 from spider.run.request.signals import content_type_ok, match_signal
 from spider.run.tiers.http import HttpResponse
-from spider.signin.sessions.base import DevEnvSessionStore
+from spider.store.sessions import DevEnvSessionStore
 
 # ---- confirmation ----------------------------------------------------------
 

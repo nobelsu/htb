@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from spider.card.model import Action, Card
 from spider.card.params import input_schema, tool_description
-from spider.store.registry import StoredCard
+from spider.store.cards import StoredCard
 
 MAX_RESULTS = 10
 _WORD = re.compile(r"[a-z0-9]+")

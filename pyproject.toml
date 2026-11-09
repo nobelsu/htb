@@ -46,7 +46,7 @@ asyncio_mode = "auto"
 addopts = "-n auto --dist loadgroup"  # tests marked xdist_group("docker") share one worker
 asyncio_default_fixture_loop_scope = "function"
 # src/ for the spider package; harmap's tests import their helpers (fixture_site, synthetic) by bare name
-pythonpath = ["src", "tests/harmap"]
+pythonpath = ["src", "tests/mappers/harmap"]
 markers = [
     "browser: needs a Playwright Chromium install (skipped when unavailable)",
 ]
@@ -65,8 +65,8 @@ ignore = ["SIM105"]  # try/except/pass is kept as written
 # HTML, CSS, JS and SQL templates keep their long lines; wrapping them would change the page source
 "src/spider/web/design.py" = ["E501"]
 "src/spider/web/pages/account.py" = ["E501"]
-"src/spider/web/pages/sign_in.py" = ["E501"]
+"src/spider/web/pages/signin.py" = ["E501"]
 "src/spider/signin/neko/manager.py" = ["E501"]
-"src/spider/signin/sessions/encrypted.py" = ["E501"]
+"src/spider/store/sessions.py" = ["E501"]
 "src/spider/store/jobs.py" = ["E501"]
 "tests/sites/fixture_site/app.py" = ["E501"]

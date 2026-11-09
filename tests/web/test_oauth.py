@@ -22,12 +22,12 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 
-from spider.gateway import Gateway
+from spider.gateway.app import Gateway
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
 from spider.signin.flow import ConnectionManager
-from spider.signin.sessions.encrypted import EncryptedSessionStore, new_session_key
-from spider.store.registry import Registry
+from spider.store.cards import Registry
+from spider.store.sessions import EncryptedSessionStore, new_session_key
 from spider.store.users import UserStore
 from spider.web.oauth import OAuth
 from tests.conftest import LiveServer, free_port

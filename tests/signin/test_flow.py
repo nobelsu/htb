@@ -13,16 +13,15 @@ import pytest
 from playwright.async_api import async_playwright
 
 from spider.card import ResultCode, load_card
-from spider.gateway import Gateway
+from spider.gateway.app import Gateway
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
 from spider.run.tiers.browser import BrowserTier
 from spider.run.tiers.browser_pool import BrowserConfig, BrowserPool
 from spider.run.tiers.http import ProfileKey, default_tiers
 from spider.signin.flow import ConnectionManager
-from spider.signin.sessions.base import InMemorySessionStore
-from spider.signin.sessions.encrypted import EncryptedSessionStore, new_session_key
-from spider.store.registry import Registry, StoredCard
+from spider.store.cards import Registry, StoredCard
+from spider.store.sessions import EncryptedSessionStore, InMemorySessionStore, new_session_key
 from tests.conftest import LiveServer
 from tests.gateway.test_gateway import API_KEY, act, connect, envelope
 from tests.sites.fixture_site.app import CSRF, VALID_SID

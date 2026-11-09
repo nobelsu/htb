@@ -12,9 +12,9 @@ from spider.card import Card, ResultCode
 from spider.jobs.heal import HealConfig, HealManager, RemapError
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
-from spider.signin.sessions.base import InMemorySessionStore
+from spider.store.cards import Registry
 from spider.store.jobs import JobStore
-from spider.store.registry import Registry
+from spider.store.sessions import InMemorySessionStore
 from tests.conftest import hits
 from tests.sites.fixture_site.remapper import FixtureRemapper
 

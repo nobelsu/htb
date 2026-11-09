@@ -15,9 +15,14 @@ from spider.card.envelope import ResultCode as R
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
 from spider.run.tiers.http import HttpSession, ImpersonateSession
-from spider.signin.sessions.base import DevEnvSessionStore, InMemorySessionStore
-from spider.signin.sessions.encrypted import ChainedSessionStore, EncryptedSessionStore, new_session_key
-from spider.store.registry import Registry, StoredCard
+from spider.store.cards import Registry, StoredCard
+from spider.store.sessions import (
+    ChainedSessionStore,
+    DevEnvSessionStore,
+    EncryptedSessionStore,
+    InMemorySessionStore,
+    new_session_key,
+)
 from tests.sites.fixture_site.app import CSRF, VALID_SID
 
 DOMAIN = "fixture.test"

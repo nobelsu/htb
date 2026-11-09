@@ -85,7 +85,7 @@ Event types: `input` (final value of a field), `click`, `key` (Enter only, so fo
 
 | Stage | Input → output | How | LLM |
 |---|---|---|---|
-| **M0 recon** (stretch) | domain → platform guess | Look for `__NEXT_DATA__`, JSON-LD, Shopify/WordPress markers (also Nuxt, GraphQL, Rest.li). Embedded JSON blobs get a suggested `regex` + `parse: "json"` extract. Informational: goes into the report and `python -m mapper recon`, never into the card | no |
+| **M0 recon** (stretch) | domain → platform guess | Look for `__NEXT_DATA__`, JSON-LD, Shopify/WordPress markers (also Nuxt, GraphQL, Rest.li). Embedded JSON blobs get a suggested `regex` + `parse: "json"` extract. Informational: goes into the report and `python -m spider.mappers.harmap recon`, never into the card | no |
 | **M1 load + filter** | HAR → candidate entries | Keep same-site hosts (registrable domain match), methods any, mime JSON/HTML/text/form, and streamed data rows (`<hex id>:<JSON>` per line, React Server Components; recognised by shape, kind `stream`). Drop images, fonts, css, js, media, known analytics/ads hosts, OPTIONS preflights | no |
 | **M2 normalize** | entries → fields | Address every field (see Definitions). Flatten JSON bodies to JSONPath leaves. Parse form bodies, and Rest.li `(k:v,...)` and GraphQL `variables` query values into sub-fields | no |
 | **M3 goal** | fields + markers + goal_marks → goal entry | Read: entries whose fields contain a marker (in any encoding) and whose response has a list-like structure; the earliest such entry after the marker was typed, and after the last click/Enter before the goal mark when there is one. Write: the operator marks right *after* the click, so take the last same-site non-GET/HEAD entry that started after that click and before the goal mark (fallback: the first one after the mark). Ties → LLM picks with a short summary of each candidate | ties only |
@@ -163,7 +163,7 @@ capture's `start_url`, `session_check` = a parameter-free logged-in GET from the
 
 ## Healing (decided 2026-11-07, for the hackathon)
 
-`python -m spider.harmap heal captures/<domain>/ [--live] [--save --db runtime.db]` re-records the **whole site**
+`python -m spider.mappers.harmap heal captures/<domain>/ [--live] [--save --db runtime.db]` re-records the **whole site**
 by replaying every saved recording (`actions.jsonl` → driver script; fresh markers for m1/m2, same real
 inputs, each bundle's own `state.json` as the session unless `--state` is given), re-maps every action,
 validates, and saves the new card as the active version. Old bundles are kept in `<domain>.prev/`.
@@ -175,7 +175,7 @@ prompt is unchanged.
 
 ## Explorer: no human in the loop
 
-`python -m mapper explore <start_url> --state login.state.json [--tasks "search companies" ...]
+`python -m spider.mappers.harmap explore <start_url> --state login.state.json [--tasks "search companies" ...]
 [--include-writes] [--save]` replaces the human operator. The LLM is just another **driver**: it moves
 the browser and takes the goal mark, and writes the same bundles a person would. Nothing in exploration
 reads network traffic; finding the goal and decoding stay in `map`.
@@ -183,8 +183,8 @@ reads network traffic; finding the goal and decoding stay in `map`.
 1. **Survey.** Open the start page logged in, plus up to 4 same-site pages it links to (never log-out,
    delete or similar links), and take a text snapshot of each: headings, links, fields and buttons.
    Snapshots never contain field values.
-2. **The tasks.** A person's task list wins: `--tasks-file`, or `mapper/explore/tasks/<domain>.txt` (format
-   in `mapper/explore/tasklist.py`: name, `(inputs, optional?)`, `sign-in`, description). One LLM call per
+2. **The tasks.** A person's task list wins: `--tasks-file`, or `src/spider/mappers/harmap/explore/tasks/<domain>.txt` (format
+   in `src/spider/mappers/harmap/explore/tasklist.py`: name, `(inputs, optional?)`, `sign-in`, description). One LLM call per
    10 listed tasks decides read/write, the start page, whether results paginate, and how each input is
    given in the browser: **typed**, in the **address** (`/company/<name>/`), **picked** by clicking an item
    in a list, or **other** (supplied by the site, like the member's own id, or paging). `*_next` tasks whose
@@ -274,14 +274,14 @@ and summarised in the mapping report.
   `application/octet-stream`), and one result is spread over ~4 rows that point to each other. The frozen
   `regex` extract reads rows one at a time, so complete results were impossible. Added, all optional and
   backwards compatible: `resolve: "rows"` on `regex` extracts (needs `parse: "json"`, `from: "body"`) in
-  `CARD_SPEC.md` (Extraction, Streamed rows), `schema.card.Extract` (+ validator), `runtime/extract.py`
+  `CARD_SPEC.md` (Extraction, Streamed rows), `spider.card.model.Extract` (+ validator), `runtime/extract.py`
   (`stream_rows`, `resolve_rows`, used by `run_extract`; the mapper imports the same functions), and
-  `tools/check_card.py`; test in `tests/test_units.py`. Also new from the mapper: read actions that use
+  `src/spider/card/check.py`; test in `tests/test_units.py`. Also new from the mapper: read actions that use
   POST (explorer recordings set read/write themselves), and goal steps with `content_type: "any"`.
 
 - **Next (mapper): `Remapper` adapter.** Wire `mapper heal` in as the runtime's `runtime.healing.Remapper`
   (`async remap(card, actions, reason) -> card`), so a `PAGE_CHANGED` heal job re-records and re-maps the
-  site automatically. Until then, run `python -m spider.harmap heal captures/<domain>/ --save` by hand.
+  site automatically. Until then, run `python -m spider.mappers.harmap heal captures/<domain>/ --save` by hand.
 
 - **HIGH PRIORITY: real `connect_providers` values.** Login works through our hosted server: it generates a
   link, the user opens it from the chat and logs in to the site in a browser running on our server, and
@@ -298,18 +298,18 @@ demo material ("here is what we found hidden in the site").
 ## CLI
 
 ```
-python -m spider.harmap capture <start_url> --task NAME --run m1|m2|real|page2 \
+python -m spider.mappers.harmap capture <start_url> --task NAME --run m1|m2|real|page2 \
     [--marker query=zqxv8841] [--input query=palantir] [--kind read|write] [--state path/to/state.json] \
     [--headless --script steps.jsonl] [--out captures] [--force]
-python -m spider.harmap map captures/<domain>/            # all tasks → card + report
-python -m spider.harmap map captures/<domain>/ --task NAME # one action (used by healing)
+python -m spider.mappers.harmap map captures/<domain>/            # all tasks → card + report
+python -m spider.mappers.harmap map captures/<domain>/ --task NAME # one action (used by healing)
     [--live] [--save --db runtime.db] [--out DIR]
-python -m spider.harmap validate path/to/card.json [--live --state path/to/state.json]
-python -m spider.harmap heal captures/<domain>/ [--live] [--save --db runtime.db]   # replay everything, re-map, save
+python -m spider.mappers.harmap validate path/to/card.json [--live --state path/to/state.json]
+python -m spider.mappers.harmap heal captures/<domain>/ [--live] [--save --db runtime.db]   # replay everything, re-map, save
 ```
 
-Validation = `spider.card.validate_card` + `src/spider/card/check.py` + `src/spider/harmap/helpers/checks.py` (no live session value may
+Validation = `spider.card.validate_card` + `src/spider/card/check.py` + `src/spider/mappers/harmap/helpers/checks.py` (no live session value may
 appear in the card). `--live` runs each read action's examples through `spider.run.executor.Executor` (via the
-`Executor` protocol in `src/spider/harmap/validate.py`) with the capture's session; it sends real requests, so it is
-opt-in. `--save` writes a valid card to `spider.store.registry.Registry`. Optional LLM steps use Claude Sonnet 5.5
+`Executor` protocol in `src/spider/mappers/harmap/card/validate.py`) with the capture's session; it sends real requests, so it is
+opt-in. `--save` writes a valid card to `spider.store.cards.Registry`. Optional LLM steps use Claude Sonnet 5.5
 (`claude-sonnet-5-5`) when `ANTHROPIC_API_KEY` is set and the `[llm]` extra is installed.

@@ -20,8 +20,8 @@ from spider.run.executor import Executor
 from spider.run.request.template import BuiltRequest
 from spider.run.tiers.http import HttpSession, ImpersonateSession
 from spider.signin.proxy import ProxyConfig, ProxyConfigError, is_local, session_id
-from spider.signin.sessions.base import InMemorySessionStore
-from spider.store.registry import StoredCard
+from spider.store.cards import StoredCard
+from spider.store.sessions import InMemorySessionStore
 from tests.signin.fake_proxy import FakeProxy
 from tests.sites.fixture_site.app import CSRF, VALID_SID
 

@@ -1,6 +1,6 @@
 """Map jobs (DECISIONS M8): who may ask, what a request does when the site already has a card, how jobs run
 and what the runtime checks before saving a mapped card. The mapper is a stand-in that returns the fixture
-shop's public reads; flowmap's real one is tested in tests/flowmap/serve/test_server.py."""
+shop's public reads; flowmap's real one is tested in tests/mappers/flowmap/serve/test_server.py."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Any
 import mcp_types as types
 import pytest
 
-from spider.gateway import Gateway
+from spider.gateway.app import Gateway
 from spider.jobs.heal import HealConfig, HealManager
 from spider.jobs.map import (
     MapConfig,
@@ -28,9 +28,9 @@ from spider.jobs.map import (
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
 from spider.signin.flow import ConnectError, ConnectionManager
-from spider.signin.sessions.base import InMemorySessionStore
+from spider.store.cards import Registry
 from spider.store.jobs import JobStore
-from spider.store.registry import Registry
+from spider.store.sessions import InMemorySessionStore
 from tests.signin.test_flow_confirm import FakeNeko
 from tests.sites.fixture_site.app import CSRF, VALID_SID
 from tests.sites.fixture_site.remapper import FixtureRemapper

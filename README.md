@@ -43,7 +43,7 @@ All code is one package, `spider`, under `src/`. Tests mirror it under `tests/`.
 | Path | What |
 |---|---|
 | `src/spider/card/` | The card format in code: models, result envelope, placeholders, validation, `python -m spider.card.check` |
-| `src/spider/gateway.py` | The MCP gateway: tools, pages and jobs wired together (`python -m spider.gateway`) |
+| `src/spider/gateway/app.py` | The MCP gateway: tools, pages and jobs wired together (`python -m spider.gateway.app`) |
 | `src/spider/run/` | Running an action: the executor, confirmation ids and redaction |
 | `src/spider/run/request/` | Building each request (templates), reading the answer (extract), spotting signals |
 | `src/spider/run/tiers/` | How requests go out: plain HTTP and a browser fingerprint (`http`), or a real Chrome tab (`browser`) |
@@ -51,8 +51,8 @@ All code is one package, `spider`, under `src/`. Tests mirror it under `tests/`.
 | `src/spider/jobs/` | Heal jobs and map jobs, and the adapter that lets harmap heal |
 | `src/spider/store/` | SQLite: card registry and search, users and keys, job records |
 | `src/spider/web/` | The page design, OAuth for regular Claude, and `pages/` (home, sign-up, account, website sign-in) |
-| `src/spider/flowmap/` | The mapper the product runs: `record/`, `infer/`, `serve/` (map jobs and healing) |
-| `src/spider/harmap/` | The earlier mapper: `capture/`, `pipeline/`, `helpers/` |
+| `src/spider/mappers/flowmap/` | The mapper the product runs: `record/`, `infer/`, `serve/` (map jobs and healing) |
+| `src/spider/mappers/harmap/` | The earlier mapper: `capture/`, `pipeline/`, `helpers/` |
 | `tests/sites/` | Test sites: the demo shop (`fixture_site/`, card `fixture_site.json`) and the bookshop |
 | `cards/` | The live, checked cards: linkedin.com (12 actions) and amazon.co.uk (2). Explained in `docs/cards.md` |
 | `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card |
@@ -88,14 +88,14 @@ cp .env.example .env
 ```
 
 Set `GATEWAY_API_KEY` and `CONFIRMATION_SECRET` in `.env`, and `SESSION_KEY`
-(`uv run python -m spider.signin.sessions.encrypted` prints one). Then run the demo shop and the gateway, in two terminals:
+(`uv run python -m spider.store.sessions` prints one). Then run the demo shop and the gateway, in two terminals:
 
 ```bash
 uv run uvicorn tests.sites.fixture_site.app:app --port 8900
 ```
 
 ```bash
-uv run python -m spider.gateway --load tests/sites/fixture_site.json
+uv run python -m spider.gateway.app --load tests/sites/fixture_site.json
 ```
 
 Add it to Claude Code:
@@ -109,7 +109,7 @@ Then ask Claude: "use spider to search the fixture.test shop for lamps".
 To also load the real sites' cards (LinkedIn needs each user to sign in with their own account):
 
 ```bash
-uv run python -m spider.gateway --load tests/sites/fixture_site.json --load cards/linkedin.com.json --load cards/amazon.co.uk.json
+uv run python -m spider.gateway.app --load tests/sites/fixture_site.json --load cards/linkedin.com.json --load cards/amazon.co.uk.json
 ```
 
 The demo shop (`tests/sites/fixture_site/`) has 21 actions covering every runtime case: reads, writes that need
@@ -177,15 +177,15 @@ one that works.
 
 ```bash
 # have Claude record an action once (or drop --agent and do it yourself in the browser that opens)
-uv run python -m spider.flowmap record https://example.com/ --action search_things \
+uv run python -m spider.mappers.flowmap record https://example.com/ --action search_things \
   --agent "search for the query" --input query=lamp --example query=chair
 
-uv run python -m spider.flowmap map example.com            # replay, infer, check, save to the registry
-uv run python -m spider.flowmap show example.com           # the card and recent heal timings
-uv run python -m spider.flowmap heal example.com search_things
+uv run python -m spider.mappers.flowmap map example.com            # replay, infer, check, save to the registry
+uv run python -m spider.mappers.flowmap show example.com           # the card and recent heal timings
+uv run python -m spider.mappers.flowmap heal example.com search_things
 ```
 
-Full reference: `docs/flowmap.md`. harmap (`python -m spider.harmap explore | capture | map | heal`) is described in
+Full reference: `docs/flowmap.md`. harmap (`python -m spider.mappers.harmap explore | capture | map | heal`) is described in
 `docs/harmap.md`.
 
 ## Healing

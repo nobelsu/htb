@@ -11,8 +11,8 @@ from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
 from spider.run.request.template import BuiltRequest
 from spider.run.tiers.http import HttpTier, ImpersonateSession
-from spider.signin.sessions.base import InMemorySessionStore
-from spider.store.registry import StoredCard
+from spider.store.cards import StoredCard
+from spider.store.sessions import InMemorySessionStore
 from tests.conftest import hits
 
 R = ResultCode

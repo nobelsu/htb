@@ -30,7 +30,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import BaseRoute, Route
 
 from spider.signin.flow import ConnectionManager
-from spider.signin.sessions.encrypted import EncryptedSessionStore
+from spider.store.sessions import EncryptedSessionStore
 from spider.store.users import ENV_KEY_USER, KeyStoreError, UserStore, mcp_add_command
 from spider.web.design import (
     COPY_SCRIPT,

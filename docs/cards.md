@@ -21,7 +21,7 @@ this repository.
 Load them when you start the gateway (each is saved as a new version only if it changed):
 
 ```bash
-uv run python -m spider.gateway --load cards/linkedin.com.json --load cards/amazon.co.uk.json
+uv run python -m spider.gateway.app --load cards/linkedin.com.json --load cards/amazon.co.uk.json
 ```
 
 Check a card without running anything:
@@ -132,7 +132,7 @@ Streamed React Server Components rows are resolved into JSON first (`resolve: ro
 2. **Checked.** Before saving, the card is validated (`spider.card.validate_card`), every read action runs with its
    examples, and example and fixed values are checked for personal data. A write's steps up to the send are
    tried on each tier to find one that works.
-3. **Saved as a version.** The registry (`src/spider/store/registry.py`) keeps every version of each site's card
+3. **Saved as a version.** The registry (`src/spider/store/cards.py`) keeps every version of each site's card
    in SQLite; one is active. Older versions stay, so a bad change can be rolled back.
 4. **Healed.** When an action returns `PAGE_CHANGED`, a heal job replays that action's recording, re-maps
    just that action and saves a new version, while the agent's call waits or retries.

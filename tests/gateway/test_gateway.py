@@ -15,11 +15,11 @@ import pytest
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
-from spider.gateway import Gateway
+from spider.gateway.app import Gateway
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
-from spider.signin.sessions.base import InMemorySessionStore
-from spider.store.registry import Registry
+from spider.store.cards import Registry
+from spider.store.sessions import InMemorySessionStore
 from tests.conftest import LiveServer
 
 API_KEY = "test-key"
@@ -226,7 +226,7 @@ async def test_break_and_heal_over_mcp(registry: Registry, tmp_path: Path, site_
 
 
 def test_instructions_ask_for_plain_language() -> None:
-    from spider.gateway import INSTRUCTIONS
+    from spider.gateway.app import INSTRUCTIONS
 
     assert "plain terms" in INSTRUCTIONS and "user_message" in INSTRUCTIONS
     assert "Don't mention tool names, status codes, sessions, cookies, browser profiles" in INSTRUCTIONS

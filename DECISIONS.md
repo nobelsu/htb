@@ -21,7 +21,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **D8 Sessions (asked).** A `SessionStore` interface keyed by (user, domain, provider id). Tests use an in-memory
   store; for local dev, cookies can be loaded from `.env` (`DEV_SESSION_COOKIES`,
   `{"<domain>": {"<provider_id>": {"<cookie>": "<value>"}}}`). The remote-login flow will fill the store later
-  (*since built:* L1 and L4, the encrypted store in `src/spider/signin/sessions/encrypted.py`).
+  (*since built:* L1 and L4, the encrypted store in `src/spider/store/sessions.py`).
 
 ## Schema / validation
 - Card models use `extra="forbid"`: unknown fields are rejected at save time, so typos surface early.
@@ -161,8 +161,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   `heal_candidates` table is no longer written (*since removed* from the schema; old databases keep an
   unused empty table). `CARD_SPEC.md` "Healing" is
   updated to match.
-- **H5 Heal adapter (asked).** `src/spider/jobs/harmap_remapper.py` is the `Remapper` done by harmap; the runtime builds
-  it (runtime side), calling the mapper's own `recapture` and `map_domain` without changing `src/spider/harmap/`. Turned on
+- **H5 Heal adapter (asked).** `src/spider/mappers/harmap/heal.py` is the `Remapper` done by harmap; the runtime builds
+  it (runtime side), calling the mapper's own `recapture` and `map_domain` without changing `src/spider/mappers/harmap/`. Turned on
   with `REMAPPER=mapper`; recordings are read from `CAPTURES_DIR/<domain>/<action>/`.
   - **Only the broken actions are re-recorded (asked).** Each broken action's recordings are replayed, then the
     whole card is rebuilt from every recording. Faster than harmap's `mapper heal` (which replays everything); the
@@ -422,28 +422,28 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
   their credential (the proxy only serves a token's container while that login is pending). Every other HTTP and websocket path needs the Bearer key.
 - **Not handled yet:** per-user quotas (L9); the mapper's own browser doesn't use the residential proxy (L10).
 
-## Mapper v2 (`src/spider/flowmap/`)
+## Mapper v2 (`src/spider/mappers/flowmap/`)
 A second mapper with no explorer: a person records each action once as a flow, the mapper replays it with planted
-markers and infers the card deterministically, and the LLM only names things. Harmap (`src/spider/harmap/`) is untouched.
-- **M1 Where (default).** A new package `src/spider/flowmap/` (tests in `tests/flowmap/`, CLI `python -m spider.flowmap
-  record|map|heal|show`) on branch `mapper-v2`. The brief's `harmap/flows.py`, `src/spider/harmap/capture.py` and
-  `src/spider/harmap/cli.py` would clash with harmap's package (`src/spider/harmap/capture/` is a package, its CLI already has `map` and
-  `heal`, and `src/spider/jobs/harmap_remapper.py` imports its code).
+markers and infers the card deterministically, and the LLM only names things. Harmap (`src/spider/mappers/harmap/`) is untouched.
+- **M1 Where (default).** A new package `src/spider/mappers/flowmap/` (tests in `tests/mappers/flowmap/`, CLI `python -m spider.mappers.flowmap
+  record|map|heal|show`) on branch `mapper-v2`. The brief's `src/spider/mappers/harmap/flows.py`, `src/spider/mappers/harmap/record.py` and
+  `src/spider/mappers/harmap/cli.py` would clash with harmap's package (`src/spider/mappers/harmap/record/` is a package, its CLI already has `map` and
+  `heal`, and `src/spider/mappers/harmap/heal.py` imports its code).
 - **M2 Healed writes (asked: follow the spec).** The brief said healed writes go to `heal_candidates`; CARD_SPEC
   Healing (H4) says they go live as a new version, with `requires_confirmation` still true so every run asks.
   The spec wins: no `heal_candidates`.
 - **M3 Harmap's helpers (asked: copy them in).** The few pure helpers worth reusing (marker encodings, request
-  filters, dependency tracing, pagination, secret checks) are copied into `src/spider/flowmap/` with a comment naming the
+  filters, dependency tracing, pagination, secret checks) are copied into `src/spider/mappers/flowmap/` with a comment naming the
   original, so flowmap doesn't break when that code changes.
 - **M4 Heal events (asked: a new table).** `heal_events` in the runtime database: `remap_start` / `remap_done` (and
   failures) per heal job, with timings, for the benchmark.
 - **M5 Test sites (asked).** Mapping is aimed at real websites (as harmap does), asking before any run of a write
   flow on a real site. Healing is tested on a website we build ourselves, with switchable breaks (endpoint, field,
   structure and param renamed).
-- **M6 Heal plugs into the runtime (default).** `src/spider/flowmap/serve/heal.py` implements the existing `Remapper` protocol
+- **M6 Heal plugs into the runtime (default).** `src/spider/mappers/flowmap/heal.py` implements the existing `Remapper` protocol
   (`REMAPPER=flowmap`); HealManager keeps the pre-check, validation, activation and `degraded` marking.
 - **M7 An agent can record (asked: "we should do it using like an agent"; overlap with harmap's explorer is
-  fine).** `record --agent "task"` (`src/spider/flowmap/record/agent.py`): Claude does the action once from the accessibility
+  fine).** `record --agent "task"` (`src/spider/mappers/flowmap/record/agent.py`): Claude does the action once from the accessibility
   tree, one tool call per turn; each step is saved with the role and name it used, input values become
   placeholders, and the results it names become `results_selector` (one CSS selector found in the page).
   Everything after recording is unchanged. Guards are code, not prompt: same site only, new tabs closed, no
@@ -478,11 +478,11 @@ markers and infers the card deterministically, and the LLM only names things. Ha
     explore) carries on for the user once the heal is done.
   - Map jobs run in the gateway process, one at a time, separate from heal jobs; a worker of their own later.
   - Flowmap first; harmap can plug in through the same `Remapper`-style seam later.
-  - Step 1 built: `src/spider/flowmap/record/browser.py` (`BrowserSetup`) opens installed Chrome without the automation flag,
+  - Step 1 built: `src/spider/mappers/flowmap/record/browser.py` (`BrowserSetup`) opens installed Chrome without the automation flag,
     with a user's stored sign-in, its device identity and proxy; capture, `record --agent`, `map` and `heal`
     take `--user`. `Remapper.remap` gained `user=`: HealManager passes whoever's call found the break (it used
     to heal with the `default` user's sign-in).
-  - Step 2 built: map jobs (`src/spider/jobs/map.py`, `map_jobs` table, `src/spider/flowmap/serve/server.py`, `MAPPER=flowmap`).
+  - Step 2 built: map jobs (`src/spider/jobs/map.py`, `map_jobs` table, `src/spider/mappers/flowmap/serve/server.py`, `MAPPER=flowmap`).
     Agents call `request_map(site, task, action, inputs)` and `map_status(job_id, wait_seconds)`; the account
     page lists the user's last five. The requesting agent names the action and gives the input values (no
     planning call). The runtime validates the mapped card and runs every read example through the executor
@@ -512,7 +512,7 @@ markers and infers the card deterministically, and the LLM only names things. Ha
     compatible, so `schema_version` stays "0.4"; harmap can emit it too.
   - Step 3, writes built (simplified, asked to go fast): every write is held back while mapping, private or
     not, so nothing is undone (doing private writes for real and undoing them is not built). `HoldBack`
-    (`src/spider/flowmap/record/holdback.py`) answers held requests itself (200, `{}`, `x-flowmap-held`): before the commit
+    (`src/spider/mappers/flowmap/record/holdback.py`) answers held requests itself (200, `{}`, `x-flowmap-held`): before the commit
     click only PUT/PATCH/DELETE, GraphQL mutations and form posts are held; from the commit click (a control
     whose text reads as a change in the recorder; the flow's last click in capture) every non-GET. The
     recorder and capture both use it, so heal re-captures writes held back too. A held write's steps expect
@@ -549,7 +549,7 @@ markers and infers the card deterministically, and the LLM only names things. Ha
     sign-in is a lot of traffic on the requester's account, and actions on people's pages put a real
     person's id in the shared card's examples (decision 2 says examples hold no personal data).
   - Decision 2 enforced (asked, 2026-11-08: "Yes, check examples"): before a card is saved, each new
-    action's example values are checked (src/spider/flowmap/infer/privacy.py): emails and phone numbers by rule; Claude (low
+    action's example values are checked (src/spider/mappers/flowmap/card/privacy.py): emails and phone numbers by rule; Claude (low
     effort) judges the rest in context and suggests a public stand-in (a well-known company, a public
     figure's page, a common term). A stand-in is used only if the action works with it; otherwise the action
     isn't saved. The saved recording (heal replays it) gets the same values, or is deleted. Ran it on
@@ -566,7 +566,7 @@ markers and infers the card deterministically, and the LLM only names things. Ha
     the selector comes from those elements, so badges and formatting never have to be retyped; copying text
     stays as a fallback. (2) The blocking test: when inference has two or more candidates, the task is
     replayed with each of the top three blocked in turn; the one whose absence empties the results is the
-    source (src/spider/flowmap/serve/server.py `_confirm_source`, capture `visible_without`). The page itself is tested last,
+    source (src/spider/mappers/flowmap/serve/server.py `_confirm_source`, capture `visible_without`). The page itself is tested last,
     since blocking it empties any page. Writes still use the held-back request.
   - The live page isn't the HTML (2026-11-08, from LinkedIn's profiles): a site's scripts can restructure
     the page after it loads, so the recorder's selector (from the live page) can find nothing in the HTML a
@@ -584,11 +584,11 @@ markers and infers the card deterministically, and the LLM only names things. Ha
     (2026-11-08, after a real follow got through): a recording of "follow a company" clicked Follow on the
     company page, then again from a search; on replay the first click ran before hold-back was armed and
     LinkedIn received the follow. The recorder and the replay now share one change-word pattern
-    (src/spider/flowmap/record/holdback.py WRITES), and the recorder won't accept done on a write until something was held.
+    (src/spider/mappers/flowmap/record/holdback.py WRITES), and the recorder won't accept done on a write until something was held.
   - Writes are mapped with two more checks (2026-11-08, after follow_company followed the wrong company):
     an id inside a write's fixed value (`urn:li:fsd_company:74126343`) that an earlier page opened with the
     inputs shows is read from that page, since every run following the same company left it unchanged
-    (src/spider/flowmap/infer/actions.py `_ids_from_page`); and before a new write is saved, its steps but the send run through
+    (src/spider/mappers/flowmap/infer/actions.py `_ids_from_page`); and before a new write is saved, its steps but the send run through
     the executor on each tier from its own up, keeping the first that works, or the write isn't saved
     (src/spider/jobs/map.py `_check_writes`). LinkedIn answered a follow from the impersonate tier with 200 and
     didn't follow; its writes need the browser tier.

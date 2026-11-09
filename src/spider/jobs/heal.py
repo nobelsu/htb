@@ -17,8 +17,8 @@ from typing import Any, Protocol
 
 from spider.card import Action, Card, Envelope, Heal, ResultCode, validate_card
 from spider.run.executor import Executor
+from spider.store.cards import Registry
 from spider.store.jobs import HealJob, JobStore, Trigger
-from spider.store.registry import Registry
 
 log = logging.getLogger(__name__)
 R = ResultCode

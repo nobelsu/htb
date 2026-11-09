@@ -22,8 +22,8 @@ from spider.run.tiers.browser_pool import BrowserPool
 from spider.run.tiers.http import ProfileKey
 from spider.signin.identity import BrowserIdentity
 from spider.signin.neko.manager import NekoManager, NekoUnavailable
-from spider.signin.sessions.encrypted import EncryptedSessionStore
-from spider.store.registry import Registry
+from spider.store.cards import Registry
+from spider.store.sessions import EncryptedSessionStore
 
 log = logging.getLogger(__name__)
 MAX_POLL_WAIT_S = 45.0

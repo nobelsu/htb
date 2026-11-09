@@ -11,14 +11,14 @@ from typing import Any
 import pytest
 from playwright.async_api import async_playwright
 
-from spider.gateway import Gateway
+from spider.gateway.app import Gateway
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
 from spider.signin.flow import ConnectError, ConnectionManager
 from spider.signin.identity import BrowserIdentity
 from spider.signin.neko.manager import NekoConfig
-from spider.signin.sessions.encrypted import EncryptedSessionStore, new_session_key
-from spider.store.registry import Registry
+from spider.store.cards import Registry
+from spider.store.sessions import EncryptedSessionStore, new_session_key
 from tests.conftest import LiveServer
 from tests.gateway.test_gateway import API_KEY, act, connect, envelope
 from tests.sites.fixture_site.app import CSRF, VALID_SID
@@ -319,9 +319,9 @@ async def test_declining_the_link(
     """A person takes a moment to say no: that's a real decline."""
     import mcp_types as types
 
-    import spider.gateway
+    import spider.gateway.app
 
-    monkeypatch.setattr(spider.gateway, "HUMAN_REPLY_MIN_S", 0.2)
+    monkeypatch.setattr(spider.gateway.app, "HUMAN_REPLY_MIN_S", 0.2)
     base, _ = strong_gateway
 
     async def on_url(context: Any, params: Any) -> Any:

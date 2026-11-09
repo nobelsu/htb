@@ -10,8 +10,8 @@ import pytest
 from spider.card import Envelope, Heal, ResultCode, load_card
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
-from spider.signin.sessions.base import InMemorySessionStore
-from spider.store.registry import StoredCard
+from spider.store.cards import StoredCard
+from spider.store.sessions import InMemorySessionStore
 from tests.conftest import hits
 from tests.sites.fixture_site.app import CSRF, EXPIRED_SID, VALID_SID
 

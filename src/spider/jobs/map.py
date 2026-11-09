@@ -2,9 +2,9 @@
 
 Only when the site has no card yet; when it has one and an action is broken, the request starts the heal
 instead. Jobs run inside the gateway process, one at a time, apart from heal jobs. The mapper plugs in through
-`Mapper` (flowmap's is `spider.flowmap.serve.server.FlowMapper`); the runtime checks the card it returns
-(validation, every read example run through the executor, and its sign-in check with the requester's sign-in)
-before saving it as the site's first version.
+`Mapper` (flowmap's is `spider.mappers.flowmap.serve.server.FlowMapper`); the runtime checks the card it
+returns (validation, every read example run through the executor, and its sign-in check with the requester's
+sign-in) before saving it as the site's first version.
 
 A site that wants a sign-in: the job stops at ``needs_sign_in`` and its status carries a Connect link for the
 requester. Once they've signed in (``ConnectionManager.on_connected``) the job is queued again and maps signed
@@ -31,8 +31,8 @@ from spider.jobs.heal import HealManager, example_passes
 from spider.run.executor import Executor
 from spider.run.tiers.http import LADDER
 from spider.signin.flow import ConnectionManager
+from spider.store.cards import Registry
 from spider.store.jobs import JobStore, MapJob
-from spider.store.registry import Registry
 
 log = logging.getLogger(__name__)
 

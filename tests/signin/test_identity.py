@@ -17,9 +17,14 @@ from spider.run.executor import Executor
 from spider.run.request.template import BuiltRequest
 from spider.run.tiers.http import HttpSession, ImpersonateSession
 from spider.signin.identity import DEFAULT_IDENTITY, BrowserIdentity, accept_language_header
-from spider.signin.sessions.base import DevEnvSessionStore, InMemorySessionStore
-from spider.signin.sessions.encrypted import ChainedSessionStore, EncryptedSessionStore, new_session_key
-from spider.store.registry import StoredCard
+from spider.store.cards import StoredCard
+from spider.store.sessions import (
+    ChainedSessionStore,
+    DevEnvSessionStore,
+    EncryptedSessionStore,
+    InMemorySessionStore,
+    new_session_key,
+)
 from tests.signin.test_flow import chrome  # noqa: F401  (fixture: skips without Chrome)
 from tests.sites.fixture_site.app import CSRF, VALID_SID, state
 

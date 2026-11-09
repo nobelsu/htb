@@ -3,7 +3,8 @@
     uv run python -m spider.card.check cards/linkedin.com.json
 
 Prints one line per problem (exit code 1), or "OK: no issues". This is `spider.card.validate_card`, the same
-check the registry runs before saving; `harmap/validate.py` calls this script and reads its output.
+check the registry runs before saving; `mappers/harmap/card/validate.py` calls this script and reads its
+output.
 """
 
 import json
@@ -24,7 +25,9 @@ def main(path: str) -> int:
         print(error)
     if report.errors:
         return 1
-    print("OK: no issues")  # warnings are left out: harmap/validate.py reads any other line as an error
+    print(
+        "OK: no issues"
+    )  # warnings are left out: mappers/harmap/card/validate.py reads any other line as an error
     return 0
 
 

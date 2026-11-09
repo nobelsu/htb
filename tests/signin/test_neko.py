@@ -13,13 +13,13 @@ import httpx
 import pytest
 from playwright.async_api import Page, async_playwright
 
-from spider.gateway import Gateway
+from spider.gateway.app import Gateway
 from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
 from spider.signin.flow import ConnectionManager
 from spider.signin.neko.manager import LABEL, NekoConfig, NekoManager
-from spider.signin.sessions.encrypted import EncryptedSessionStore, new_session_key
-from spider.store.registry import Registry
+from spider.store.cards import Registry
+from spider.store.sessions import EncryptedSessionStore, new_session_key
 from tests.conftest import LiveServer
 from tests.gateway.test_gateway import API_KEY, act, connect, envelope
 from tests.sites.fixture_site.app import LOGIN_PASSWORD, LOGIN_USER, state
