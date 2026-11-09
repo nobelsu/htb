@@ -1,0 +1,960 @@
+{
+  "schema_version": "0.4",
+  "domain": "linkedin.com",
+  "tool_prefix": "linkedin",
+  "base_url": "https://www.linkedin.com",
+  "blocked_signals": [],
+  "changed_signals": [],
+  "provenance": {
+    "mapped_at": "2026-11-08T11:21:37+00:00",
+    "source": "flowmap capture 20261108T112030-7743",
+    "mapper_version": "flowmap-0.1"
+  },
+  "connect_providers": [
+    {
+      "id": "linkedin",
+      "login_url": "https://www.linkedin.com/search/results/companies/",
+      "session_check": {
+        "method": "GET",
+        "url": "{{base_url}}/search/results/companies/",
+        "query": {
+          "keywords": "robotics",
+          "origin": "GLOBAL_SEARCH_HEADER"
+        },
+        "expect": {
+          "status": [
+            200
+          ],
+          "content_type": "html",
+          "paths": []
+        }
+      },
+      "logged_out_signals": [
+        "status:403",
+        "redirect:/uas/login"
+      ]
+    }
+  ],
+  "defaults": {
+    "tier": "http"
+  },
+  "actions": [
+    {
+      "name": "search_companies",
+      "description": "Searches LinkedIn for companies and showcase pages that match a keyword. Each result gives the company's name and the URL of its LinkedIn page.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "Keyword to search company names for, e.g. \"robotics\".",
+          "example": "robotics"
+        }
+      },
+      "steps": [
+        {
+          "id": "companies",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/search/results/companies/",
+            "query": {
+              "keywords": "{{params.query}}",
+              "origin": "GLOBAL_SEARCH_HEADER"
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "css",
+              "expr": "div.gvyl4n.gvyivr a.gvygoj.gvygos"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.companies.items",
+        "fields": {
+          "company_name": "$.text",
+          "company_url": "$.href"
+        }
+      },
+      "examples": [
+        {
+          "params": {
+            "query": "robotics"
+          },
+          "min_items": 1
+        },
+        {
+          "params": {
+            "query": "robotics"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "http",
+      "auth_provider": "linkedin"
+    },
+    {
+      "name": "search_people",
+      "description": "Searches LinkedIn for people matching a keyword. Each result gives the person's name and the URL of their profile.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "Keywords to search people by, such as a name, topic, or industry (e.g. \"neurotech\").",
+          "example": "neurotech"
+        }
+      },
+      "steps": [
+        {
+          "id": "people",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/search/results/people/",
+            "query": {
+              "keywords": "{{params.query}}",
+              "origin": "GLOBAL_SEARCH_HEADER"
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "css",
+              "expr": "div.gvyl4n.gvyivr a.gvygoj.gvygos"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.people.items",
+        "fields": {
+          "name": "$.text",
+          "profile_url": "$.href"
+        }
+      },
+      "examples": [
+        {
+          "params": {
+            "query": "neurotech"
+          },
+          "min_items": 1
+        },
+        {
+          "params": {
+            "query": "neurotech"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "http",
+      "auth_provider": "linkedin"
+    },
+    {
+      "name": "get_profile_experience",
+      "description": "Lists the work experience entries on a LinkedIn-style profile's experience details page. Each result holds the position title, such as a job, internship, or role.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "profile_slug": {
+          "type": "string",
+          "required": true,
+          "description": "Profile identifier from the profile URL after /in/, e.g. \"yuzhong-luo-1126452b0\".",
+          "example": "williamhgates"
+        }
+      },
+      "steps": [
+        {
+          "id": "experience",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/in/{{params.profile_slug | urlencode}}/details/experience/"
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "css",
+              "expr": "div.gvyl4n.gvyivr p.gvylje.gvylo5"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.experience.items",
+        "fields": {
+          "position_title": "$.text"
+        }
+      },
+      "examples": [
+        {
+          "params": {
+            "profile_slug": "williamhgates"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "http",
+      "auth_provider": "linkedin"
+    },
+    {
+      "name": "search_jobs",
+      "description": "Searches job listings by keywords and location. Each result gives the hiring company's name; links to the postings were not returned.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "keywords": {
+          "type": "string",
+          "required": true,
+          "description": "Job title, skill or keywords to search for, e.g. \"data analyst\".",
+          "example": "data analyst"
+        },
+        "location": {
+          "type": "string",
+          "required": true,
+          "description": "City, region or country to search in, e.g. \"London, United Kingdom\".",
+          "example": "London, United Kingdom"
+        }
+      },
+      "steps": [
+        {
+          "id": "search_results",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/jobs/search-results",
+            "query": {
+              "skipRedirect": "true",
+              "keywords": "{{params.keywords}}",
+              "location": "{{params.location}}",
+              "infoNotice": "ai-job-search"
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "css",
+              "expr": "div.gvylca.gvyayy p.gvylje.gvylo0"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.search_results.items",
+        "fields": {
+          "company_name": "$.text"
+        }
+      },
+      "examples": [
+        {
+          "params": {
+            "keywords": "data analyst",
+            "location": "London, United Kingdom"
+          },
+          "min_items": 1
+        },
+        {
+          "params": {
+            "keywords": "data analyst",
+            "location": "London, United Kingdom"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "http",
+      "auth_provider": "linkedin"
+    },
+    {
+      "name": "search_posts",
+      "description": "Searches LinkedIn posts matching keywords. Each result gives the post author's name with their connection degree and a link to the author's profile.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "keywords": {
+          "type": "string",
+          "required": true,
+          "description": "Search terms to match against post content, e.g. \"generative AI\".",
+          "example": "generative AI"
+        }
+      },
+      "steps": [
+        {
+          "id": "content",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/search/results/content/",
+            "query": {
+              "keywords": "{{params.keywords}}"
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "css",
+              "expr": "div.gvya2a.gvyht3 a.gvyht3.gvyiaf"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.content.items",
+        "fields": {
+          "author_name_and_degree": "$.text",
+          "author_profile_url": "$.href"
+        }
+      },
+      "examples": [
+        {
+          "params": {
+            "keywords": "generative AI"
+          },
+          "min_items": 1
+        },
+        {
+          "params": {
+            "keywords": "generative AI"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "http",
+      "auth_provider": "linkedin"
+    },
+    {
+      "name": "follow_company",
+      "description": "Follows a LinkedIn company page so its posts show up in the user's feed. Returns no data; success means the user now follows the company.",
+      "kind": "write",
+      "spends": false,
+      "idempotent": false,
+      "requires_confirmation": true,
+      "params": {
+        "company_slug": {
+          "type": "string",
+          "required": true,
+          "description": "The company's URL slug from its LinkedIn page address, e.g. \"anthropicresearch\" from linkedin.com/company/anthropicresearch.",
+          "example": "anthropicresearch"
+        }
+      },
+      "steps": [
+        {
+          "id": "company",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/company/{{params.company_slug | urlencode}}/",
+            "headers": {
+              "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "value": {
+              "from": "body",
+              "type": "regex",
+              "expr": "\"clientPageInstance\">\\\n  ([^\"'<>&\\s]+)"
+            },
+            "company_id": {
+              "from": "body",
+              "type": "regex",
+              "expr": "\\A[\\s\\S]*?urn:li:organization:(\\d+)"
+            }
+          }
+        },
+        {
+          "id": "urn_li_fsd_followingstate_urn_",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/voyager/api/feed/dash/followingStates/urn:li:fsd_followingState:urn:li:fsd_company:{{steps.company.company_id}}",
+            "headers": {
+              "origin": "{{base_url}}",
+              "referer": "{{base_url}}/company/{{params.company_slug}}/",
+              "accept": "application/vnd.linkedin.normalized+json+2.1",
+              "content-type": "application/json; charset=UTF-8",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
+              "x-li-lang": "en_US",
+              "x-li-page-instance": "{{steps.company.value}}",
+              "x-li-pem-metadata": "Voyager - Organization - Member=organization-follow",
+              "x-restli-protocol-version": "2.0.0"
+            },
+            "body": {
+              "patch": {
+                "$set": {
+                  "following": true
+                }
+              }
+            }
+          },
+          "expect": {
+            "status": [
+              200,
+              201,
+              202,
+              204
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {}
+        }
+      ],
+      "output": {
+        "from": null
+      },
+      "examples": [],
+      "tier": "browser",
+      "auth_provider": "linkedin"
+    },
+    {
+      "name": "get_me",
+      "description": "Identifies the signed-in LinkedIn member, returning their profile_urn (the 'urn:li:fsd_profile:<id>' to pass as mailbox_urn to list_conversations and send_message), member_urn, first_name, last_name, public_identifier (the /in/ slug), occupation, and premium status. Call this first for any messaging task; it is read-only, takes no parameters, and is safe to retry.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {},
+      "steps": [
+        {
+          "id": "me",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/me",
+            "query": {},
+            "headers": {
+              "accept": "application/vnd.linkedin.normalized+json+2.1",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
+              "x-li-lang": "en_US",
+              "x-restli-protocol-version": "2.0.0"
+            },
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.included[0]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.me.items",
+        "fields": {
+          "last_name": "$.lastName",
+          "dash_entity_urn": "$.dashEntityUrn",
+          "occupation": "$.occupation",
+          "object_urn": "$.objectUrn",
+          "first_name": "$.firstName",
+          "entity_urn": "$.entityUrn",
+          "public_identifier": "$.publicIdentifier"
+        },
+        "limit": 1,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [
+        {
+          "params": {},
+          "min_items": 1
+        }
+      ],
+      "tier": "browser",
+      "auth_provider": "linkedin",
+      "timeout_ms": 10000,
+      "cache_ttl_s": 120,
+      "rate_limit_per_min": 20
+    },
+    {
+      "name": "send_connection_request",
+      "description": "Sends a LinkedIn connection request to the member identified by their profile vanity name. This changes state on the user's account by creating a pending invitation, so the user must explicitly approve it before the tool is called.",
+      "kind": "write",
+      "spends": false,
+      "idempotent": false,
+      "requires_confirmation": true,
+      "params": {
+        "vanity_name": {
+          "type": "string",
+          "required": true,
+          "description": "The target member's LinkedIn vanity name, which is the slug after /in/ in their profile URL (e.g. 'jane-doe-123')."
+        }
+      },
+      "steps": [
+        {
+          "id": "identity_dash_profiles",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/graphql",
+            "query": {
+              "includeWebMetadata": "true",
+              "variables": "(memberIdentity:{{params.vanity_name | escape_restli}})",
+              "queryId": "voyagerIdentityDashProfiles.273a499c117721535e6da078bee17e9c"
+            },
+            "headers": {
+              "accept": "application/vnd.linkedin.normalized+json+2.1",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
+              "x-li-lang": "en_US",
+              "x-restli-protocol-version": "2.0.0"
+            },
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": [
+              "$.data.data.identityDashProfilesByMemberIdentity['*elements']"
+            ]
+          },
+          "extract": {
+            "elements": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.data.data.identityDashProfilesByMemberIdentity['*elements'][0]"
+            }
+          }
+        },
+        {
+          "id": "step",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/voyager/api/voyagerRelationshipsDashMemberRelationships",
+            "query": {
+              "action": "verifyQuotaAndCreateV2",
+              "decorationId": "com.linkedin.voyager.dash.deco.relationships.InvitationCreationResultWithInvitee-3"
+            },
+            "headers": {
+              "accept": "application/vnd.linkedin.normalized+json+2.1",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
+              "x-li-lang": "en_US",
+              "x-restli-protocol-version": "2.0.0",
+              "content-type": "application/json; charset=UTF-8",
+              "origin": "{{base_url}}",
+              "x-li-deco-include-micro-schema": "true",
+              "x-li-pem-metadata": "Voyager - Profile Actions=topcard-primary-connect-action-click,Voyager - Invitations - Actions=invite-send"
+            },
+            "body": {
+              "invitee": {
+                "inviteeUnion": {
+                  "memberProfile": "{{steps.identity_dash_profiles.elements}}"
+                }
+              }
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {}
+        }
+      ],
+      "output": {
+        "from": null,
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [],
+      "tier": "browser",
+      "auth_provider": "linkedin",
+      "timeout_ms": 10000,
+      "cache_ttl_s": 120,
+      "rate_limit_per_min": 20
+    },
+    {
+      "name": "start_conversation",
+      "description": "LinkedIn: send a message to a person, by their profile slug (the <slug> in linkedin.com/in/<slug>/, e.g. from search_people's profile_url). Starts a new conversation, or posts into the existing one with them. REAL SEND: confirm with the user first. Works for 1st-degree connections; others need InMail (Premium). Takes vanity_name and text.",
+      "kind": "write",
+      "spends": false,
+      "idempotent": false,
+      "requires_confirmation": true,
+      "params": {
+        "vanity_name": {
+          "type": "string",
+          "required": true,
+          "description": "The target member's LinkedIn vanity name, which is the slug after /in/ in their profile URL (e.g. 'jane-doe-123')."
+        },
+        "text": {
+          "type": "string",
+          "required": true,
+          "description": "The body of the first message to send to open the conversation. Plain text; show the exact wording to the user for approval before sending."
+        }
+      },
+      "steps": [
+        {
+          "id": "me",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/me",
+            "query": {},
+            "headers": {
+              "accept": "application/vnd.linkedin.normalized+json+2.1",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
+              "x-li-lang": "en_US",
+              "x-restli-protocol-version": "2.0.0"
+            },
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": []
+          },
+          "extract": {
+            "profile": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$..dashEntityUrn"
+            }
+          }
+        },
+        {
+          "id": "who",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/voyager/api/graphql",
+            "query": {
+              "includeWebMetadata": "true",
+              "variables": "(memberIdentity:{{params.vanity_name | escape_restli}})",
+              "queryId": "voyagerIdentityDashProfiles.273a499c117721535e6da078bee17e9c"
+            },
+            "headers": {
+              "accept": "application/vnd.linkedin.normalized+json+2.1",
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
+              "x-li-lang": "en_US",
+              "x-restli-protocol-version": "2.0.0"
+            },
+            "body": null
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "any",
+            "paths": [
+              "$.data.data.identityDashProfilesByMemberIdentity['*elements']"
+            ]
+          },
+          "extract": {
+            "elements": {
+              "from": "body",
+              "type": "jsonpath",
+              "expr": "$.data.data.identityDashProfilesByMemberIdentity['*elements'][0]"
+            }
+          }
+        },
+        {
+          "id": "send",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/voyager/api/voyagerMessagingDashMessengerMessages",
+            "query": {
+              "action": "createMessage"
+            },
+            "headers": {
+              "csrf-token": "{{session.cookies.JSESSIONID | strip_quotes}}",
+              "x-restli-protocol-version": "2.0.0",
+              "x-li-lang": "en_US",
+              "accept": "application/json",
+              "content-type": "text/plain;charset=UTF-8",
+              "origin": "{{base_url}}"
+            },
+            "body": {
+              "message": {
+                "body": {
+                  "attributes": [],
+                  "text": "{{params.text}}"
+                },
+                "renderContentUnions": [],
+                "originToken": "{{gen.uuid}}"
+              },
+              "mailboxUrn": "{{steps.me.profile}}",
+              "hostRecipientUrns": [
+                "{{steps.who.elements}}"
+              ],
+              "trackingId": "ì\\ºµ@\\SôtB\u0011ú",
+              "dedupeByClientGeneratedToken": false
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "json",
+            "paths": []
+          },
+          "extract": {}
+        }
+      ],
+      "output": {
+        "from": null,
+        "fields": {},
+        "limit": null,
+        "next_params": null
+      },
+      "verify": null,
+      "examples": [],
+      "tier": "http",
+      "auth_provider": "linkedin",
+      "timeout_ms": 10000,
+      "cache_ttl_s": 120,
+      "rate_limit_per_min": 20
+    },
+    {
+      "name": "get_company",
+      "description": "A LinkedIn company's details by its universal name (the slug in linkedin.com/company/<name>): name, description, website, employee count and headquarters.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "universal_name": {
+          "type": "string",
+          "required": true,
+          "description": "the slug after /company/ in its address, e.g. microsoft",
+          "example": "microsoft"
+        }
+      },
+      "steps": [
+        {
+          "id": "page",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/company/{{params.universal_name | urlencode}}/",
+            "headers": {
+              "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "regex",
+              "expr": "<script type=\"application/ld\\+json\">\\s*([\\s\\S]*?)\\s*</script>",
+              "parse": "json",
+              "then": "$['@graph'][?(@['@type'] == 'Organization')]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.page.items",
+        "fields": {
+          "name": "$.name",
+          "linkedin_url": "$.url",
+          "description": "$.description",
+          "website": "$.sameAs",
+          "employees": "$.numberOfEmployees.value",
+          "city": "$.address.addressLocality",
+          "region": "$.address.addressRegion",
+          "country": "$.address.addressCountry"
+        }
+      },
+      "examples": [
+        {
+          "params": {
+            "universal_name": "microsoft"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "impersonate"
+    },
+    {
+      "name": "get_profile",
+      "description": "A LinkedIn member's public profile by vanity name (the slug in linkedin.com/in/<name>): name, roles, current organisations, location, about and follower count.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "vanity_name": {
+          "type": "string",
+          "required": true,
+          "description": "the slug after /in/ in their profile address, e.g. williamhgates",
+          "example": "williamhgates"
+        }
+      },
+      "steps": [
+        {
+          "id": "page",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/in/{{params.vanity_name | urlencode}}/",
+            "headers": {
+              "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "regex",
+              "expr": "<script type=\"application/ld\\+json\">\\s*([\\s\\S]*?)\\s*</script>",
+              "parse": "json",
+              "then": "$['@graph'][?(@['@type'] == 'Person')]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.page.items",
+        "fields": {
+          "name": "$.name",
+          "linkedin_url": "$.url",
+          "job_titles": "$.jobTitle",
+          "works_for": "$.worksFor[*].name",
+          "location": "$.address.addressLocality",
+          "about": "$.description",
+          "followers": "$.interactionStatistic.userInteractionCount"
+        }
+      },
+      "examples": [
+        {
+          "params": {
+            "vanity_name": "williamhgates"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "browser"
+    },
+    {
+      "name": "get_profile_education",
+      "description": "A LinkedIn member's education by vanity name: one row per school, with its LinkedIn page and years.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "vanity_name": {
+          "type": "string",
+          "required": true,
+          "description": "the slug after /in/ in their profile address, e.g. williamhgates",
+          "example": "williamhgates"
+        }
+      },
+      "steps": [
+        {
+          "id": "page",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/in/{{params.vanity_name | urlencode}}/",
+            "headers": {
+              "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "regex",
+              "expr": "<script type=\"application/ld\\+json\">\\s*([\\s\\S]*?)\\s*</script>",
+              "parse": "json",
+              "then": "$['@graph'][?(@['@type'] == 'Person')].alumniOf[?(@['@type'] == 'EducationalOrganization')]"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.page.items",
+        "fields": {
+          "school": "$.name",
+          "school_url": "$.url",
+          "start_year": "$.member.startDate",
+          "end_year": "$.member.endDate"
+        }
+      },
+      "examples": [
+        {
+          "params": {
+            "vanity_name": "williamhgates"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "browser"
+    }
+  ]
+}

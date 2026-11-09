@@ -27,7 +27,7 @@ agent (Claude) --MCP--> gateway --> executor --> the site's own HTTP endpoints
    sees which request carries the input and which response carries the results, and confirms it by replaying
    with that request blocked. The model only does the task and names things; which request is the action is
    decided from the evidence.
-2. **Save.** One card per site (`CARD_SPEC.md`), shared by every user. Example values and fixed request values
+2. **Save.** One card per site (`CARD_SPEC.md`, explained in `docs/cards.md`), shared by every user. Example values and fixed request values
    are checked for personal data before a card is saved.
 3. **Run.** Agents find actions with `find_actions` and call them with `run_action`. Each call uses the user's
    own sign-in, and climbs from plain HTTP to a real Chrome tab only when the site needs it.
@@ -41,6 +41,7 @@ agent (Claude) --MCP--> gateway --> executor --> the site's own HTTP endpoints
 | Path | What | Owner |
 |---|---|---|
 | `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card | shared |
+| `cards/` | The live, checked cards: linkedin.com (12 actions) and amazon.co.uk (2). Explained in `docs/cards.md` | Nobel |
 | `schema/` | Card and result models, `validate_card()`, placeholders | Nobel |
 | `runtime/gateway.py` | The MCP gateway: tools, pages and jobs wired together (`python -m runtime.gateway`) | Nobel |
 | `runtime/run/` | Running an action: executor, templates, extraction, signals, tiers, `browser/` (real Chrome tabs), confirmation ids, redaction | Nobel |
@@ -50,11 +51,11 @@ agent (Claude) --MCP--> gateway --> executor --> the site's own HTTP endpoints
 | `runtime/web/` | The gateway's pages and the OAuth sign-in for regular Claude | Nobel |
 | `flowmap/` | The mapper the product runs: record, replay, infer, assemble, heal, explore | Nobel |
 | `mapper/` | Wei Wei's mapper: capture pipeline and explorer | Wei Wei |
-| `tools/check_card.py` | Standalone card checker | Nobel |
+| `tools/check_card.py` | Checks a card file against the spec without running it | Nobel |
 | `tests/runtime/`, `tests/flowmap/`, `tests/mapper/` | Tests for each package | both |
 | `tests/sites/` | Test sites: the demo shop (`fixture_site/`, card `fixture_site.json`) and the bookshop | Nobel |
 | `flows/bookshop.test/` | Example flowmap recordings | Nobel |
-| `docs/` | Mapper designs and the pitch context | both |
+| `docs/` | Cards explained (`cards.md`), the mappers (`flowmap.md`, `mapper-design.md`), the pitch context | both |
 
 `runtime/registry.py`, `executor.py`, `confirm.py` and `sessions.py` are old import paths kept for `mapper/`.
 `DECISIONS.md` records every judgement call made while building (L-series runtime and sign-in, M-series mapper).
@@ -87,6 +88,12 @@ claude mcp add --transport http spider http://127.0.0.1:8765/mcp --header "Autho
 ```
 
 Then ask Claude: "use spider to search the fixture.test shop for lamps".
+
+To also load the real sites' cards (LinkedIn needs each user to sign in with their own account):
+
+```bash
+uv run python -m runtime.gateway --load tests/sites/fixture_site.json --load cards/linkedin.com.json --load cards/amazon.co.uk.json
+```
 
 The demo shop (`tests/sites/fixture_site/`) has 21 actions covering every runtime case: reads, writes that need
 confirmation, rate limits, bot challenges, browser-only endpoints, and a sign-in (`demo` / `demo-password`).

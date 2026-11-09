@@ -28,7 +28,8 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - Step ids must be unique within an action.
 - Inherited headers (`defaults.headers` + `action.headers`) are checked under each action's *effective*
   `auth_provider`, so a `session.cookies` default header with an action overriding `auth_provider: null` is rejected.
-  (`check_card.py` checks `defaults.headers` only against `defaults.auth_provider`.) This is the literal spec rule.
+  (The old standalone `check_card.py` checked `defaults.headers` only against `defaults.auth_provider`;
+  *since then* it just runs `validate_card`.) This is the literal spec rule.
 - Examples and param defaults are validated against the param types (examples feed the 4xx probe, so they must be valid).
 - `parse`/`then` are rejected on `jsonpath` extracts (they only make sense on `regex`).
 - A step may not reference its own extract keys (only *earlier* steps).
