@@ -10,10 +10,10 @@ If code and spec disagree, the spec wins; raise a question rather than changing 
 ## Ownership (do not edit the other side's code)
 | Area | Owner | Paths |
 |---|---|---|
-| Mapper, capture scripts, card generation | WeiWei | `mapper/`, `docs/mapper-design.md` |
-| Executor, MCP server, browser worker, login flow, shared `schema/` package | Nobel | everything else |
+| Mapper, capture scripts, card generation | Mapper owner | `src/spider/mappers/harmap/`, `docs/harmap.md` |
+| Executor, MCP server, browser worker, login flow, shared `src/spider/card/` package | Runtime owner | everything else |
 
 ## Repo-wide rules
 - Never commit captures, HAR files, `state.json`, cookies or `.env`. They contain live login sessions.
 - Never print cookie values or csrf/auth headers in logs. Use `"[redacted]"`.
-- Python 3.11+. Pin dependencies in `pyproject.toml`.
+- Python 3.12. Pin dependencies in `pyproject.toml`.

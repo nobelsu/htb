@@ -11,10 +11,10 @@ import httpx
 import pytest
 import uvicorn
 
-from tests.fixture_site.app import app, state
+from tests.sites.fixture_site.app import app, state
 
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURE_CARD: dict[str, Any] = json.loads((ROOT / "tests" / "fixture_site.json").read_text())
+FIXTURE_CARD: dict[str, Any] = json.loads((ROOT / "tests" / "sites" / "fixture_site.json").read_text())
 
 
 def free_port() -> int:

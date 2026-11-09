@@ -1,4 +1,4 @@
-# flowmap (mapper v2)
+# flowmap
 
 A person (or Claude, with `record --agent`) records each action once. flowmap replays it with planted markers, works out the card from what the
 site sent, and saves it to the registry. The LLM only names things. Healing replays the same recording.
@@ -8,22 +8,22 @@ Decisions: `DECISIONS.md`, "Mapper v2".
 
 ```bash
 # 1. Record an action once (a browser opens; do the action, close it)
-uv run python -m flowmap record https://example.com/ --action search_things \
+uv run python -m spider.mappers.flowmap record https://example.com/ --action search_things \
   --input query=lamp --example query=chair --results '.result h3' --next 'a.next'
 
 # 1b. Or have Claude do it: give the task and the values to use (needs ANTHROPIC_API_KEY)
-uv run python -m flowmap record https://www.linkedin.com/ --action search_companies \
+uv run python -m spider.mappers.flowmap record https://www.linkedin.com/ --action search_companies \
   --agent "search companies for the query" --input query=robotics --example query=fintech \
   --auth linkedin --headed --profile ./profiles
 
 # 2. Map the site's flows into the registry (runtime.db)
-uv run python -m flowmap map example.com
+uv run python -m spider.mappers.flowmap map example.com
 
 # 3. Look at the card and the latest heal timings
-uv run python -m flowmap show example.com
+uv run python -m spider.mappers.flowmap show example.com
 
 # 4. Heal one action now (the gateway does this by itself with REMAPPER=flowmap)
-uv run python -m flowmap heal example.com search_things
+uv run python -m spider.mappers.flowmap heal example.com search_things
 ```
 
 - `--input name=value`: a value you typed while recording becomes an input. `--example` adds another real
@@ -54,7 +54,7 @@ Reads only for now. Raw captures go to a temporary folder deleted when the job e
 `FLOWS_DIR` for heal. Addresses on this machine or a private network are refused unless `MAP_ALLOW_LOCAL=1`.
 
 ```bash
-MAPPER=flowmap MAP_ALLOW_LOCAL=1 uv run python -m runtime.gateway   # then request_map http://127.0.0.1:8910/
+MAPPER=flowmap MAP_ALLOW_LOCAL=1 uv run python -m spider.gateway   # then request_map http://127.0.0.1:8910/
 ```
 
 ### Pages rendered on the server (level 2)
@@ -73,7 +73,7 @@ place, but loading the address renders them in the HTML.
 ### Explore
 
 `request_map` with only a site (and, optionally, what the user wants to do there as `task`) explores it
-(`flowmap/explore.py`). Claude looks at the start page and proposes up to four read tasks (name, task, start
+(`src/spider/mappers/flowmap/serve/explore.py`). Claude looks at the start page and proposes up to four read tasks (name, task, start
 page, input values); each is recorded, captured and mapped into one card, and kept only if it passes. A second
 round proposes follow-ups that take a value from what the kept actions returned (an item's page by an id from
 the search), with the values copied from those results. At most six actions; reads only.
@@ -91,7 +91,7 @@ runs every example and saves the actions that pass (`result.dropped` names the o
 every task tried, kept or not and why.
 
 Explore also proposes up to two writes per round (add to cart, follow, post...; never delete, settings or
-payment). Writes never reach the site while mapping: `flowmap/holdback.py` holds the committing request back
+payment). Writes never reach the site while mapping: `src/spider/mappers/flowmap/record/holdback.py` holds the committing request back
 (before the commit click only PUT/PATCH/DELETE, GraphQL mutations and form posts; from it, every non-GET),
 answers it itself and keeps it, so it is still mapped. Capture holds writes back the same way. The saved write
 is marked never run for real; `run_action` says so with its confirmation, and its first real success clears it.
@@ -107,7 +107,7 @@ the sign-in: like a site with a weak check, the user clicks "I've signed in", wh
 has changed the site's cookies. The job then carries on by itself, mapping with their stored sign-in (provider
 id: the site's name, `linkedin` for linkedin.com), and the action gets that `auth_provider`.
 
-The card's connect provider is worked out afterwards (`flowmap/signin.py`). Each step of the mapped action that
+The card's connect provider is worked out afterwards (`src/spider/mappers/flowmap/card/signin.py`). Each step of the mapped action that
 needs no earlier step's value (example values written in), then the start page, is sent with the sign-in and
 with no cookies; the first that passes signed in and fails signed out becomes the `session_check`, and what
 only the signed-out response showed (a 401 or 403, a redirect to the login page) becomes its
@@ -118,26 +118,26 @@ values never go into the card. On the test bookshop, `/orders` is behind a sign-
 ## Try it on the test bookshop
 
 ```bash
-uv run uvicorn tests.flowmap.site:app --port 8910
-uv run python -m flowmap map bookshop.test --no-llm --pause 0
+uv run uvicorn tests.sites.bookshop:app --port 8910
+uv run python -m spider.mappers.flowmap map bookshop.test --no-llm --pause 0
 curl -X POST http://127.0.0.1:8910/_admin/break/endpoint      # or nested, param, field
-uv run python -m flowmap heal bookshop.test search_books --pause 0
+uv run python -m spider.mappers.flowmap heal bookshop.test search_books --pause 0
 ```
 
 ## Files
 
 | Module | Does |
 |---|---|
-| `flowmap/flows.py` | The flow format (`flows/{domain}/{action}.json`), replay, the codegen converter |
-| `flowmap/agent.py` | `record --agent`: Claude does the action once; its steps become the flow |
-| `flowmap/browser.py` | The browser flowmap drives, set up like the gateway's: Chrome, a stored sign-in, identity, proxy |
-| `flowmap/capture.py` | Marker and real runs in Playwright; traffic tagged by step; secrets hashed |
-| `flowmap/infer.py` | Picks the request, templates it by comparing runs, finds the output, pagination, writes |
-| `flowmap/minimise.py` | Cheapest tier and fewest headers, by replaying with the executor |
-| `flowmap/label.py` | Names and descriptions (the LLM's only job), enforced in code |
-| `flowmap/assemble.py` | Card, validation, replay of a fresh example, `registry.save()` |
-| `flowmap/heal.py` | The runtime's `Remapper`: re-captures and re-infers only the broken action |
-| `flowmap/server.py` | The runtime's `Mapper`: a map job (agent recording, capture, map) inside the gateway |
-| `flowmap/explore.py` | Explore: Claude proposes read tasks (and follow-ups from returned ids), checked in code |
-| `flowmap/holdback.py` | Holds writes back while mapping: the committing request never reaches the site |
-| `flowmap/signin.py` | A new card's sign-in check and logged-out signals, from the action mapped while signed in |
+| `src/spider/mappers/flowmap/record/flows.py` | The flow format (`flows/{domain}/{action}.json`), replay, the codegen converter |
+| `src/spider/mappers/flowmap/record/agent.py` | `record --agent`: Claude does the action once; its steps become the flow |
+| `src/spider/mappers/flowmap/record/browser.py` | The browser flowmap drives, set up like the gateway's: Chrome, a stored sign-in, identity, proxy |
+| `src/spider/mappers/flowmap/record/capture.py` | Marker and real runs in Playwright; traffic tagged by step; secrets hashed |
+| `src/spider/mappers/flowmap/infer/actions.py` | Picks the request, templates it by comparing runs, finds the output, pagination, writes |
+| `src/spider/mappers/flowmap/infer/minimise.py` | Cheapest tier and fewest headers, by replaying with the executor |
+| `src/spider/mappers/flowmap/infer/label.py` | Names and descriptions (the LLM's only job), enforced in code |
+| `src/spider/mappers/flowmap/card/assemble.py` | Card, validation, replay of a fresh example, `registry.save()` |
+| `src/spider/mappers/flowmap/heal.py` | The runtime's `Remapper`: re-captures and re-infers only the broken action |
+| `src/spider/mappers/flowmap/serve/server.py` | The runtime's `Mapper`: a map job (agent recording, capture, map) inside the gateway |
+| `src/spider/mappers/flowmap/serve/explore.py` | Explore: Claude proposes read tasks (and follow-ups from returned ids), checked in code |
+| `src/spider/mappers/flowmap/record/holdback.py` | Holds writes back while mapping: the committing request never reaches the site |
+| `src/spider/mappers/flowmap/card/signin.py` | A new card's sign-in check and logged-out signals, from the action mapped while signed in |

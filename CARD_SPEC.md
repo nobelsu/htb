@@ -2,7 +2,7 @@
 
 Card `schema_version` for this spec: `"0.4"`.
 
-One JSON file per site. Example: `action_map.example.json`. Checker: `tools/check_card.py`.
+One JSON file per site. Example: `action_map.example.json`. Checker: `src/spider/card/check.py`.
 Stored in SQLite `action_maps.map_json`, one row per version, one active version per domain.
 
 **All LinkedIn URLs, `queryId`s and JSON paths in the example are illustrative**, not just the ones marked `PLACEHOLDER`. Real values come from a capture.
@@ -10,8 +10,8 @@ Stored in SQLite `action_maps.map_json`, one row per version, one active version
 ## Ownership
 - The **mapper** writes cards. The **executor** reads them and never edits them.
 - Runtime learnings (which tier worked, failure and EMPTY counts) go in `action_state`, not in the card.
-- Cards are validated against the shared Pydantic models in the importable `schema/` package before saving. The mapper and executor import the same package.
-- **Owners:** MCP server, executor, browser worker and login flow are Nobel's. Mapper, capture scripts and card generation are the mapper owner's.
+- Cards are validated against the shared Pydantic models in the importable `src/spider/card/` package before saving. The mapper and executor import the same package.
+- **Owners:** MCP server, executor, browser worker and login flow belong to the runtime owner. Mapper, capture scripts and card generation belong to the mapper owner.
 
 ## Site-level fields
 | Field | Meaning |
@@ -228,13 +228,13 @@ Evaluated **in this order**, first match wins:
    - If the heal changes **site-level fields** (`defaults`, `connect_providers`, `blocked_signals`), validate **every** read action, because they all inherit those fields.
 5. **Activation:** the new site version is always built action by action:
    - Healed **read** actions that pass their examples → go into the new version.
-   - Healed **write** actions → **go into the new version too** (changed 2026-11-07, decided by Nobel and WeiWei; previously they were held in `heal_candidates` for approval). They are **never executed to validate them**, since that would really perform the write; the heal result lists them as `unvalidated`.
+   - Healed **write** actions → **go into the new version too** (changed 2026-11-07, agreed by both owners; previously they were held in `heal_candidates` for approval). They are **never executed to validate them**, since that would really perform the write; the heal result lists them as `unvalidated`.
    - Any action that fails validation → the new version keeps the old action.
    - Actions kept on their old definition after a failed heal are marked `degraded` in `action_state`. They still run, and the envelope shows `meta.degraded: true` so the agent knows results may fail.
    - If nothing changed in the end, no new version is saved.
 
 ## Runtime tools (not part of the card)
-*Changed 2026-11-07 (decided by Nobel): generic tools only.* The MCP server exposes a small fixed set of tools:
+*Changed 2026-11-07 (decided): generic tools only.* The MCP server exposes a small fixed set of tools:
 `find_actions(query?, site?)` (search the actions of every active card; returns each action's site, description and
 parameters), `run_action(site, action, params, confirmation_id?)` (runs one action and returns the result envelope),
 `connection_status(domain)`, `start_connection(domain)` → URL, `poll_connection(domain)`, `disconnect(domain)` and

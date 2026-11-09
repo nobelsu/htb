@@ -1,0 +1,146 @@
+{
+  "schema_version": "0.4",
+  "domain": "amazon.co.uk",
+  "tool_prefix": "amazon",
+  "base_url": "https://www.amazon.co.uk",
+  "blocked_signals": [],
+  "changed_signals": [],
+  "provenance": {
+    "mapped_at": "2026-11-08T13:01:03+00:00",
+    "source": "flowmap capture 20261108T130010-ae88",
+    "mapper_version": "flowmap-0.1"
+  },
+  "connect_providers": [],
+  "defaults": {
+    "tier": "http"
+  },
+  "actions": [
+    {
+      "name": "search_products",
+      "description": "Searches the store's product catalog by keyword. Each result gives the product title and a link to its product page.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "Search keywords, e.g. \"laptop\".",
+          "example": "laptop"
+        }
+      },
+      "steps": [
+        {
+          "id": "s",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/s",
+            "query": {
+              "k": "{{params.query}}"
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "css",
+              "expr": "div.puisg-col.puisg-col-4-of-4 a.a-link-normal.s-line-clamp-3"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.s.items",
+        "fields": {
+          "title": "$.text",
+          "product_url": "$.href"
+        }
+      },
+      "examples": [
+        {
+          "params": {
+            "query": "laptop"
+          },
+          "min_items": 1
+        },
+        {
+          "params": {
+            "query": "laptop"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "http"
+    },
+    {
+      "name": "get_product_details",
+      "description": "Fetches the product detail page for an Amazon ASIN and returns the product title.",
+      "kind": "read",
+      "spends": false,
+      "idempotent": true,
+      "requires_confirmation": false,
+      "params": {
+        "asin": {
+          "type": "string",
+          "required": true,
+          "description": "Amazon product ASIN, the 10-character product ID, e.g. \"B0BTJD6LCL\".",
+          "example": "B0BTJD6LCL"
+        }
+      },
+      "steps": [
+        {
+          "id": "dp",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/dp/{{params.asin | urlencode}}",
+            "query": {
+              "th": "1"
+            }
+          },
+          "expect": {
+            "status": [
+              200
+            ],
+            "content_type": "html",
+            "paths": []
+          },
+          "extract": {
+            "items": {
+              "from": "body",
+              "type": "css",
+              "expr": "#title #productTitle"
+            }
+          }
+        }
+      ],
+      "output": {
+        "from": "steps.dp.items",
+        "fields": {
+          "title": "$.text"
+        }
+      },
+      "examples": [
+        {
+          "params": {
+            "asin": "B0BTJD6LCL"
+          },
+          "min_items": 1
+        },
+        {
+          "params": {
+            "asin": "B0BTJD6LCL"
+          },
+          "min_items": 1
+        }
+      ],
+      "tier": "http"
+    }
+  ]
+}

@@ -1,0 +1,820 @@
+"""MCP server: a fixed set of generic tools (find_actions, run_action, sign-in, heal, map) over every active
+card, served over Streamable HTTP with Bearer-key auth.
+
+Run:  uv run python -m spider.gateway --load tests/sites/fixture_site.json
+"""
+
+from __future__ import annotations
+
+import argparse
+import hmac
+import importlib
+import json
+import logging
+import os
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+import anyio
+import mcp_types as types
+from mcp.server.auth.routes import (
+    build_resource_metadata_url,
+    create_auth_routes,
+    create_protected_resource_routes,
+)
+from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
+from mcp.server.lowlevel.server import Server
+from mcp.server.transport_security import TransportSecuritySettings
+from mcp_types.version import MODERN_PROTOCOL_VERSIONS
+from pydantic import AnyHttpUrl
+from starlette.routing import BaseRoute
+
+from spider.card import ResultCode, load_card
+from spider.gateway.tools import (
+    CONNECTION_TOOLS,
+    FIND_ACTIONS_TOOL,
+    HEAL_STATUS_TOOL,
+    INSTRUCTIONS,
+    MAP_STATUS_TOOL,
+    REQUEST_MAP_TOOL,
+    RUN_ACTION_TOOL,
+)
+from spider.jobs.heal import HealConfig, HealManager, Remapper
+from spider.jobs.map import MapConfig, MapManager, Mapper
+from spider.mappers.harmap.heal import HarmapRemapper
+from spider.run.confirm import Confirmer
+from spider.run.executor import Executor
+from spider.run.tiers.browser import BrowserTier
+from spider.run.tiers.browser_pool import BrowserConfig, BrowserPool
+from spider.run.tiers.http import default_tiers
+from spider.signin.flow import ConnectionManager
+from spider.signin.neko.manager import NekoConfig, NekoManager
+from spider.signin.proxy import ProxyConfig
+from spider.store.cards import Registry, StoredCard
+from spider.store.catalog import find_actions
+from spider.store.jobs import JobStore
+from spider.store.oauth import OAuthStore
+from spider.store.sessions import ChainedSessionStore, DevEnvSessionStore, EncryptedSessionStore, SessionStore
+from spider.store.users import ENV_KEY_USER, UserStore
+from spider.web.design import PRODUCT_NAME
+from spider.web.pages.account import routes as account_routes
+from spider.web.pages.account import session_cookie
+from spider.web.pages.home import routes as home_routes
+from spider.web.pages.signin import routes as connect_routes
+from spider.web.pages.signup import routes as signup_routes
+
+log = logging.getLogger(__name__)
+
+DEFAULT_USER = ENV_KEY_USER  # the .env key's user; other keys belong to their own users (store/users.py)
+
+Scope = MutableMapping[str, Any]
+Message = MutableMapping[str, Any]
+Receive = Callable[[], Awaitable[Message]]
+Send = Callable[[Message], Awaitable[None]]
+ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
+
+
+class Gateway:
+    def __init__(
+        self,
+        registry: Registry,
+        executor: Executor,
+        poll_interval_s: float = 1.0,
+        healer: HealManager | None = None,
+        connections: ConnectionManager | None = None,
+        pool: BrowserPool | None = None,
+        keepalive_s: float = 0.0,
+        maps: MapManager | None = None,
+    ) -> None:
+        self.registry = registry
+        self.executor = executor
+        self.healer = healer
+        self.maps = maps
+        self.connections = connections
+        self.pool = pool
+        self.keepalive_s = keepalive_s
+        self.poll_interval_s = poll_interval_s
+        self._seen_clients: set[tuple[object, object, object]] = set()
+        self._prompted_at: dict[str, float] = {}  # sign-in token -> when we asked the client to show the link
+        self.server: Server[dict[str, Any]] = Server(
+            "spider",
+            version="0.1.0",
+            instructions=INSTRUCTIONS,
+            lifespan=self._lifespan,
+            on_list_tools=self._list_tools,
+            on_call_tool=self._call_tool,
+        )
+
+    # ---- registry --------------------------------------------------------
+
+    def refresh_registry(self) -> set[str]:
+        """Pick up cards saved by other processes (the mapper). The tool list never changes: new cards and
+        actions are found through find_actions."""
+        return self.registry.refresh()
+
+    # ---- MCP handlers ------------------------------------------------------
+
+    def _log_client(self, ctx: Any) -> None:
+        """Log each client's identity and elicitation support once (decides how sign-in links are shown)."""
+        session = getattr(ctx, "session", None)
+        if session is None:
+            return
+        try:
+            caps = session.client_capabilities
+            params = session.client_params
+            info = getattr(params, "client_info", None) if params is not None else None
+            key = (getattr(info, "name", None), getattr(info, "version", None), session.protocol_version)
+        except Exception:
+            return
+        if key in self._seen_clients:
+            return
+        self._seen_clients.add(key)
+        elicitation = getattr(caps, "elicitation", None) if caps is not None else None
+        log.info(
+            "client %s %s (protocol %s), elicitation: %s",
+            key[0],
+            key[1],
+            key[2],
+            elicitation.model_dump(exclude_none=True) if elicitation is not None else None,
+        )
+
+    async def _list_tools(
+        self, ctx: Any, params: types.PaginatedRequestParams | None
+    ) -> types.ListToolsResult:
+        self._log_client(ctx)
+        tools = [FIND_ACTIONS_TOOL, RUN_ACTION_TOOL]
+        if self.healer is not None:
+            tools.append(HEAL_STATUS_TOOL)
+        if self.maps is not None:
+            tools.extend([REQUEST_MAP_TOOL, MAP_STATUS_TOOL])
+        if self.connections is not None:
+            tools.extend(CONNECTION_TOOLS.values())
+        return types.ListToolsResult(tools=tools)
+
+    async def _call_tool(
+        self, ctx: Any, params: types.CallToolRequestParams
+    ) -> types.CallToolResult | types.InputRequiredResult:
+        if params.name in CONNECTION_TOOLS and self.connections is not None:
+            return await self._connection_tool(params.name, dict(params.arguments or {}), ctx, params)
+        if params.name == HEAL_STATUS_TOOL.name and self.healer is not None:
+            return self._heal_status(dict(params.arguments or {}))
+        if params.name in (REQUEST_MAP_TOOL.name, MAP_STATUS_TOOL.name) and self.maps is not None:
+            return await self._map_tool(params.name, dict(params.arguments or {}), caller(ctx))
+        if params.name == FIND_ACTIONS_TOOL.name:
+            return self._find_actions(dict(params.arguments or {}))
+        if params.name == RUN_ACTION_TOOL.name:
+            return await self._run_action(dict(params.arguments or {}), caller(ctx))
+        return _error_result(f"unknown tool {params.name!r}")
+
+    def _find_actions(self, args: dict[str, Any]) -> types.CallToolResult:
+        query, site = args.get("query"), args.get("site")
+        if (query is not None and not isinstance(query, str)) or (
+            site is not None and not isinstance(site, str)
+        ):
+            return _error_result("query and site must be strings")
+        out = find_actions(
+            self.registry.active_cards(), query or None, site or None, can_map=self.maps is not None
+        )
+        if "error" in out:
+            return _error_result(str(out["error"]))
+        return _json_result(out)
+
+    async def _run_action(self, args: dict[str, Any], user: str = DEFAULT_USER) -> types.CallToolResult:
+        site, action, params = args.get("site"), args.get("action"), args.get("params", {})
+        if not isinstance(site, str) or not isinstance(action, str):
+            return _error_result("site and action (strings) are required; use find_actions to look them up")
+        if not isinstance(params, dict):
+            return _error_result("params must be an object")
+        stored = self.registry.get(site)
+        if stored is None:
+            return _error_result(f"unknown site {site!r}; use find_actions to see the available sites")
+        if stored.card.action(action) is None:
+            return _error_result(
+                f"{site} has no action {action!r}; use find_actions(site={site!r}) to list them"
+            )
+        call_args = dict(params)
+        confirmation_id = args.get("confirmation_id")
+        if confirmation_id is not None:
+            call_args["_confirmation_id"] = confirmation_id
+        return await self._execute(stored, action, call_args, f"{site}/{action}", user)
+
+    async def _execute(
+        self, stored: StoredCard, action: str, args: dict[str, Any], label: str, user: str = DEFAULT_USER
+    ) -> types.CallToolResult:
+        try:
+            env = await self.executor.run(stored, action, args, user=user)
+        except Exception:
+            log.exception("executor crashed on %s", label)
+            return _error_result(f"internal error running {label}")
+        payload = env.model_dump(mode="json")
+        state = self.maps.state if self.maps is not None else self.healer.state if self.healer else None
+        found = stored.card.action(action)
+        if state is not None and found is not None and found.kind == "write":
+            if env.status == ResultCode.SUCCESS and state.is_never_run(stored.domain, action):
+                state.set_never_run(stored.domain, action, False)  # it has worked for real now
+            elif env.status == ResultCode.NEEDS_CONFIRMATION and state.is_never_run(stored.domain, action):
+                payload["never_run_for_real"] = True
+                payload["note"] = (
+                    "This action was set up without ever being sent to the site (writes are held back while "
+                    "mapping). Tell the user it's the first real try, and check the result on the site."
+                )
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=json.dumps(payload))],
+            structured_content=payload,
+            is_error=False,  # the envelope's `status` carries the outcome, including failures
+        )
+
+    def _heal_status(self, args: dict[str, Any]) -> types.CallToolResult:
+        assert self.healer is not None
+        job_id = args.get("job_id")
+        if not isinstance(job_id, str):
+            return _error_result("job_id (string) is required")
+        status = self.healer.heal_status(job_id)
+        if status is None:
+            return _error_result(f"no heal job {job_id!r}")
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=json.dumps(status))], structured_content=status
+        )
+
+    async def _map_tool(self, name: str, args: dict[str, Any], user: str) -> types.CallToolResult:
+        assert self.maps is not None
+        if name == REQUEST_MAP_TOOL.name:
+            site, task, action = args.get("site"), args.get("task", ""), args.get("action", "")
+            inputs, write = args.get("inputs"), args.get("write", False)
+            if not isinstance(write, bool):
+                return _error_result("write must be true or false")
+            if not all(isinstance(v, str) for v in (site, task, action)):
+                return _error_result("site (a string) is required; task and action are strings")
+            if inputs is not None and not isinstance(inputs, dict):
+                return _error_result("inputs must be an object")
+            out = await self.maps.request(user, str(site), str(task), str(action), inputs, write=write)
+        else:
+            job_id, wait = args.get("job_id"), args.get("wait_seconds", 25)
+            if not isinstance(job_id, str):
+                return _error_result("job_id (string) is required")
+            wait_s = float(wait) if isinstance(wait, (int, float)) and not isinstance(wait, bool) else 25.0
+            found = await self.maps.status(job_id, user, wait_s)
+            if found is None:
+                return _error_result(f"no map job {job_id!r}")
+            out = found
+        if "error" in out:
+            return _error_result(str(out["error"]))
+        if out.get("status") == "succeeded":
+            self.refresh_registry()
+        return _json_result(out)
+
+    async def _connection_tool(
+        self,
+        name: str,
+        args: dict[str, Any],
+        ctx: Any = None,
+        params: types.CallToolRequestParams | None = None,
+    ) -> types.CallToolResult | types.InputRequiredResult:
+        assert self.connections is not None
+        user = caller(ctx)
+        domain = args.get("domain")
+        if not isinstance(domain, str) or not domain:
+            return _error_result("domain (string) is required")
+        if name == "start_connection" and params is not None and params.request_state:
+            return await self._finish_url_sign_in(params, user)
+        if name == "start_connection":
+            provider = args.get("provider")
+            out = self.connections.start(user, domain, provider if isinstance(provider, str) else None)
+            if out.get("status") == "pending" and "url" in out and _supports_url_elicitation(ctx):
+                # Let the client itself show the link (MCP URL elicitation), so it never depends on the model
+                # copying it into its reply. The client retries this call once the user has responded.
+                token = str(out["url"]).rsplit("/", 1)[1]
+                request = types.ElicitRequest(
+                    params=types.ElicitRequestURLParams(
+                        mode="url",
+                        message=f"Sign in to {domain} to continue. You sign in on {domain}'s own page; "
+                        "your password isn't shared with the assistant.",
+                        url=str(out["url"]),
+                        elicitation_id=token,
+                    )
+                )
+                log.info("start_connection: asking the client to show the sign-in link (URL elicitation)")
+                self._prompted_at[token] = time.monotonic()
+                return types.InputRequiredResult(
+                    input_requests={SIGN_IN_REQUEST: request}, request_state=token
+                )
+        elif name == "poll_connection":
+            wait = args.get("wait_seconds", 25)
+            wait_s = float(wait) if isinstance(wait, (int, float)) and not isinstance(wait, bool) else 25.0
+            out = await self.connections.poll(user, domain, wait_s)
+        elif name == "disconnect":
+            provider = args.get("provider")
+            out = await self.connections.disconnect(
+                user, domain, provider if isinstance(provider, str) else None
+            )
+        else:
+            out = self.connections.status(user, domain)
+        if "error" in out:
+            return _error_result(str(out["error"]))
+        return _connection_result(out)
+
+    async def _finish_url_sign_in(
+        self, params: types.CallToolRequestParams, user: str
+    ) -> types.CallToolResult:
+        """The client's retry after showing the sign-in link: wait for the sign-in, then report."""
+        assert self.connections is not None
+        log.info(
+            "start_connection: client retried after the sign-in prompt: %s",
+            {k: getattr(v, "action", type(v).__name__) for k, v in (params.input_responses or {}).items()},
+        )
+        conn = self.connections.by_token(params.request_state or "")
+        if conn is None or conn.user != user:
+            return _error_result("unknown or expired sign-in; call start_connection again")
+        response = (params.input_responses or {}).get(SIGN_IN_REQUEST)
+        action = getattr(response, "action", None)
+        prompted_at = self._prompted_at.pop(conn.token, None)
+        answered_in = time.monotonic() - prompted_at if prompted_at is not None else None
+        if action == "decline" and answered_in is not None and answered_in < HUMAN_REPLY_MIN_S:
+            # Claude Code's desktop app declines URL prompts by itself within milliseconds; no person is that
+            # fast.
+            log.info(
+                "start_connection: the client answered the sign-in prompt itself (%.0f ms)",
+                answered_in * 1000,
+            )
+            action = "cancel"
+        if action == "decline":  # the user said no
+            out = await self.connections.poll(conn.user, conn.domain)
+            out.pop("url", None)
+            out["user_message"] = f"Signing in to {conn.domain} was cancelled."
+            out["hint"] = "the user declined to open the sign-in page; ask whether they want to sign in"
+            return _connection_result(out)
+        if action != "accept":
+            # "cancel" (or anything else): the app couldn't show the prompt (some clients cancel URL requests
+            # automatically). Fall back to the agent showing the link and waiting in the same turn.
+            out = await self.connections.poll(conn.user, conn.domain)
+            out["hint"] = (
+                "Your app couldn't show the sign-in link to the user. In this same reply, write the "
+                "user_message exactly as given (a markdown link), then immediately call poll_connection; "
+                "don't end your turn, it waits for them to sign in."
+            )
+            return _connection_result(out)
+        out = await self.connections.poll(conn.user, conn.domain, wait_s=40, opened=True)
+        return _connection_result(out)
+
+    @asynccontextmanager
+    async def _lifespan(self, _server: Server[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(self._poll)
+            if self.healer is not None:
+                tg.start_soon(self.healer.run_forever)
+                tg.start_soon(self.healer.health_checks_forever)
+            if self.maps is not None:
+                tg.start_soon(self.maps.run_forever)
+            if self.pool is not None:
+                tg.start_soon(self.pool.reap_forever)
+            if self.connections is not None:
+                tg.start_soon(self.connections.keepalive_forever, self.keepalive_s)
+                if self.connections.neko is not None:
+                    if not await self.connections.neko.available():
+                        log.warning(
+                            "Neko image not available (docker pull %s); 'log in here' is off",
+                            self.connections.neko.config.image,
+                        )
+                        self.connections.neko = None
+                    else:
+                        removed = await self.connections.neko.cleanup_stale()
+                        if removed:
+                            log.info("removed %d leftover login browsers", removed)
+            try:
+                yield {}
+            finally:
+                tg.cancel_scope.cancel()
+                if self.connections is not None:
+                    await self.connections.close()
+                if self.pool is not None:
+                    await self.pool.close()
+
+    async def _poll(self) -> None:
+        while True:
+            await anyio.sleep(self.poll_interval_s)
+            try:
+                self.refresh_registry()
+            except Exception:
+                log.exception("registry reload failed")
+
+    # ---- HTTP --------------------------------------------------------------
+
+    def asgi_app(
+        self,
+        api_key: str,
+        host: str = "127.0.0.1",
+        keys: UserStore | None = None,
+        signup_code: str = "",
+        public_base_url: str | None = None,
+        oauth: OAuthStore | None = None,
+    ) -> ASGIApp:
+        """`oauth` (with `keys` and `public_base_url`) adds sign-in for apps that can't send an API key
+        (regular
+        Claude): the OAuth endpoints, the sign-in page and the account page (DECISIONS.md L11)."""
+        extra: list[BaseRoute] = (
+            list(connect_routes(self.connections)) if self.connections is not None else []
+        )
+        connections = self.connections
+        public = (public_base_url or "").rstrip("/")
+        exempt: tuple[str, ...] = ("/connect/", "/neko/", "/signup")
+        resource_metadata: str | None = None
+        start_session = None
+        if oauth is not None and keys is not None and public:
+            issuer = AnyHttpUrl(public)
+            extra += create_auth_routes(
+                provider=oauth,
+                issuer_url=issuer,
+                service_documentation_url=None,
+                client_registration_options=ClientRegistrationOptions(enabled=True),
+                revocation_options=RevocationOptions(enabled=True),
+            )
+            extra += create_protected_resource_routes(
+                resource_url=AnyHttpUrl(f"{public}/mcp"),
+                authorization_servers=[issuer],
+                resource_name=PRODUCT_NAME,
+            )
+            resolve = BearerAuth(lambda *_: None, api_key, keys=keys)._user_for  # type: ignore[arg-type]
+            extra += account_routes(
+                oauth=oauth,
+                keys=keys,
+                key_user=lambda key: resolve(key.encode()) if key else None,
+                connections=connections,
+                sessions=connections.store if connections is not None else None,
+                maps=self.maps,
+                signup_code=signup_code,
+                public_url=lambda: public,
+            )
+            start_session = session_cookie(oauth, lambda: public)
+            resource_metadata = str(build_resource_metadata_url(AnyHttpUrl(f"{public}/mcp")))
+            exempt += ("/.well-known/", "/authorize", "/token", "/register", "/revoke", "/oauth/", "/account")
+        if keys is not None:
+            extra += home_routes(signup_open=bool(signup_code))
+            extra += signup_routes(
+                keys,
+                signup_code,
+                lambda: public or (connections.public_base_url if connections else None),
+                start_session,
+            )
+        inner = self.server.streamable_http_app(
+            host=host,
+            custom_starlette_routes=extra,  # type: ignore[arg-type]
+            transport_security=host_check(host, public_base_url),
+        )
+        return BearerAuth(
+            inner,
+            api_key,
+            exempt_prefixes=exempt,
+            keys=keys,
+            oauth=oauth,
+            resource_metadata=resource_metadata,
+            exempt_paths=frozenset({"/"}) if keys is not None else frozenset(),
+        )
+
+
+SIGN_IN_REQUEST = "sign_in"
+
+
+def host_check(host: str, public_base_url: str | None) -> TransportSecuritySettings | None:
+    """MCP's DNS-rebinding protection: on a localhost bind the SDK only accepts localhost Host/Origin headers.
+    Behind a tunnel or reverse proxy (ngrok, Caddy) requests carry PUBLIC_BASE_URL's host, so allow exactly
+    that one
+    too."""
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        return None  # the SDK's own default for other binds
+    hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+    public = urlsplit(public_base_url) if public_base_url else None
+    if public is not None and public.hostname and public.hostname not in ("127.0.0.1", "localhost", "::1"):
+        hosts.append(public.netloc)
+        origins.append(f"{public.scheme}://{public.netloc}")
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins
+    )
+
+
+def caller(ctx: Any) -> str:
+    """The user whose API key made this request (BearerAuth puts it on the HTTP request)."""
+    request = getattr(ctx, "request", None)
+    scope = getattr(request, "scope", None)
+    state = scope.get("state") if isinstance(scope, dict) else None
+    user = state.get(USER_STATE_KEY) if isinstance(state, dict) else None
+    return user if isinstance(user, str) and user else DEFAULT_USER
+
+
+# An answer to the sign-in prompt faster than this came from the app, not the person (see DECISIONS.md L6).
+HUMAN_REPLY_MIN_S = 2.0
+
+
+def _supports_url_elicitation(ctx: Any) -> bool:
+    """A 2026-07-28 client that declared URL elicitation (Claude Code does)."""
+    session = getattr(ctx, "session", None)
+    if session is None:
+        return False
+    try:
+        caps = session.client_capabilities
+        modern = session.protocol_version in MODERN_PROTOCOL_VERSIONS
+    except Exception:
+        return False
+    elicitation = getattr(caps, "elicitation", None) if caps is not None else None
+    return bool(modern and elicitation is not None and getattr(elicitation, "url", None) is not None)
+
+
+def _json_result(out: dict[str, Any]) -> types.CallToolResult:
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=json.dumps(out))], structured_content=out
+    )
+
+
+SHOW_LINK = (
+    "Show this to the user now. They can't see tool results, so unless your reply contains this exact line, "
+    "link included, they have nothing to click. Then call poll_connection in the same turn.\n\n"
+)
+
+
+def _connection_result(out: dict[str, Any]) -> types.CallToolResult:
+    """Sign-in results. While a link is waiting to be used, the result leads with a plain line holding the
+    link (not
+    buried in JSON, where agents tend to summarise it as "use the link" and drop the URL)."""
+    message = out.get("user_message")
+    if out.get("status") != "pending" or not isinstance(message, str) or "](" not in message:
+        return _json_result(out)
+    return types.CallToolResult(
+        content=[
+            types.TextContent(type="text", text=SHOW_LINK + message),
+            types.TextContent(type="text", text=json.dumps(out)),
+        ],
+        structured_content=out,
+    )
+
+
+def _error_result(message: str) -> types.CallToolResult:
+    return types.CallToolResult(content=[types.TextContent(type="text", text=message)], is_error=True)
+
+
+USER_STATE_KEY = "spider_user"
+
+
+class BearerAuth:
+    """Rejects HTTP requests without `Authorization: Bearer <api key>`, and records whose key it is: the .env
+    key
+    is user "default", every other key belongs to its user in the UserStore."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        api_key: str,
+        exempt_prefixes: tuple[str, ...] = (),
+        exempt_paths: frozenset[str] = frozenset(),
+        keys: UserStore | None = None,
+        oauth: OAuthStore | None = None,
+        resource_metadata: str | None = None,
+    ) -> None:
+        if not api_key and keys is None:
+            raise ValueError("GATEWAY_API_KEY must be set")
+        self.app = app
+        self._key = api_key.encode()
+        self._keys = keys
+        self._exempt = (
+            exempt_prefixes  # routes with their own credential (the login link's token, the invite code)
+        )
+        self._exempt_paths = exempt_paths  # public pages, matched exactly (the home page is "/")
+        self._oauth = oauth
+        # Where OAuth clients find how to sign in (RFC 9728), sent with every 401.
+        challenge = 'Bearer realm="spider"'
+        if resource_metadata:
+            challenge += f', resource_metadata="{resource_metadata}"'
+        self._challenge = challenge.encode()
+
+    def _user_for(self, token: bytes) -> str | None:
+        if self._key and hmac.compare_digest(token, self._key):
+            return DEFAULT_USER
+        try:
+            text = token.decode()
+        except UnicodeDecodeError:
+            return None
+        if self._keys is not None and (user := self._keys.user_for(text)) is not None:
+            return user
+        if self._oauth is not None:
+            return self._oauth.user_for_access_token(text)  # signed in through an app (OAuth)
+        return None
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = str(scope.get("path", ""))
+        public = path in self._exempt_paths or path.startswith(self._exempt)
+        if scope["type"] in ("http", "websocket") and not public:
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 4401})
+                return
+            auth = dict(scope.get("headers") or []).get(b"authorization", b"")
+            scheme, _, token = auth.partition(b" ")
+            user = self._user_for(token.strip()) if scheme.lower() == b"bearer" else None
+            if user is None:
+                body = json.dumps({"error": "missing or invalid bearer token"}).encode()
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"www-authenticate", self._challenge),
+                            (b"content-length", str(len(body)).encode()),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": body})
+                return
+            scope.setdefault("state", {})[USER_STATE_KEY] = user
+        await self.app(scope, receive, send)
+
+
+# ---- entry point -----------------------------------------------------------
+
+
+def load_into_registry(registry: Registry, path: Path) -> int | None:
+    """Save the card at `path` unless the active version is identical. Returns the new version or None."""
+    raw = json.loads(path.read_text())
+    card = load_card(raw)
+    active = registry.get(card.domain)
+    if active is not None and active.card.to_json_dict() == card.to_json_dict():
+        return None
+    return registry.save(card, note=f"loaded from {path.name}")
+
+
+def load_remapper(
+    spec: str | None,
+    sessions: SessionStore | None = None,
+    captures_dir: str | Path = "captures",
+    proxies: ProxyConfig | None = None,
+) -> Remapper | None:
+    """`flowmap` -> flowmap's flow replay (FLOWS_DIR, default flows/); `harmap` (or its old name `mapper`) ->
+    harmap's recordings; `module.path:Name` -> an instance of Name (or Name itself if it is already an
+    instance)."""
+    if not spec:
+        return None
+    if spec in ("harmap", "mapper"):
+        log.info("using harmap to heal (recordings in %s)", captures_dir)
+        return HarmapRemapper(captures_dir, sessions=sessions)
+    if spec == "flowmap":
+        from spider.mappers.flowmap.heal import FlowmapRemapper
+
+        flows_dir = os.environ.get("FLOWS_DIR", "flows")
+        log.info("using flowmap to heal (flows in %s, captures in %s)", flows_dir, captures_dir)
+        channel = os.environ.get("BROWSER_CHANNEL", "chrome")
+        return FlowmapRemapper(flows_dir, captures_dir, sessions=sessions, proxies=proxies, channel=channel)
+    module_name, _, attr = spec.partition(":")
+    obj = getattr(importlib.import_module(module_name), attr)
+    remapper: Remapper = obj() if isinstance(obj, type) else obj
+    log.info("using remapper %s", spec)
+    return remapper
+
+
+def load_mapper(spec: str | None, executor: Executor, proxies: ProxyConfig | None = None) -> Mapper | None:
+    """`flowmap` -> flowmap's agent recorder and mapper (FLOWS_DIR, default flows/); `module.path:Name` -> an
+    instance of Name, called with the executor. Map jobs need ANTHROPIC_API_KEY (the agent is Claude)."""
+    if not spec:
+        return None
+    if spec == "flowmap":
+        from spider.mappers.flowmap.serve.server import FlowMapper
+
+        flows_dir = os.environ.get("FLOWS_DIR", "flows")
+        log.info("map jobs: flowmap (flows in %s)", flows_dir)
+        return FlowMapper(
+            executor, flows_dir, proxies=proxies, channel=os.environ.get("BROWSER_CHANNEL", "chrome")
+        )
+    module_name, _, attr = spec.partition(":")
+    obj = getattr(importlib.import_module(module_name), attr)
+    mapper: Mapper = obj(executor) if isinstance(obj, type) else obj
+    log.info("map jobs: %s", spec)
+    return mapper
+
+
+class _DropWebSocketLines(logging.Filter):
+    """uvicorn logs each WebSocket handshake with its full URL (login tokens, Neko session tokens)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not (message.startswith(("connection open", "connection closed")) or '"WebSocket ' in message)
+
+
+def main() -> None:
+    import uvicorn
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    parser = argparse.ArgumentParser(description="Run the MCP gateway")
+    parser.add_argument("--load", action="append", default=[], type=Path, help="card JSON to save on startup")
+    parser.add_argument("--host", default=os.environ.get("GATEWAY_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("GATEWAY_PORT", "8765")))
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # URL-level request logs would record login tokens (/connect/<token>), the login browser's password and
+    # users' query parameters, so they stay off; the runtime logs its own redacted events.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.error").addFilter(_DropWebSocketLines())
+
+    db_path = os.environ.get("REGISTRY_DB", "./runtime.db")
+    registry = Registry(db_path)
+    for path in args.load:
+        version = load_into_registry(registry, path)
+        log.info("%s: %s", path, f"saved as version {version}" if version else "unchanged")
+    session_store = EncryptedSessionStore(db_path, os.environ.get("SESSION_KEY", ""))
+    pool = BrowserPool(
+        BrowserConfig(
+            profiles_dir=Path(os.environ.get("PROFILES_DIR", "./profiles")),
+            channel=os.environ.get("BROWSER_CHANNEL", "chrome"),
+            headless=os.environ.get("BROWSER_HEADLESS", "1") != "0",
+            idle_s=float(os.environ.get("BROWSER_IDLE_S", "600")),
+        )
+    )
+    tiers = default_tiers()
+    tiers["browser"] = BrowserTier(pool)
+    sessions = ChainedSessionStore(session_store, DevEnvSessionStore(os.environ.get("DEV_SESSION_COOKIES")))
+    proxies = ProxyConfig(os.environ["PROXY_URL"]) if os.environ.get("PROXY_URL") else None
+    log.info("residential proxy: %s", proxies.redacted if proxies else "off (set PROXY_URL to turn it on)")
+    if proxies is not None and not proxies.sticky:
+        log.warning("PROXY_URL has no {session}: each request may get a different IP")
+    executor = Executor(
+        sessions,
+        Confirmer(os.environ.get("CONFIRMATION_SECRET", "")),
+        tiers=tiers,
+        proxies=proxies,
+    )
+    public_url = os.environ.get("PUBLIC_BASE_URL", f"http://{args.host}:{args.port}")
+    neko = None
+    if os.environ.get("NEKO_ENABLED", "1") != "0":
+        low, _, high = os.environ.get("NEKO_UDP_PORTS", "52000-52099").partition("-")
+        neko = NekoManager(
+            NekoConfig(
+                image=os.environ.get("NEKO_IMAGE", "ghcr.io/m1k1o/neko/chromium:latest"),
+                public_ip=os.environ.get("NEKO_PUBLIC_IP", "auto"),
+                udp_ports=(int(low), int(high or low)),
+                ice_servers=os.environ.get("NEKO_ICE_SERVERS", ""),
+                accept_languages=os.environ.get("NEKO_ACCEPT_LANGUAGES", "en-US,en"),
+            )
+        )
+    connections = ConnectionManager(
+        registry,
+        session_store,
+        executor,
+        public_url,
+        pool=pool,
+        timeout_s=float(os.environ.get("CONNECT_TIMEOUT_S", "600")),
+        neko=neko,
+    )
+    config = HealConfig(
+        retry_after_s=int(os.environ.get("HEAL_RETRY_AFTER_S", "30")),
+        health_interval_s=float(os.environ.get("HEALTH_CHECK_INTERVAL_S", "0")),
+        health_disabled_domains=frozenset(
+            d.strip() for d in os.environ.get("HEALTH_CHECK_DISABLED_DOMAINS", "").split(",") if d.strip()
+        ),
+    )
+    remapper = load_remapper(
+        os.environ.get("REMAPPER"), sessions, os.environ.get("CAPTURES_DIR", "./captures"), proxies
+    )
+    state = JobStore(db_path)
+    healer = HealManager(registry, state, executor, remapper, config)
+    mapper = load_mapper(os.environ.get("MAPPER"), executor, proxies)
+    maps = (
+        MapManager(
+            registry,
+            state,
+            executor,
+            mapper,
+            healer,
+            MapConfig(allow_local=os.environ.get("MAP_ALLOW_LOCAL", "0") == "1"),
+            connections,
+        )
+        if mapper is not None
+        else None
+    )
+    log.info("map jobs: %s", "on" if maps else "off (set MAPPER=flowmap to turn them on)")
+    gateway = Gateway(
+        registry,
+        executor,
+        healer=healer,
+        connections=connections,
+        pool=pool,
+        keepalive_s=float(os.environ.get("KEEPALIVE_INTERVAL_S", "900")),
+        maps=maps,
+    )
+    signup_code = os.environ.get("SIGNUP_CODE", "")
+    app = gateway.asgi_app(
+        os.environ.get("GATEWAY_API_KEY", ""),
+        host=args.host,
+        keys=UserStore(db_path),
+        signup_code=signup_code,
+        public_base_url=public_url,
+        oauth=OAuthStore(db_path, public_url),
+    )
+    log.info(
+        "sign-up page: %s", f"{public_url}/signup" if signup_code else "off (set SIGNUP_CODE to turn it on)"
+    )
+    uvicorn.run(app, host=args.host, port=args.port, access_log=False)
+
+
+if __name__ == "__main__":
+    main()

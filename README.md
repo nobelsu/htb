@@ -1,121 +1,318 @@
 # spider
 
-Hack the Burgh 2026: turn websites into agent-callable actions ("cards").
-Spec: `CARD_SPEC.md` (v0.4, frozen). Runtime judgement calls: `DECISIONS.md`.
-Mapper design: `docs/mapper-design.md`.
+spider turns websites into tools an AI agent can call directly, without driving a browser.
 
-| Path | What | Owner |
+An agent asks for `linkedin.com` / `search_companies` with `{"query": "robotics"}` and gets clean JSON back in
+about a second, signed in as its user. Behind that call is no screenshot, no clicking and no page to read: just
+the same request LinkedIn's own page would have sent.
+
+Built for Hack the Burgh 2026.
+
+## Why
+
+Agents mostly use websites the way a person does. A browser agent opens the page, reads it or looks at a
+screenshot, clicks, types, waits, and reads again. That works, but on every single call it is:
+
+- **Slow.** One search is tens of seconds and many model turns.
+- **Expensive.** Every page the model reads costs tokens, every time.
+- **Fragile.** A moved button or a new pop-up breaks it.
+
+Public APIs would be better, but most sites people care about don't have one, or have one that doesn't cover
+what people actually do there (LinkedIn, Amazon, job boards, internal tools).
+
+There is a third way. Every modern site already has an API: the internal requests its own pages make to fetch
+search results, load a profile or follow a company. Those requests are fast and return structured data. They
+just aren't written down anywhere an agent can use.
+
+spider writes them down. It watches a task being done once, works out which request is the real action, and
+saves it so any agent can call it from then on.
+
+```mermaid
+flowchart TB
+    subgraph after["With spider"]
+        direction LR
+        B1[run_action] --> B2[the site's own request] --> B3[JSON]
+    end
+    subgraph before["A browser agent, on every call"]
+        direction LR
+        A1[open page] --> A2[read or screenshot] --> A3[click and type] --> A4[wait] --> A2
+    end
+```
+
+## What spider does
+
+A site's actions are kept in one JSON file, its **card** (`CARD_SPEC.md`, explained in `docs/cards.md`). Each
+action says what request to send, where the inputs go, and where the results are in the answer. A card is made
+once and shared by every user; each user signs in with their own account.
+
+```mermaid
+flowchart LR
+    M["Map<br/>do the task once,<br/>find the request"] --> S["Save<br/>a versioned card<br/>for the site"]
+    S --> R["Run<br/>any agent calls it,<br/>as its own user"]
+    R -- "site changed" --> H["Heal<br/>re-map just that action,<br/>save a new version"]
+    H --> R
+```
+
+1. **Map.** Claude (or a person) does the task once in a browser. spider replays it with planted marker values,
+   sees which request carries the input and which response carries the results, and confirms it by replaying
+   with that request blocked: if the results vanish, that request is the action. The model only does the task
+   and names things; which request is the action is decided from the evidence.
+2. **Save.** The action goes into the site's card. Example values and fixed request values are checked for
+   personal data first, and every version is kept so a bad change can be rolled back.
+3. **Run.** Agents connect over MCP, find actions with `find_actions` and call them with `run_action`. Each call
+   uses the user's own sign-in, and moves from plain HTTP up to a real Chrome tab only when the site needs it.
+4. **Heal.** When a site changes and an action breaks, spider replays that action's recording, re-maps it and
+   saves a new card version while the call waits or retries.
+
+Writes (follow, send, add to cart) are handled carefully at both ends. While mapping, the request that would
+commit the write is held back in the browser, so the site never receives it. Once saved, a write always needs
+the user's confirmation before it is sent.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    agent["Agent<br/>(Claude)"] -- MCP --> gateway
+    subgraph spider
+        gateway["Gateway<br/>find, run, request a map"] --> executor["Executor"]
+        gateway --> registry[("Registry<br/>cards per site")]
+        gateway --> jobs["Map and heal jobs<br/>(flowmap)"]
+        jobs --> registry
+        executor --> registry
+        executor --> signins[("Sign-ins<br/>encrypted")]
+    end
+    executor -- "plain HTTP, browser fingerprint,<br/>or a real Chrome tab" --> site["The site's own<br/>endpoints"]
+    user["User"] -. "signs in once,<br/>in a private browser" .-> signins
+```
+
+What happens on one call:
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant G as spider
+    participant S as linkedin.com
+    A->>G: find_actions("search companies on linkedin.com")
+    G-->>A: search_companies(query)
+    A->>G: run_action(search_companies, query="robotics")
+    G->>S: the site's own search request, with the user's sign-in
+    S-->>G: the site's answer
+    G-->>A: SUCCESS, a list of companies as JSON
+```
+
+The agent never sees a password or a cookie. If the user hasn't signed in to the site yet, the call returns a
+sign-in link instead; the user signs in to the real site in a private remote browser, and spider keeps the
+session encrypted.
+
+## Repository
+
+All code is one package, `spider`, under `src/`. Tests mirror it under `tests/`.
+
+| Path | What |
+|---|---|
+| `src/spider/card/` | The card format in code: models, result envelope, placeholders, validation, `python -m spider.card.check` |
+| `src/spider/gateway/` | The MCP gateway (`python -m spider.gateway`): `tools.py` (what agents see), `app.py` (wiring) |
+| `src/spider/run/` | Running an action: the executor, confirmation ids and redaction |
+| `src/spider/run/request/` | Building each request (templates), reading the answer (extract), spotting signals |
+| `src/spider/run/tiers/` | How requests go out: plain HTTP and a browser fingerprint (`http`), or a real Chrome tab (`browser`) |
+| `src/spider/signin/` | Signing users in: the flow, device identity, proxy, and `neko/` (remote sign-in browsers) |
+| `src/spider/store/` | Everything kept in SQLite: cards and their search, stored sign-ins, users and keys, jobs, OAuth |
+| `src/spider/jobs/` | Heal jobs and map jobs |
+| `src/spider/web/` | The page design and `pages/` (home, sign-up, account, website sign-in) |
+| `src/spider/mappers/` | The two mappers, in the same shape (below) |
+| `tests/` | Mirrors `src/spider/`; `tests/sites/` holds the demo shop (`fixture_site/`) and the bookshop |
+| `cards/` | The live, checked cards: linkedin.com (12 actions) and amazon.co.uk (2). Explained in `docs/cards.md` |
+| `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card |
+| `flows/bookshop.test/` | Example flowmap recordings |
+| `docs/` | Cards (`cards.md`) and the two mappers (`flowmap.md`, `harmap.md`) |
+
+Both mappers have the same stages, so the same file name means the same job in each:
+
+| | flowmap | harmap |
 |---|---|---|
-| `CARD_SPEC.md`, `action_map.example.json` | Frozen card spec and its example card | shared |
-| `schema/` | Card and envelope models, `validate_card()` | Nobel |
-| `runtime/` | Executor, registry, MCP gateway | Nobel |
-| `tools/check_card.py` | Standalone card checker | Nobel |
-| `tests/` (except `tests/mapper/`) | Runtime tests and the fixture shop | Nobel |
-| `mapper/`, `tests/mapper/`, `docs/mapper-design.md` | Capture and capture → card pipeline, its tests and fixture site | WeiWei |
+| `cli.py` | `python -m spider.mappers.flowmap` | `python -m spider.mappers.harmap` |
+| `record/` | Claude or a person does the task once; browser steps, held-back writes | A person records each run; saved traffic |
+| `infer/` | Which request is the action, its inputs, outputs and names | The same, from the saved traffic, stage by stage |
+| `card/` | Assemble the action, privacy check, sign-in check | Assemble, validate, mapping report |
+| `heal.py` | Replays the broken action | Re-records and re-maps the site |
+| only here | `serve/`: map jobs and exploring a site, inside the gateway | `explore/`: an LLM picks a site's tasks; `helpers/` |
 
-## Setup
+`DECISIONS.md` records every judgement call made while building (L-series runtime and sign-in, M-series mapper).
 
-```bash
-uv sync
-uv run playwright install chromium   # browser for mapper captures
-uv run pytest
-cp .env.example .env   # then set GATEWAY_API_KEY and CONFIRMATION_SECRET
-```
+## Two mappers
 
-## Runtime
+A mapper turns a task done once in a browser into a card. The repository has two. **flowmap is the one the
+product runs:** map jobs (`request_map`), healing and nearly every action in `cards/` come from it, and it is
+what the Hack the Burgh demo used. harmap came first; three LinkedIn actions (`get_me`,
+`send_connection_request`, `start_conversation`) and the card format's streamed-rows support come from it.
 
-Run the fixture shop and the gateway (two terminals):
+| | flowmap | harmap |
+|---|---|---|
+| Recording | Once, by Claude (`--agent`) or a person, saved as browser steps | Three or four times by hand (two with marker values, one real, one on page 2), saved as network traffic (HAR) |
+| Finding the request | Replays the steps itself with fresh markers, matches what the page shows to the answers, and confirms by blocking the request: if the results vanish, that request is the action | Searches the saved traffic for the markers, in nine steps (`pipeline/`) |
+| Where it runs | Command line, and inside the gateway as map jobs | Command line only |
+| Writes | The send is held back from the first click that would commit; the steps before it are tried on each tier before saving | The send is held back during capture |
+| Privacy | Examples and fixed values checked for personal data (rules, then Claude) | No live secrets in the card |
+| Healing | Replays just the broken action | Re-records and re-maps the whole site |
 
-```bash
-uv run uvicorn tests.fixture_site.app:app --port 8900
-uv run python -m runtime.gateway --load tests/fixture_site.json
-```
+## Quick start
 
-The MCP endpoint is `http://127.0.0.1:8765/mcp` (Streamable HTTP, `Authorization: Bearer <key>`).
-
-### Pages
-
-The gateway serves its own pages in one design (`runtime/ui.py`): home `/`, sign-up `/signup`, sign-in
-`/account/login`, the account page `/account` (and `/account/password`), Claude's sign-in `/oauth/login`, and the
-website sign-in `/connect/<token>`. `PRODUCT_NAME` sets the name shown on them.
-
-### Regular Claude (web, desktop, phone)
-
-In Claude: Customize → Connectors → Add custom connector, URL `<PUBLIC_BASE_URL>/mcp`, then Connect. Claude registers
-itself and opens our sign-in page (password, an API key, or a new account with the invite code). Your account page
-is `<PUBLIC_BASE_URL>/account`: sign-ins your agent is waiting for, your sites, connected apps, and your API key.
-`PUBLIC_BASE_URL` must be the https address people reach (e.g. the ngrok domain).
-
-### Users and API keys
-
-Every key belongs to one user, and every tool call acts as that user: their own sign-ins, browser profiles, login
-links and device identities. `GATEWAY_API_KEY` from `.env` is user `default`. Everyone else gets their own key:
-
-- **Sign-up page:** set `SIGNUP_CODE` in `.env` and share it; people open `<PUBLIC_BASE_URL>/signup`, enter the code,
-  a name and an email, and get their key once with the `claude mcp add ...` line to paste. Wrong codes are rate
-  limited (10 per 10 minutes per address). Empty `SIGNUP_CODE` = no sign-up page.
-- **Command line:** `uv run python -m runtime.keys add alice --email alice@example.com` (also `list`, `reissue`,
-  `revoke`). Keys are shown once; only their SHA-256 is stored (`api_users` table in `runtime.db`).
-`POST http://127.0.0.1:8900/_admin/break` moves one fixture endpoint, `/_admin/reset` restores it.
-
-The mapper imports `schema` (`validate_card`, `Card`, `Envelope`) and saves through `runtime.registry.Registry`.
-
-## Mapper
+Needs Python 3.12 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv run python -m mapper capture <start_url> --task NAME --run m1|m2|real|page2 [--marker query=zqxv8841]
-uv run python -m mapper map captures/<domain>/
-uv run python -m mapper validate path/to/card.json
-uv run python -m mapper heal captures/<domain>/ --save   # site changed: replay all recordings, re-map, save
+uv sync --extra llm
+uv run playwright install chromium
+cp .env.example .env
 ```
 
-Captures, HAR files, `state.json` and `.env` hold live login sessions: never commit them.
+Set `GATEWAY_API_KEY` and `CONFIRMATION_SECRET` in `.env`, and `SESSION_KEY`
+(`uv run python -m spider.store.sessions` prints one). Then run the demo shop and the gateway, in two terminals:
+
+```bash
+uv run uvicorn tests.sites.fixture_site.app:app --port 8900
+```
+
+```bash
+uv run python -m spider.gateway --load tests/sites/fixture_site.json
+```
+
+Add it to Claude Code:
+
+```bash
+claude mcp add --transport http spider http://127.0.0.1:8765/mcp --header "Authorization: Bearer <GATEWAY_API_KEY>"
+```
+
+Then ask Claude: "use spider to search the fixture.test shop for lamps".
+
+To also load the real sites' cards (LinkedIn needs each user to sign in with their own account):
+
+```bash
+uv run python -m spider.gateway --load tests/sites/fixture_site.json --load cards/linkedin.com.json --load cards/amazon.co.uk.json
+```
+
+The demo shop (`tests/sites/fixture_site/`) has 21 actions covering every runtime case: reads, writes that need
+confirmation, rate limits, bot challenges, browser-only endpoints, and a sign-in (`demo` / `demo-password`).
+`POST http://127.0.0.1:8900/_admin/break` moves one endpoint so you can watch an action heal;
+`/_admin/reset` puts it back.
+
+## MCP tools
+
+The endpoint is `<PUBLIC_BASE_URL>/mcp` (Streamable HTTP, `Authorization: Bearer <key>`, or OAuth for regular
+Claude).
+
+| Tool | What it does |
+|---|---|
+| `find_actions` | Search the registry for actions that fit a task ("search companies on linkedin.com") |
+| `run_action` | Run one action with inputs; writes return a confirmation id first |
+| `request_map` | Ask for a site, or one named action on it, to be set up when nothing fits |
+| `map_status` | Progress of a map job |
+| `heal_status` | Progress of a heal job after a `PAGE_CHANGED` result |
+| `start_connection` | Get a sign-in link for a site that needs the user's login |
+| `poll_connection` | Wait until the user has signed in |
+| `connection_status` | Which sites the user is signed in to |
+| `disconnect` | Delete a stored sign-in and its browser profile |
+
+Every result is one envelope (`src/spider/card/envelope.py`): a status (`SUCCESS`, `EMPTY`, `NEEDS_CONFIRMATION`,
+`AUTH_EXPIRED`, `PAGE_CHANGED`, `BLOCKED`, ...), the data, and what to do next.
+
+## Using spider from regular Claude (web, desktop, phone)
+
+In Claude: Customize, Connectors, Add custom connector, URL `<PUBLIC_BASE_URL>/mcp`, then Connect. Claude registers
+itself and opens spider's sign-in page (password, an API key, or a new account with the invite code).
+`PUBLIC_BASE_URL` must be the https address people reach, for example an ngrok domain.
+
+The gateway serves its own pages (`src/spider/web/design.py`): home `/`, sign-up `/signup`, sign-in `/account/login`, the
+account page `/account` (waiting sign-ins, sites, connected apps, API key), Claude's sign-in `/oauth/login`, and
+the website sign-in `/connect/<token>`. `PRODUCT_NAME` sets the name shown on them.
+
+## Users and keys
+
+Every key belongs to one user, and every call acts as that user: their own sign-ins, browser profiles and device
+identity. `GATEWAY_API_KEY` is user `default`. Everyone else gets their own key:
+
+- **Sign-up page:** set `SIGNUP_CODE` and share it; people open `/signup`, enter the code, a name and an email,
+  and get their key once with the `claude mcp add` line. Wrong codes are rate limited.
+- **Command line:** `uv run python -m spider.store.users add alice --email alice@example.com` (also `list`, `reissue`,
+  `revoke`, `set-password`). Keys are shown once; only their SHA-256 is stored.
+
+## Setting up a new site
+
+### From an agent (map jobs)
+
+With `MAPPER=flowmap` and `ANTHROPIC_API_KEY` set, an agent that finds nothing for a site calls `request_map`.
+The gateway maps it on the server: one named action ("search products on amazon.co.uk") in a few minutes, or the
+whole site's main reads. The account page shows the job's progress; `map_status` reports it to the agent. A site
+that needs a sign-in pauses the job and returns a sign-in link, then carries on.
+
+A specific change ("follow this company") goes through `request_map` with `write: true`. The click that would
+commit it is held back, and before the write is saved, its steps up to the send are tried on each tier to find
+one that works.
+
+`MAP_ALLOW_LOCAL=1` also allows sites on this machine (the bookshop test site:
+`uv run uvicorn tests.sites.bookshop:app --port 8911`).
+
+### From the command line (flowmap)
+
+```bash
+# have Claude record an action once (or drop --agent and do it yourself in the browser that opens)
+uv run python -m spider.mappers.flowmap record https://example.com/ --action search_things \
+  --agent "search for the query" --input query=lamp --example query=chair
+
+uv run python -m spider.mappers.flowmap map example.com            # replay, infer, check, save to the registry
+uv run python -m spider.mappers.flowmap show example.com           # the card and recent heal timings
+uv run python -m spider.mappers.flowmap heal example.com search_things
+```
+
+Full reference: `docs/flowmap.md`. harmap (`python -m spider.mappers.harmap explore | capture | map | heal`) is described in
+`docs/harmap.md`.
 
 ## Healing
 
-When an action returns `PAGE_CHANGED`, the runtime queues a heal job, pre-checks it (a block or an expired login
-cancels it), then asks the mapper to re-record just the broken action and re-map the site:
+When an action returns `PAGE_CHANGED`, the runtime queues a heal job, checks first that the cause isn't a block
+or an expired sign-in, then asks the remapper to re-map just the broken action. The new card is validated against
+the action's `examples` and saved as a new version. `REMAPPER` picks the remapper:
 
-```python
-class Remapper(Protocol):  # runtime/healing.py
-    async def remap(self, card: Card, actions: list[str], reason: str) -> Card | dict: ...
+- `flowmap`: replays the action's recording from `FLOWS_DIR/<domain>/<action>.json`.
+- `harmap`: replays harmap's recordings from `CAPTURES_DIR/<domain>/`.
+- `tests.sites.fixture_site.remapper:FixtureRemapper`: a stand-in for the demo shop.
+
+## Sign-in and the browser tier
+
+Sites with `connect_providers` need the user's sign-in once. The agent calls `start_connection` and shows the user
+a link. There the user signs in to the real site in a private browser in a short-lived Neko container, streamed
+to their screen. spider checks the cookies with the provider's `session_check` and stores them encrypted with
+`SESSION_KEY`; the agent never sees a password or cookie. Cookies the site refreshes are saved back, and the
+sign-in browser's identity (user agent, client hints, language) is presented on every later request.
+
+- **Neko:** needs Docker and `docker pull ghcr.io/m1k1o/neko/chromium:latest`. Hosted: set `NEKO_PUBLIC_IP`, open
+  `NEKO_UDP_PORTS` (UDP and TCP), and add a TURN server in `NEKO_ICE_SERVERS` for strict networks.
+- **Residential proxy (optional):** set `PROXY_URL` to a sticky-session URL with `{session}` where the session id
+  goes. Each sign-in keeps one home IP; public actions go direct.
+- **Browser tier:** installed Chrome (`uv run playwright install --with-deps chrome` on a server); keep
+  `PROFILES_DIR` and the database on persistent storage.
+
+Every setting is described in `.env.example`.
+
+## Tests
+
+```bash
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
 ```
 
-Return the whole proposed card. The runtime validates the changed actions against their `examples` and saves a
-new version (healed writes go live too, listed as unvalidated).
+Tests run in parallel. Those that need Docker, Neko or a Playwright browser skip themselves when it isn't
+installed; two of harmap's tests need `uv sync --extra llm`.
 
-- `REMAPPER=mapper` (the default in `.env.example`) uses WeiWei's mapper (`runtime/mapper_remapper.py`): it replays
-  the broken action's recordings from `CAPTURES_DIR/<domain>/<action>/` in a headless browser, signed in as the
-  user, then re-maps the site. Sites need recordings made with `python -m mapper capture`.
-- `REMAPPER=tests.fixture_site.remapper:FixtureRemapper` is a stand-in for the fixture shop (which has no
-  recordings): break the site, call `get_item`, watch `heal_status`, call again.
+## Security
 
-## Login (connect a site) and the browser tier
+Captures, HAR files, `state.json`, cookies, profiles, `runtime.db` and `.env` hold live sign-ins: they are
+git-ignored and must never be committed. Logs show cookie, csrf and auth header values as `[redacted]`.
 
-Sites with `connect_providers` need the user's login once. The agent calls `start_connection(domain)` and shows the
-user a link. On that page the user clicks **Log in** and signs in to the real site inside a private Chromium in a
-short-lived Neko container, streamed over WebRTC. We watch the browser's cookies, check them with the provider's
-`session_check` and store them encrypted (`SESSION_KEY`); the password never reaches us or the agent. The agent
-calls `poll_connection` straight after showing the link: it waits (up to 45 s per call) and returns as soon as the
-user is signed in, so the agent carries on by itself. `connection_status` reports the state; `disconnect` deletes
-the stored sign-in and the server-side browser profile; a keep-alive marks sessions that have expired.
-Cookies the site refreshes (after successful actions and passing keep-alive checks) are saved back to the encrypted
-sign-in, so sites that rotate their login cookie stay signed in. The login browser's identity (user-agent, client
-hints, language) is saved too, and every tier presents it on that sign-in's later requests; requests with no saved
-identity look like Chrome 152 on Windows.
+## Limits
 
-**Residential proxy (optional).** Set `PROXY_URL` to your provider's sticky-session URL with `{session}` where its
-session id goes. Each sign-in (user + site) gets its own session id, so the login browser and every later request
-for that sign-in leave through the same home IP; public actions go direct. The login browser can't send proxy
-credentials itself, so a small helper inside its container adds them (`runtime/neko/proxy_auth.py`).
-
-Setup:
-- Neko: Docker running, and `docker pull ghcr.io/m1k1o/neko/chromium:latest` (about 2.2 GB). Hosted: set
-  `NEKO_PUBLIC_IP` to the server's public IP, open the `NEKO_UDP_PORTS` range (UDP and TCP), and for users behind
-  strict networks add a TURN server via `NEKO_ICE_SERVERS`. `NEKO_ENABLED=0` turns it off.
-- Browser tier: install Chrome on the server (`uv run playwright install --with-deps chrome`); keep `PROFILES_DIR` and
-  the SQLite file on persistent storage; serve over HTTPS and set `PUBLIC_BASE_URL`.
-
-Fixture shop login for testing: `demo` / `demo-password`. Tests needing Docker/Neko or Playwright's Chromium skip
-themselves when those aren't installed.
-Heal jobs use the mapper automatically with `REMAPPER=mapper`; `python -m mapper heal` still works by hand.
+- Sites that build everything in scripts with no readable request (browser replay) aren't supported.
+- An action is set up from one real example, so a page layout the example didn't show can come back empty.
+- Pages about a single item (a product page) yield one field so far.
+- Writes on real sites are early: the safety path is tested on the demo shop and on LinkedIn.
+- No per-user quotas, response cache or outgoing rate limit yet (`TODO`s in `src/spider/run/executor.py`).

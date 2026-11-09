@@ -37,7 +37,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["schema", "runtime", "mapper", "flowmap"]
+packages = ["src/spider"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -45,15 +45,28 @@ asyncio_mode = "auto"
 # Tests run in parallel (pytest-xdist): about 80 s instead of 5 min. Use -n0 to run in one process.
 addopts = "-n auto --dist loadgroup"  # tests marked xdist_group("docker") share one worker
 asyncio_default_fixture_loop_scope = "function"
-# mapper tests import their helpers (fixture_site, synthetic) by bare name
-pythonpath = ["tests/mapper"]
+# src/ for the spider package; harmap's tests import their helpers (fixture_site, synthetic) by bare name
+pythonpath = ["src", "tests/mappers/harmap"]
 markers = [
     "browser: needs a Playwright Chromium install (skipped when unavailable)",
 ]
 
 [tool.ruff]
 line-length = 110
+src = ["src", "."]
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["SIM105"]  # try/except/pass is kept as written
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F811"]  # pytest fixtures used as parameters
+# HTML, CSS, JS and SQL templates keep their long lines; wrapping them would change the page source
+"src/spider/web/design.py" = ["E501"]
+"src/spider/web/pages/account.py" = ["E501"]
+"src/spider/web/pages/signin.py" = ["E501"]
+"src/spider/signin/neko/manager.py" = ["E501"]
+"src/spider/store/sessions.py" = ["E501"]
+"src/spider/store/jobs.py" = ["E501"]
+"tests/sites/fixture_site/app.py" = ["E501"]
