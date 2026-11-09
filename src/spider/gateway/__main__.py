@@ -1,3 +1,3 @@
-from spider.gateway.app.app import main
+from spider.gateway.app import main
 
 main()

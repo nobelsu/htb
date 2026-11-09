@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from spider.web.design import short_name
-from tests.web.test_oauth import PASSWORD, Env, account_session, env  # noqa: F401  (fixture)
+from tests.store.test_oauth import PASSWORD, Env, account_session, env  # noqa: F401  (fixture)
 
 
 async def test_home_page_is_public_but_only_at_the_root(env: Env) -> None:

@@ -21,7 +21,7 @@ this repository.
 Load them when you start the gateway (each is saved as a new version only if it changed):
 
 ```bash
-uv run python -m spider.gateway.app --load cards/linkedin.com.json --load cards/amazon.co.uk.json
+uv run python -m spider.gateway --load cards/linkedin.com.json --load cards/amazon.co.uk.json
 ```
 
 Check a card without running anything:

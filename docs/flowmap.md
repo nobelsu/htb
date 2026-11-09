@@ -54,7 +54,7 @@ Reads only for now. Raw captures go to a temporary folder deleted when the job e
 `FLOWS_DIR` for heal. Addresses on this machine or a private network are refused unless `MAP_ALLOW_LOCAL=1`.
 
 ```bash
-MAPPER=flowmap MAP_ALLOW_LOCAL=1 uv run python -m spider.gateway.app   # then request_map http://127.0.0.1:8910/
+MAPPER=flowmap MAP_ALLOW_LOCAL=1 uv run python -m spider.gateway   # then request_map http://127.0.0.1:8910/
 ```
 
 ### Pages rendered on the server (level 2)

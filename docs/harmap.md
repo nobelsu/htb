@@ -169,8 +169,8 @@ inputs, each bundle's own `state.json` as the session unless `--state` is given)
 validates, and saves the new card as the active version. Old bundles are kept in `<domain>.prev/`.
 
 The whole site is re-mapped (not only the broken action) and the new card replaces the old one whole,
-**write actions included, with no human approval step** (`CARD_SPEC.md` "Healing" and Nobel's
-`runtime/healing.py` were changed to match, DECISIONS.md H4). The per-call `requires_confirmation`
+**write actions included, with no human approval step** (`CARD_SPEC.md` "Healing" and the runtime's
+`src/spider/jobs/heal.py` were changed to match, DECISIONS.md H4). The per-call `requires_confirmation`
 prompt is unchanged.
 
 ## Explorer: no human in the loop

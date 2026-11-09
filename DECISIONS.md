@@ -369,7 +369,7 @@ Judgement calls made where `CARD_SPEC.md` (v0.4) is silent or ambiguous.
 - **L11 Sign-in for regular Claude (OAuth) and the account page (asked).** Regular Claude (web, desktop, phone)
   adds a server as a custom connector and signs in with OAuth; its API-key header option is a limited beta. So the
   gateway is also an OAuth authorization server: the MCP SDK serves discovery, Dynamic Client Registration,
-  /authorize, /token (PKCE) and /revoke; `src/spider/web/oauth.py` is the provider and `src/spider/web/pages/account.py` the
+  /authorize, /token (PKCE) and /revoke; `src/spider/store/oauth.py` is the provider and `src/spider/web/pages/account.py` the
   pages. `BearerAuth` accepts OAuth access tokens next to API keys, and its 401 names the resource metadata
   (RFC 9728), which is how Claude finds the sign-in server. The SDK has no Client ID Metadata Document support, so
   Claude uses "Register automatically" (DCR).

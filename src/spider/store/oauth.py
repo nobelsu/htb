@@ -92,7 +92,7 @@ class PendingSignIn:
         return self.client.client_name or "An app"
 
 
-class OAuth:
+class OAuthStore:
     def __init__(self, path: str | Path, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
         self._lock = threading.RLock()

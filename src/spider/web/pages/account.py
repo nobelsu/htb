@@ -30,6 +30,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import BaseRoute, Route
 
 from spider.signin.flow import ConnectionManager
+from spider.store.oauth import ACCOUNT_SESSION_TTL_S, OAuthStore, PendingSignIn
 from spider.store.sessions import EncryptedSessionStore
 from spider.store.users import ENV_KEY_USER, KeyStoreError, UserStore, mcp_add_command
 from spider.web.design import (
@@ -44,7 +45,6 @@ from spider.web.design import (
     notice,
     page,
 )
-from spider.web.oauth import ACCOUNT_SESSION_TTL_S, OAuth, PendingSignIn
 from spider.web.pages.signup import AttemptLimiter, copy_row
 
 log = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ MAX_BODY = 4096
 MODES = ("password", "key", "signup")
 
 
-def session_cookie(oauth: OAuth, public_url: Callable[[], str]) -> Callable[[Response, str], Response]:
+def session_cookie(oauth: OAuthStore, public_url: Callable[[], str]) -> Callable[[Response, str], Response]:
     """Signs `user` in to the account page on this response (shared with the sign-up page)."""
 
     def set_cookie(response: Response, user: str) -> Response:
@@ -243,7 +243,7 @@ MAP_LABELS = {  # a site being set up for this user (jobs/map.py)
 
 def routes(
     *,
-    oauth: OAuth,
+    oauth: OAuthStore,
     keys: UserStore,
     key_user: Callable[[str], str | None],
     connections: ConnectionManager | None,

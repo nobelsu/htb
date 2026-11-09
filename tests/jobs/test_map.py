@@ -398,8 +398,8 @@ async def test_the_account_page_lists_your_map_jobs(
 ) -> None:
     import httpx
 
+    from spider.store.oauth import OAuthStore
     from spider.store.users import UserStore
-    from spider.web.oauth import OAuth
     from tests.conftest import LiveServer, free_port
     from tests.gateway.test_gateway import API_KEY
 
@@ -417,7 +417,7 @@ async def test_the_account_page_lists_your_map_jobs(
     keys = UserStore(db)
     keys.create("alice", "alice@example.com", "alice-password1")
     gateway = Gateway(registry, executor, maps=m)
-    app = gateway.asgi_app(API_KEY, keys=keys, public_base_url=base, oauth=OAuth(db, base))
+    app = gateway.asgi_app(API_KEY, keys=keys, public_base_url=base, oauth=OAuthStore(db, base))
     with LiveServer(app, port=port):
         async with httpx.AsyncClient(follow_redirects=False) as http:
             login = {"action": "password", "login": "alice", "password": "alice-password1"}

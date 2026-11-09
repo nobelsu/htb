@@ -27,9 +27,9 @@ from spider.run.confirm import Confirmer
 from spider.run.executor import Executor
 from spider.signin.flow import ConnectionManager
 from spider.store.cards import Registry
+from spider.store.oauth import OAuthStore
 from spider.store.sessions import EncryptedSessionStore, new_session_key
 from spider.store.users import UserStore
-from spider.web.oauth import OAuth
 from tests.conftest import LiveServer, free_port
 from tests.gateway.test_gateway import API_KEY, act, envelope
 from tests.signin.test_flow_confirm import FakeNeko
@@ -47,7 +47,7 @@ class Env:
     base: str
     keys: UserStore
     store: EncryptedSessionStore
-    oauth: OAuth
+    oauth: OAuthStore
     manager: ConnectionManager
     db: Path
     provider: str
@@ -66,7 +66,7 @@ def env(tmp_path: Path, fixture_card: dict[str, Any]) -> Iterator[Env]:
     gateway = Gateway(registry, executor, poll_interval_s=0.05, connections=manager)
     keys = UserStore(db)
     keys.create("alice", "alice@example.com", PASSWORD)
-    oauth = OAuth(db, base)
+    oauth = OAuthStore(db, base)
     app = gateway.asgi_app(API_KEY, keys=keys, signup_code=CODE, public_base_url=base, oauth=oauth)
     with LiveServer(app, port=port):
         yield Env(base, keys, store, oauth, manager, db, str(fixture_card["connect_providers"][0]["id"]))
@@ -272,7 +272,7 @@ async def test_codes_are_single_use_and_bound_to_the_verifier(env: Env) -> None:
 
 
 async def test_refresh_rotates_and_a_sign_in_lasts_30_days(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
-    import spider.web.oauth as oauth_module
+    import spider.store.oauth as oauth_module
 
     async with httpx.AsyncClient(follow_redirects=False) as http:
         got = await connect_app(env, http, action="password", login="alice", password=PASSWORD)

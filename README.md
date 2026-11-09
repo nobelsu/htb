@@ -43,21 +43,31 @@ All code is one package, `spider`, under `src/`. Tests mirror it under `tests/`.
 | Path | What |
 |---|---|
 | `src/spider/card/` | The card format in code: models, result envelope, placeholders, validation, `python -m spider.card.check` |
-| `src/spider/gateway/app.py` | The MCP gateway: tools, pages and jobs wired together (`python -m spider.gateway.app`) |
+| `src/spider/gateway/` | The MCP gateway (`python -m spider.gateway`): `tools.py` (what agents see), `app.py` (wiring) |
 | `src/spider/run/` | Running an action: the executor, confirmation ids and redaction |
 | `src/spider/run/request/` | Building each request (templates), reading the answer (extract), spotting signals |
 | `src/spider/run/tiers/` | How requests go out: plain HTTP and a browser fingerprint (`http`), or a real Chrome tab (`browser`) |
-| `src/spider/signin/` | Signing users in: the flow, device identity, proxy, `sessions/` (stored sign-ins), `neko/` (remote browsers) |
-| `src/spider/jobs/` | Heal jobs and map jobs, and the adapter that lets harmap heal |
-| `src/spider/store/` | SQLite: card registry and search, users and keys, job records |
-| `src/spider/web/` | The page design, OAuth for regular Claude, and `pages/` (home, sign-up, account, website sign-in) |
-| `src/spider/mappers/flowmap/` | The mapper the product runs: `record/`, `infer/`, `serve/` (map jobs and healing) |
-| `src/spider/mappers/harmap/` | The earlier mapper: `capture/`, `pipeline/`, `helpers/` |
-| `tests/sites/` | Test sites: the demo shop (`fixture_site/`, card `fixture_site.json`) and the bookshop |
+| `src/spider/signin/` | Signing users in: the flow, device identity, proxy, and `neko/` (remote sign-in browsers) |
+| `src/spider/store/` | Everything kept in SQLite: cards and their search, stored sign-ins, users and keys, jobs, OAuth |
+| `src/spider/jobs/` | Heal jobs and map jobs |
+| `src/spider/web/` | The page design and `pages/` (home, sign-up, account, website sign-in) |
+| `src/spider/mappers/` | The two mappers, in the same shape (below) |
+| `tests/` | Mirrors `src/spider/`; `tests/sites/` holds the demo shop (`fixture_site/`) and the bookshop |
 | `cards/` | The live, checked cards: linkedin.com (12 actions) and amazon.co.uk (2). Explained in `docs/cards.md` |
 | `CARD_SPEC.md`, `action_map.example.json` | The card format (v0.4) and an example card |
 | `flows/bookshop.test/` | Example flowmap recordings |
 | `docs/` | Cards (`cards.md`), the two mappers (`flowmap.md`, `harmap.md`), the pitch context |
+
+Both mappers have the same stages, so the same file name means the same job in each:
+
+| | flowmap | harmap |
+|---|---|---|
+| `cli.py` | `python -m spider.mappers.flowmap` | `python -m spider.mappers.harmap` |
+| `record/` | Claude or a person does the task once; browser steps, held-back writes | A person records each run; saved traffic |
+| `infer/` | Which request is the action, its inputs, outputs and names | The same, from the saved traffic, stage by stage |
+| `card/` | Assemble the action, privacy check, sign-in check | Assemble, validate, mapping report |
+| `heal.py` | Replays the broken action | Re-records and re-maps the site |
+| only here | `serve/`: map jobs and exploring a site, inside the gateway | `explore/`: an LLM picks a site's tasks; `helpers/` |
 
 `DECISIONS.md` records every judgement call made while building (L-series runtime and sign-in, M-series mapper).
 
@@ -95,7 +105,7 @@ uv run uvicorn tests.sites.fixture_site.app:app --port 8900
 ```
 
 ```bash
-uv run python -m spider.gateway.app --load tests/sites/fixture_site.json
+uv run python -m spider.gateway --load tests/sites/fixture_site.json
 ```
 
 Add it to Claude Code:
@@ -109,7 +119,7 @@ Then ask Claude: "use spider to search the fixture.test shop for lamps".
 To also load the real sites' cards (LinkedIn needs each user to sign in with their own account):
 
 ```bash
-uv run python -m spider.gateway.app --load tests/sites/fixture_site.json --load cards/linkedin.com.json --load cards/amazon.co.uk.json
+uv run python -m spider.gateway --load tests/sites/fixture_site.json --load cards/linkedin.com.json --load cards/amazon.co.uk.json
 ```
 
 The demo shop (`tests/sites/fixture_site/`) has 21 actions covering every runtime case: reads, writes that need
