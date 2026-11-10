@@ -1,4 +1,7 @@
-# spider
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.svg">
+  <img src="docs/images/banner.svg" alt="spider: the web, for agents to crawl" width="100%">
+</picture>
 
 spider turns websites into tools an AI agent can call directly, without driving a browser.
 
@@ -45,13 +48,10 @@ A site's actions are kept in one JSON file, its **card** (`CARD_SPEC.md`, explai
 action says what request to send, where the inputs go, and where the results are in the answer. A card is made
 once and shared by every user; each user signs in with their own account.
 
-```mermaid
-flowchart LR
-    M["Map<br/>do the task once,<br/>find the request"] --> S["Save<br/>a versioned card<br/>for the site"]
-    S --> R["Run<br/>any agent calls it,<br/>as its own user"]
-    R -- "site changed" --> H["Heal<br/>re-map just that action,<br/>save a new version"]
-    H --> R
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/how-it-works-dark.svg">
+  <img src="docs/images/how-it-works.svg" alt="How spider works: map a task once, save it as a card, run it from any agent, heal it when the site changes" width="100%">
+</picture>
 
 1. **Map.** Claude (or a person) does the task once in a browser. spider replays it with planted marker values,
    sees which request carries the input and which response carries the results, and confirms it by replaying
@@ -69,6 +69,11 @@ commit the write is held back in the browser, so the site never receives it. Onc
 the user's confirmation before it is sent.
 
 ## How it fits together
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/sites-dark.svg">
+  <img src="docs/images/sites.svg" alt="An agent connects to spider over MCP; spider serves live cards for linkedin.com and amazon.co.uk, and maps other sites on request" width="100%">
+</picture>
 
 ```mermaid
 flowchart LR
@@ -316,3 +321,8 @@ git-ignored and must never be committed. Logs show cookie, csrf and auth header 
 - Pages about a single item (a product page) yield one field so far.
 - Writes on real sites are early: the safety path is tested on the demo shop and on LinkedIn.
 - No per-user quotas, response cache or outgoing rate limit yet (`TODO`s in `src/spider/run/executor.py`).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/footer-dark.svg">
+  <img src="docs/images/footer.svg" alt="spider: the web, for agents to crawl. Built at Hack the Burgh 2026" width="100%">
+</picture>
