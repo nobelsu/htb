@@ -3,6 +3,8 @@ name = "spider"
 version = "0.1.0"
 description = "Website action cards: mapper (capture to card), executor, registry and MCP gateway"
 requires-python = ">=3.12,<3.13"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 dependencies = [
     "pydantic>=2.14,<3",
     "httpx>=0.28,<0.29",
