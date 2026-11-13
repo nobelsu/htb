@@ -322,6 +322,14 @@ git-ignored and must never be committed. Logs show cookie, csrf and auth header 
 - Writes on real sites are early: the safety path is tested on the demo shop and on LinkedIn.
 - No per-user quotas, response cache or outgoing rate limit yet (`TODO`s in `src/spider/run/executor.py`).
 
+## License
+
+spider is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). You may use,
+study, change and share it, but if you distribute it, or run a modified version as a service for others, you
+must release your source code under the same license. For other terms, ask the authors.
+
+Copyright (C) 2026 the spider authors (see the git history).
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/footer-dark.svg">
   <img src="docs/images/footer.svg" alt="spider: the web, for agents to crawl. Built at Hack the Burgh 2026" width="100%">
